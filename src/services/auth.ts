@@ -18,7 +18,7 @@ const loginUser = async ({ nickname, password }: Auth): Promise<AuthWithToken | 
   const passwordHash = checkIs.password
   const isCorrect = await verified(password, passwordHash)
   if (!isCorrect) return 'PASSWORD_INCORRECT'
-  const token = await generateToken(checkIs._id)
+  const token = await generateToken(checkIs)
   const data = { nickname: checkIs.nickname, token }
   return data
 }

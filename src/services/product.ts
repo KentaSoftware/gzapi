@@ -185,6 +185,7 @@ const getAllProductsCategories = async (categories: string[] | undefined): Promi
 }
 
 const getProducts = async (skip: number, limit: number): Promise<Product[]> => {
+  console.log('skip getProducts service', skip, limit)
   return await ProductModel.aggregate(
     [
       {

@@ -77,6 +77,8 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
 
+    console.log('input', input, skip, limit)
+
     if (input !== undefined) {
       const response = await getSales(input)
       res.send(response)
@@ -125,7 +127,7 @@ const printSale = async (req: Request, res: Response): Promise<void> => {
     }
 
     const itemsSale: ItemSale[] = await getItemSale(saleId)
-    
+
     const doc = new PDFDocument()
 
     // Configurar los encabezados para el archivo PDF

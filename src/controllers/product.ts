@@ -35,6 +35,8 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
 
+    console.log('input', input, skip, limit)
+
     const filter = {
       categoria: body.categoria,
       marca: body.marca,
@@ -196,13 +198,13 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
     // Agregar el listener solo una vez
     doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
 
-    products.forEach((itemProduct: Product)=>{
+    products.forEach((itemProduct: Product) => {
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
-        .text(`${categorieActive}`, 25)
+          .text(`${categorieActive}`, 25)
       }
-      
+
       const yPosition = doc.y;
 
       // Escribir la descripción del producto
@@ -222,15 +224,15 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
         doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
           .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition);
       }
-      
+
       doc.moveDown(0.1);
 
       doc.lineWidth(0.5);
       doc.strokeColor('#d9d9d9');
 
       doc.moveTo(20, doc.y)
-      .lineTo(550, doc.y)
-      .stroke();
+        .lineTo(550, doc.y)
+        .stroke();
 
       doc.moveDown(0.3);
 
@@ -238,7 +240,7 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
         doc.addPage()
       }
     })
-    
+
     // Finalizar el documento
     doc.end()
   } catch (e) {
@@ -248,12 +250,12 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
 
 const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
-    const { categories, discount }: { categories: {conDescuento: {_id: string, descripcion: string}[], sinDescuento: {_id: string, descripcion: string}[] }, discount: number } = body
+    const { categories, discount }: { categories: { conDescuento: { _id: string, descripcion: string }[], sinDescuento: { _id: string, descripcion: string }[] }, discount: number } = body
     let categoriesArray: string[] = []
-    categories.conDescuento.forEach(item=>{
+    categories.conDescuento.forEach(item => {
       categoriesArray.push(item.descripcion)
     })
-    categories.sinDescuento.forEach(item=>{
+    categories.sinDescuento.forEach(item => {
       categoriesArray.push(item.descripcion)
     })
     const products = await getAllProductsCategories(categoriesArray)
@@ -273,13 +275,13 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
     // Agregar el listener solo una vez
     doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
 
-    products.forEach((itemProduct: Product)=>{
+    products.forEach((itemProduct: Product) => {
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
-        .text(`${categorieActive}`, 25)
+          .text(`${categorieActive}`, 25)
       }
-      
+
       const yPosition = doc.y;
 
       // Escribir la descripción del producto
@@ -288,8 +290,8 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
 
       // Calcular el precio con descuento si el producto pertenece a una categoría seleccionada
       let precioFinal = itemProduct.precioUnitario;
-      let isDescuento = categories.conDescuento.find(elem=>elem.descripcion === itemProduct.NameCategoria) ? true : false
-      let isNormal = categories.sinDescuento.find(elem=>elem.descripcion === itemProduct.NameCategoria) ? true : false
+      let isDescuento = categories.conDescuento.find(elem => elem.descripcion === itemProduct.NameCategoria) ? true : false
+      let isNormal = categories.sinDescuento.find(elem => elem.descripcion === itemProduct.NameCategoria) ? true : false
       if (isDescuento) {
         precioFinal = itemProduct.precioUnitario * (1 - discount);
       } else if (isNormal) {
@@ -297,16 +299,16 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
       }
       // Escribir el precio del producto en la misma posición Y
       doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
-            .text(`$ ${precioFinal.toFixed(2)}`, 440, yPosition);
-      
+        .text(`$ ${precioFinal.toFixed(2)}`, 440, yPosition);
+
       doc.moveDown(0.1);
 
       doc.lineWidth(0.5);
       doc.strokeColor('#d9d9d9');
 
       doc.moveTo(20, doc.y)
-      .lineTo(550, doc.y)
-      .stroke();
+        .lineTo(550, doc.y)
+        .stroke();
 
       doc.moveDown(0.3);
 
@@ -314,10 +316,10 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
         doc.addPage()
       }
     })
-    
+
     // Finalizar el documento
     doc.end()
-    
+
   } catch (e) {
     handleHttp(res, 'ERROR_PRINT_LIST')
   }
