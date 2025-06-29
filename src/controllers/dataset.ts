@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { handleHttp } from '../utils/error.handle'
 import { getDailyData, getWeeklyData, getMonthlyData, getAnnuallyData, getDailyDataGraph, getWeeklyDataGraph, getMonthlyDataGraph, getAnnuallyDataGraph, bestSelling, highProfit, dataProduct, getCustomData, getCustomDataGraph } from '../services/dataset'
-import { JwtPayload } from 'jsonwebtoken'
+/* import { JwtPayload } from 'jsonwebtoken' */
 
 /* interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
