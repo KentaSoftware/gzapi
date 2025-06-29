@@ -15,7 +15,7 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const response = await getProvider(new Types.ObjectId(id))
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_PROVIDER_BY_ID', e)
   }
 }
 const getItems = async (_: RequestExt, res: Response): Promise<void> => {
@@ -23,7 +23,7 @@ const getItems = async (_: RequestExt, res: Response): Promise<void> => {
     const response = await getProviders()
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_PROVIDERS_LIST', e)
   }
 }
 const uptdateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
@@ -36,7 +36,7 @@ const uptdateItem = async ({ params, body }: Request, res: Response): Promise<vo
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_UPDATE_ITEM')
+    handleHttp(res, 'ERROR_UPDATE_PROVIDER', e)
   }
 }
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
@@ -48,14 +48,14 @@ const postItem = async ({ body }: Request, res: Response): Promise<void> => {
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    handleHttp(res, 'ERROR_CREATE_PROVIDER', e)
   }
 }
 const deleteItem = (_: Request, res: Response): void => {
   try {
     res.send({ data: 'algo' })
   } catch (e) {
-    handleHttp(res, 'ERROR_DELETE_ITEM')
+    handleHttp(res, 'ERROR_DELETE_PROVIDER', e)
   }
 }
 

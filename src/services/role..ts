@@ -8,12 +8,12 @@ const insertRole = async (item: Role): Promise<Role> => {
 }
 
 const getRolesAll = async (): Promise<Role[]> => {
-  const response = await RoleModel.find({ name: { $ne: 'admin' } })
+  const response = await RoleModel.find()
   return response
 }
 
 const getRoles = async (skip: number, limit: number): Promise<Role[]> => {
-  const response = await RoleModel.find({ name: { $ne: 'admin' } }).skip(skip).limit(limit)
+  const response = await RoleModel.find().skip(skip).limit(limit)
   return response
 }
 
@@ -34,7 +34,7 @@ const getRoleSearch = async (input: string): Promise<Role[]> => {
 }
 
 const qtyRoles = async (): Promise<number> => {
-  const response = await RoleModel.countDocuments({ name: { $ne: 'admin' } })
+  const response = await RoleModel.countDocuments()
   return response
 }
 

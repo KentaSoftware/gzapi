@@ -208,27 +208,38 @@ const getUser = async (id: Types.ObjectId): Promise<UserResponse | null> => {
 const updateUser = async (id: Types.ObjectId, item: Partial<User>): Promise<any> => {
   let updateData = { ...item };
 
+  console.log('updateData1', updateData, id)
+
   if (item.password && item.password !== '') {
+    console.log('cambie password')
     updateData.password = await encrypt(item.password);
   } else {
+    console.log('no cambie password')
     const { password, ...updateDataWithoutPassword } = updateData;
     updateData = updateDataWithoutPassword;
   }
+
+  console.log('updateData2', updateData)
 
   const response: any = await UserModel.findByIdAndUpdate(
     id,
     updateData,
     { new: true }
-  ).populate('role');
+  );
+
+  console.log('response 123', response)
 
   if (!response) return null;
 
   const user = {
     ...response._doc,
+    _id: response._id,
     password: undefined, // Nunca devolvemos la contraseña
-    nameRole: response.role?.name,
-    role: response.role?._id,
-    isActive: response.isActive
+    nameRole: typeof item.role === 'object' ? item.role?.name : undefined,
+    role: typeof item.role === 'object' ? item.role?._id : item.role,
+    isActive: item.isActive,
+    nickname: item.nickname,
+    email: ''
   };
 
   return user;

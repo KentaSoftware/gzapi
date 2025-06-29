@@ -51,7 +51,9 @@ const getAllProducts = async (): Promise<Product[]> => {
           marca: '$marca._id',
           NameProveedor: '$proveedor.descripcion',
           NameMarca: '$marca.descripcion',
-          NameCategoria: '$categoria.descripcion'
+          NameCategoria: '$categoria.descripcion',
+          createdAt: 1,
+          updatedAt: 1
         }
       },
       {
@@ -144,7 +146,9 @@ const getAllProductsCategories = async (categories: string[] | undefined): Promi
         marca: '$marca._id',
         NameCategoria: '$categoria.descripcion',
         NameProveedor: '$proveedor.descripcion',
-        NameMarca: '$marca.descripcion'
+        NameMarca: '$marca.descripcion',
+        createdAt: 1,
+        updatedAt: 1
       }
     },
     {
@@ -231,6 +235,7 @@ const getProducts = async (skip: number, limit: number): Promise<Product[]> => {
           NameMarca: '$marca.descripcion',
           NameCategoria: '$categoria.descripcion',
           createdAt: 1,
+          updatedAt: 1,
           descripcionLower: { $toLower: '$descripcion' }
         }
       },
@@ -313,7 +318,8 @@ const getProductsSearch = async (input: string, filter: Filter): Promise<Product
           NameMarca: '$marca.descripcion',
           NameCategoria: '$categoria.descripcion',
           NameProveedor: '$proveedor.descripcion',
-          createdAt: 1
+          createdAt: 1,
+          updatedAt: 1
         }
       },
       {
@@ -396,7 +402,9 @@ const getProduct = async (id: Types.ObjectId): Promise<any> => {
           marca: '$marca._id',
           NameProveedor: '$proveedor.descripcion',
           NameMarca: '$marca.descripcion',
-          NameCategoria: '$categoria.descripcion'
+          NameCategoria: '$categoria.descripcion',
+          createdAt: 1,
+          updatedAt: 1
         }
       },
       {

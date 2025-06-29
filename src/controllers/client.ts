@@ -12,25 +12,27 @@ interface RequestExt extends Request {
 const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
+    console.log('id', id)
     const response = await getClient(new Types.ObjectId(id))
+    console.log('response', response)
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_CLIENT_BY_ID', e)
   }
 }
 const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
     if (input !== undefined) {
-        const response = await getClientSearch(input)
-        res.send(response)
-        return
+      const response = await getClientSearch(input)
+      res.send(response)
+      return
     }
     const response = await getClients(parseInt(skip), parseInt(limit))
     res.send(response)
     return
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_CLIENTS_LIST', e)
   }
 }
 const uptdateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
@@ -43,7 +45,7 @@ const uptdateItem = async ({ params, body }: Request, res: Response): Promise<vo
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_UPDATE_ITEM')
+    handleHttp(res, 'ERROR_UPDATE_CLIENT', e)
   }
 }
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
@@ -55,14 +57,14 @@ const postItem = async ({ body }: Request, res: Response): Promise<void> => {
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    handleHttp(res, 'ERROR_CREATE_CLIENT', e)
   }
 }
 const deleteItem = (_: Request, res: Response): void => {
   try {
     res.send({ data: 'algo' })
   } catch (e) {
-    handleHttp(res, 'ERROR_DELETE_ITEM')
+    handleHttp(res, 'ERROR_DELETE_CLIENT', e)
   }
 }
 

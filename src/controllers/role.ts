@@ -18,22 +18,19 @@ const createItem = async ({ body }: RequestExt, res: Response): Promise<void> =>
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_CREATE_ITEM')
+    handleHttp(res, 'ERROR_CREATE_ROLE', e)
   }
 }
+
 const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
-    console.log("id", id)
+    console.log('id', id)
     const response = await getRole(new Types.ObjectId(id))
-    console.log("response", response)
-    if (!response) {
-      res.status(404).send({ error: 'Role not found' })
-      return
-    }
+    console.log('response', response)
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_ROLE_BY_ID', e)
   }
 }
 
@@ -57,7 +54,7 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
     const cantidad = await qtyRoles()
     res.send({ array: response, longitud: cantidad })
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_ROLES_LIST', e)
   }
 }
 
@@ -75,7 +72,7 @@ const updateItem = async ({ params, body }: Request, res: Response): Promise<voi
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_UPDATE_ITEM')
+    handleHttp(res, 'ERROR_UPDATE_ROLE', e)
   }
 }
 
@@ -93,7 +90,7 @@ const deleteItem = async ({ params }: Request, res: Response): Promise<void> => 
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_DELETE_ITEM')
+    handleHttp(res, 'ERROR_DELETE_ROLE', e)
   }
 }
 

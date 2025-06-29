@@ -15,7 +15,7 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const response = await getUser(new Types.ObjectId(id))
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_USER_BY_ID', e)
   }
 }
 
@@ -32,7 +32,7 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_USERS_LIST', e)
   }
 }
 
@@ -40,9 +40,15 @@ const updateItem = async ({ params, body }: Request, res: Response): Promise<voi
   try {
     const { id } = params
     const response = await updateUser(new Types.ObjectId(id), body)
+    emitSocket('user', {
+      action: 'update',
+      data: response
+    })
+    console.log('response', response)
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_UPDATE_ITEM')
+    console.log('error', e)
+    handleHttp(res, 'ERROR_UPDATE_USER', e)
   }
 }
 
@@ -56,7 +62,7 @@ const deleteItem = async ({ params }: Request, res: Response): Promise<void> => 
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_DELETE_ITEM')
+    handleHttp(res, 'ERROR_DELETE_USER', e)
   }
 }
 

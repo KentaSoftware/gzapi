@@ -5,10 +5,10 @@ import { checkPermission } from '../middleware/checkPermission'
 
 const router = Router()
 
-router.get('/', checkJwt, checkPermission('read_provider'), getItems)
-router.get('/:id', checkJwt, checkPermission('read_provider'), getItem)
-router.post('/', checkJwt, checkPermission('create_provider'), postItem)
-router.patch('/:id', checkJwt, checkPermission('update_provider'), uptdateItem)
-router.delete('/:id', checkJwt, checkPermission('delete_provider'), deleteItem)
+router.get('/', checkJwt, checkPermission('read_product'), getItems)
+router.get('/:id', checkJwt, checkPermission('read_product'), getItem)
+router.post('/', checkJwt, checkPermission('create_product'), postItem)
+router.patch('/:id', checkJwt, checkPermission('update_product'), uptdateItem)
+router.delete('/:id', checkJwt, checkPermission('delete_product'), deleteItem)
 
 export { router }

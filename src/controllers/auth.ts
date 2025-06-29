@@ -1,19 +1,35 @@
 import { Request, Response } from 'express'
-import { loginUser, registerNewUser } from '../services/auth'
+import { handleHttp } from '../utils/error.handle'
+import { registerNewUser, loginUser } from '../services/auth'
 import { emitSocket } from '../socket'
+import { Types } from 'mongoose'
 
 const registerCtrl = async ({ body }: Request, res: Response): Promise<void> => {
-  const responseUser = await registerNewUser(body)
-  emitSocket('user', {
-    action: 'create',
-    data: responseUser
-  })
-  res.send(responseUser)
+  try {
+    const responseUser = await registerNewUser({ ...body, role: new Types.ObjectId(body.role) })
+    emitSocket('user', {
+      action: 'create',
+      data: responseUser
+    })
+    res.send(responseUser)
+  } catch (e) {
+    handleHttp(res, 'ERROR_REGISTER_USER', e)
+  }
 }
 
 const loginCtrl = async ({ body }: Request, res: Response): Promise<void> => {
-  const responseUser = await loginUser(body)
-  res.send(responseUser)
+  try {
+    const responseUser = await loginUser(body)
+
+    if (responseUser === 'PASSWORD_INCORRECT') {
+      res.status(403)
+      res.send(responseUser)
+    } else {
+      res.send(responseUser)
+    }
+  } catch (e) {
+    handleHttp(res, 'ERROR_LOGIN_USER', e)
+  }
 }
 
-export { loginCtrl, registerCtrl }
+export { registerCtrl, loginCtrl }

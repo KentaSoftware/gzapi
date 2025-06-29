@@ -7,9 +7,10 @@ const insertSale = async (item: Sale): Promise<Sale> => {
   return responseInsert
 }
 
-const getSales = async (input: string): Promise<Sale[]> => {
-  const query: any = {
-  }
+const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Promise<Sale[]> => {
+  const query: any = {}
+
+  console.log("input", input)
 
   if (input !== '') {
     query.cliente = {
@@ -18,8 +19,58 @@ const getSales = async (input: string): Promise<Sale[]> => {
     }
   }
 
+  // Si el usuario es admin, no filtrar por usuario
+  if (userRole && userRole.name === 'admin') {
+    const response = await SaleModel.aggregate([
+      {
+        $lookup: {
+          from: 'itemsales',
+          localField: '_id',
+          foreignField: 'idVenta',
+          as: 'itemSales'
+        }
+      },
+      {
+        $addFields: {
+          itemsLength: { $size: '$itemSales' }
+        }
+      },
+      {
+        $project: {
+          itemSales: 0
+        }
+      },
+      {
+        $match: { ...query }
+      },
+      {
+        $sort: { createdAt: -1 }
+      }
+    ])
+    return response
+  }
+
+  // Si no es admin, filtrar por usuario
   const response = await SaleModel.aggregate([{
-    $match: query
+    $match: { ...query, user: user }
+  },
+  {
+    $lookup: {
+      from: 'itemsales',
+      localField: '_id',
+      foreignField: 'idVenta',
+      as: 'itemSales'
+    }
+  },
+  {
+    $addFields: {
+      itemsLength: { $size: '$itemSales' }
+    }
+  },
+  {
+    $project: {
+      itemSales: 0
+    }
   },
   {
     $sort: { createdAt: -1 }
@@ -29,8 +80,74 @@ const getSales = async (input: string): Promise<Sale[]> => {
   return response
 }
 
-const getSalesLimit = async (skip: number, limit: number): Promise<Sale[]> => {
-  const response = await SaleModel.find({}).skip(skip).limit(limit).sort({ createdAt: -1 })
+const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, userRole?: any): Promise<Sale[]> => {
+  // Si el usuario es admin, no filtrar por usuario
+  if (userRole && userRole.name === 'admin') {
+    const response = await SaleModel.aggregate([
+      {
+        $lookup: {
+          from: 'itemsales',
+          localField: '_id',
+          foreignField: 'idVenta',
+          as: 'itemSales'
+        }
+      },
+      {
+        $addFields: {
+          itemsLength: { $size: '$itemSales' }
+        }
+      },
+      {
+        $project: {
+          itemSales: 0
+        }
+      },
+      {
+        $sort: { createdAt: -1 }
+      },
+      {
+        $skip: skip
+      },
+      {
+        $limit: limit
+      }
+    ])
+    return response
+  }
+
+  // Si no es admin, filtrar por usuario
+  const response = await SaleModel.aggregate([
+    {
+      $match: { user: user }
+    },
+    {
+      $lookup: {
+        from: 'itemsales',
+        localField: '_id',
+        foreignField: 'idVenta',
+        as: 'itemSales'
+      }
+    },
+    {
+      $addFields: {
+        itemsLength: { $size: '$itemSales' }
+      }
+    },
+    {
+      $project: {
+        itemSales: 0
+      }
+    },
+    {
+      $sort: { createdAt: -1 }
+    },
+    {
+      $skip: skip
+    },
+    {
+      $limit: limit
+    }
+  ])
   return response
 }
 

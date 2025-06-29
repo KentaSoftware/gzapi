@@ -27,7 +27,7 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const response = await getProduct(new Types.ObjectId(id))
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_PRODUCT_BY_ID', e)
   }
 }
 
@@ -70,7 +70,7 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_PRODUCTS_LIST', e)
   }
 }
 const uptdateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
@@ -83,9 +83,10 @@ const uptdateItem = async ({ params, body }: Request, res: Response): Promise<vo
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_UPDATE_ITEM')
+    handleHttp(res, 'ERROR_UPDATE_PRODUCT', e)
   }
 }
+
 const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => {
   try {
     const filter = {
@@ -132,6 +133,7 @@ const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => 
     handleHttp(res, 'ERROR_UPDATE_ITEM')
   }
 }
+
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   try {
     const response = await insertProduct({ ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) })
@@ -141,14 +143,15 @@ const postItem = async ({ body }: Request, res: Response): Promise<void> => {
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    handleHttp(res, 'ERROR_CREATE_PRODUCT', e)
   }
 }
+
 const deleteItem = (_: Request, res: Response): void => {
   try {
     res.send({ data: 'algo' })
   } catch (e) {
-    handleHttp(res, 'ERROR_DELETE_ITEM')
+    handleHttp(res, 'ERROR_DELETE_PRODUCT', e)
   }
 }
 

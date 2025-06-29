@@ -25,7 +25,7 @@ const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    handleHttp(res, 'ERROR_CREATE_SALE_WITH_ITEMS', e)
   }
 }
 
@@ -58,7 +58,7 @@ const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Prom
     })
     res.send('Ventas guardadas')
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    handleHttp(res, 'ERROR_CREATE_MULTIPLE_SALES', e)
   }
 }
 
@@ -69,26 +69,24 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const response2 = await getItemSale(new Types.ObjectId(id))
     res.send({ r: response[0], itemsSale: response2 })
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_SALE_BY_ID', e)
   }
 }
 
-const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
+const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
 
-    console.log('input', input, skip, limit)
-
     if (input !== undefined) {
-      const response = await getSales(input)
+      const response = await getSales(input, new Types.ObjectId(user.id), user.role)
       res.send(response)
     } else {
-      const response = await getSalesLimit(parseInt(skip), parseInt(limit))
+      const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role)
       const cantidad = await qtySale()
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_SALES_LIST', e)
   }
 }
 
@@ -112,7 +110,7 @@ const updateItem = async ({ params, body, user }: RequestExt, res: Response): Pr
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_PATCH_ITEM', e)
+    handleHttp(res, 'ERROR_UPDATE_SALE_WITH_ITEMS', e)
   }
 }
 
@@ -213,9 +211,8 @@ const printSale = async (req: Request, res: Response): Promise<void> => {
 
     // Finalizar el documento
     doc.end()
-  } catch (e: any) {
-    console.error('Error al generar el PDF:', e.message, e.stack)
-    handleHttp(res, 'ERROR_PRINT_SALE')
+  } catch (e) {
+    handleHttp(res, 'ERROR_PRINT_SALE_PDF', e)
   }
 }
 
@@ -356,7 +353,7 @@ const printSales = async (req: Request, res: Response): Promise<void> => {
     doc.end()
   } catch (e: any) {
     console.error('Error al generar el PDF:', e.message, e.stack)
-    handleHttp(res, 'ERROR_PRINT_SALES')
+    handleHttp(res, 'ERROR_PRINT_MULTIPLE_SALES_PDF', e)
   }
 }
 
