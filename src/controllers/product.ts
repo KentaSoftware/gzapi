@@ -201,7 +201,13 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
     // Agregar el listener solo una vez
     doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
 
+    console.log("ppp")
+
     products.forEach((itemProduct: Product) => {
+      if ((itemProduct.precioUnitario) <= 1){
+        console.log(itemProduct.descripcion, itemProduct.precioUnitario)
+        return
+      }
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
@@ -215,7 +221,7 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
         .text(`${itemProduct.descripcion}`, 50, yPosition);
 
       // Escribir el precio del producto en la misma posición Y
-      if (itemProduct.precioDescuento !== undefined && itemProduct.precioDescuento > 0) {
+      if (itemProduct.precioDescuento !== undefined && itemProduct.precioDescuento > 1) {
         if (isPrecioUnitario || isPrecioUnitario === undefined) {
           doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
             .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition);
@@ -279,6 +285,8 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
     doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
 
     products.forEach((itemProduct: Product) => {
+      if (itemProduct.precioUnitario <= 1) return
+
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
