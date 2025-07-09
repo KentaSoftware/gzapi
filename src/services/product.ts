@@ -280,6 +280,8 @@ const getProductsSearch = async (input: string, filter: Filter): Promise<Product
     query = Object.assign({}, query, filter)
   }
 
+  console.log('query', query)
+
   return await ProductModel.aggregate(
     [
       {

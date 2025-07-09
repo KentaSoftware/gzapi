@@ -10,6 +10,8 @@ const checkPermission = (action: string) => {
     try {
       const user = req.user as any
 
+      console.log('user', user)
+
       if (!user || !user.role || !user.role.permissions) {
         res.status(403)
         res.send('TOKEN_NO_VALIDO_O_SIN_PERMISOS')
