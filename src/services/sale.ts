@@ -7,10 +7,8 @@ const insertSale = async (item: Sale): Promise<Sale> => {
   return responseInsert
 }
 
-const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Promise<Sale[]> => {
+const getSales = async (input: string, user: Types.ObjectId, userRole?: any, filteruser?: any): Promise<Sale[]> => {
   const query: any = {}
-
-  console.log("input", input)
 
   if (input !== '') {
     query.cliente = {
@@ -18,6 +16,12 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Pr
       $options: 'i'
     }
   }
+
+  if (filteruser) {
+    query.user = filteruser
+  }
+
+  console.log('query', query)
 
   // Si el usuario es admin, no filtrar por usuario
   if (userRole && userRole.name === 'admin') {
@@ -85,6 +89,12 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
   if (userRole && userRole.name === 'admin') {
     const response = await SaleModel.aggregate([
       {
+        $skip: skip
+      },
+      {
+        $limit: limit
+      },
+      {
         $lookup: {
           from: 'itemsales',
           localField: '_id',
@@ -104,12 +114,6 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
       },
       {
         $sort: { createdAt: -1 }
-      },
-      {
-        $skip: skip
-      },
-      {
-        $limit: limit
       }
     ])
     return response
@@ -119,6 +123,15 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
   const response = await SaleModel.aggregate([
     {
       $match: { user: user }
+    },
+    {
+      $sort: { createdAt: -1 }
+    },
+    {
+      $skip: skip
+    },
+    {
+      $limit: limit
     },
     {
       $lookup: {
@@ -137,15 +150,6 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
       $project: {
         itemSales: 0
       }
-    },
-    {
-      $sort: { createdAt: -1 }
-    },
-    {
-      $skip: skip
-    },
-    {
-      $limit: limit
     }
   ])
   return response

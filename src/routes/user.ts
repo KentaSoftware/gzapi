@@ -1,12 +1,13 @@
 import { Router } from 'express'
 import { checkJwt } from '../middleware/session'
 import { checkPermission } from '../middleware/checkPermission'
-import { deleteItem, getItem, getItems, updateItem } from '../controllers/user'
+import { deleteItem, getItem, getItems, updateItem, getAllItems } from '../controllers/user'
 
 const router = Router()
 
 router.get('/', checkJwt, checkPermission('read_user'), getItems)
 router.get('/:id', checkJwt, checkPermission('read_user'), getItem)
+router.get('/get/all', checkJwt, checkPermission('read_user'), getAllItems)
 router.post('/skip', checkJwt, checkPermission('read_user'), getItems)
 router.post('/search', checkJwt, checkPermission('read_user'), getItems)
 router.patch('/:id', checkJwt, checkPermission('update_user'), updateItem)

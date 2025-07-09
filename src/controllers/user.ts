@@ -2,11 +2,21 @@ import { Request, Response } from 'express'
 import { Types } from 'mongoose'
 import { JwtPayload } from 'jsonwebtoken'
 import { emitSocket } from '../socket'
-import { getUser, getUsers, updateUser, deleteUser, getUserSearch, qtyUsers } from '../services/user'
+import { getUser, getUsers, updateUser, deleteUser, getUserSearch, qtyUsers, getAllUsers } from '../services/user'
 import { handleHttp } from '../utils/error.handle'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
+}
+
+const getAllItems = async (_: RequestExt, res: Response): Promise<void> => {
+  try {
+    console.log('getAllItems')
+    const response = await getAllUsers()
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_USERS_LIST', e)
+  }
 }
 
 const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => {
@@ -66,4 +76,4 @@ const deleteItem = async ({ params }: Request, res: Response): Promise<void> => 
   }
 }
 
-export { getItem, getItems, updateItem, deleteItem } 
+export { getItem, getItems, updateItem, deleteItem, getAllItems } 

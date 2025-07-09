@@ -25,9 +25,7 @@ const createItem = async ({ body }: RequestExt, res: Response): Promise<void> =>
 const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
-    console.log('id', id)
     const response = await getRole(new Types.ObjectId(id))
-    console.log('response', response)
     res.send(response)
   } catch (e) {
     handleHttp(res, 'ERROR_GET_ROLE_BY_ID', e)

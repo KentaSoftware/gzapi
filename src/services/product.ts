@@ -3,6 +3,7 @@ import { Product } from '../interfaces/product.interface'
 import ProductModel from '../models/product'
 
 const insertProduct = async (item: Product): Promise<Product> => {
+  console.log("item insertProduct", item)
   const responseInsert = await ProductModel.create(item)
   return responseInsert
 }

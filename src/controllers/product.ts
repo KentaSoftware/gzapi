@@ -35,8 +35,6 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
 
-    console.log('input', input, skip, limit)
-
     const filter = {
       categoria: body.categoria,
       marca: body.marca,
@@ -76,7 +74,9 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
 const uptdateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
   try {
     const { id } = params
+    console.log("body", body)
     const response = await updateProduct(new Types.ObjectId(id), { ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) })
+    console.log("emit")
     emitSocket('product', {
       action: 'update',
       data: body
@@ -136,6 +136,15 @@ const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => 
 
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   try {
+    console.log("body", body)
+    // Eliminar _id si existe y está vacío o es inválido
+    if (body._id && (body._id === "" || body._id === null || body._id === undefined)) {
+      delete body._id
+    }
+    // También eliminar _id si existe pero no es válido para ObjectId
+    if (body._id && typeof body._id === 'string' && body._id.trim() === '') {
+      delete body._id
+    }
     const response = await insertProduct({ ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) })
     emitSocket('product', {
       action: 'create',
@@ -143,6 +152,7 @@ const postItem = async ({ body }: Request, res: Response): Promise<void> => {
     })
     res.send(response)
   } catch (e) {
+    console.log("error", e)
     handleHttp(res, 'ERROR_CREATE_PRODUCT', e)
   }
 }
@@ -201,11 +211,8 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
     // Agregar el listener solo una vez
     doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
 
-    console.log("ppp")
-
     products.forEach((itemProduct: Product) => {
       if ((itemProduct.precioUnitario) <= 1){
-        console.log(itemProduct.descripcion, itemProduct.precioUnitario)
         return
       }
       if (itemProduct.NameCategoria !== categorieActive) {

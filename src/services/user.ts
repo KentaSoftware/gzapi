@@ -9,6 +9,10 @@ interface UserResponse {
   nameRole: string;
 }
 
+const getAllUsers = async (): Promise<any[]> => {
+  const response = await UserModel.find({})
+  return response
+}
 
 const getUserSearch = async (input: string): Promise<UserResponse[]> => {
 
@@ -250,4 +254,4 @@ const deleteUser = async (id: Types.ObjectId): Promise<any> => {
   return response
 }
 
-export { getUser, getUsers, updateUser, deleteUser, getUserSearch, qtyUsers } 
+export { getUser, getUsers, updateUser, deleteUser, getUserSearch, qtyUsers, getAllUsers } 
