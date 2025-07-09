@@ -17,8 +17,10 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
     }
   }
 
+  console.log('filteruser', filteruser)
+
   if (filteruser) {
-    query.user = filteruser
+    query.user = new Types.ObjectId(filteruser)
   }
 
   console.log('query', query)
@@ -26,6 +28,12 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
   // Si el usuario es admin, no filtrar por usuario
   if (userRole && userRole.name === 'admin') {
     const response = await SaleModel.aggregate([
+      {
+        $sort: { createdAt: -1 }
+      },
+      {
+        $match: { ...query }
+      },
       {
         $lookup: {
           from: 'itemsales',
@@ -43,12 +51,6 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
         $project: {
           itemSales: 0
         }
-      },
-      {
-        $match: { ...query }
-      },
-      {
-        $sort: { createdAt: -1 }
       }
     ])
     return response
@@ -57,6 +59,9 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
   // Si no es admin, filtrar por usuario
   const response = await SaleModel.aggregate([{
     $match: { ...query, user: user }
+  },
+  {
+    $sort: { createdAt: -1 }
   },
   {
     $lookup: {
@@ -75,9 +80,6 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
     $project: {
       itemSales: 0
     }
-  },
-  {
-    $sort: { createdAt: -1 }
   }
   ])
 
@@ -88,6 +90,9 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
   // Si el usuario es admin, no filtrar por usuario
   if (userRole && userRole.name === 'admin') {
     const response = await SaleModel.aggregate([
+      {
+        $sort: { createdAt: -1 }
+      },
       {
         $skip: skip
       },
@@ -111,9 +116,6 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
         $project: {
           itemSales: 0
         }
-      },
-      {
-        $sort: { createdAt: -1 }
       }
     ])
     return response

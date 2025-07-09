@@ -19,6 +19,7 @@ const registerCtrl = async ({ body }: Request, res: Response): Promise<void> => 
 
 const loginCtrl = async ({ body }: Request, res: Response): Promise<void> => {
   try {
+    console.log("body", body)
     const responseUser = await loginUser(body)
 
     if (responseUser === 'PASSWORD_INCORRECT') {

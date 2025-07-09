@@ -75,10 +75,12 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
 
 const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
+    console.log('body', body)
+
     const { input, skip, limit, filterUser } = body
 
-    if (input !== undefined) {
-      const response = await getSales(input, new Types.ObjectId(user.id), user.role, new Types.ObjectId(filterUser))
+    if (input !== undefined || filterUser !== undefined) {
+      const response = await getSales(input, new Types.ObjectId(user.id), user.role, filterUser)
       res.send(response)
     } else {
       const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role)
