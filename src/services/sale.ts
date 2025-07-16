@@ -36,6 +36,14 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
       },
       {
         $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      {
+        $lookup: {
           from: 'itemsales',
           localField: '_id',
           foreignField: 'idVenta',
@@ -44,12 +52,14 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
       },
       {
         $addFields: {
-          itemsLength: { $size: '$itemSales' }
+          itemsLength: { $size: '$itemSales' },
+          userCreate: '$user.nickname'
         }
       },
       {
         $project: {
-          itemSales: 0
+          itemSales: 0,
+          user: 0
         }
       }
     ])
@@ -101,6 +111,17 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
       },
       {
         $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      {
+        $unwind: '$user'
+      },
+      {
+        $lookup: {
           from: 'itemsales',
           localField: '_id',
           foreignField: 'idVenta',
@@ -109,12 +130,14 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
       },
       {
         $addFields: {
-          itemsLength: { $size: '$itemSales' }
+          itemsLength: { $size: '$itemSales' },
+          userCreate: '$user.nickname'
         }
       },
       {
         $project: {
-          itemSales: 0
+          itemSales: 0,
+          user: 0
         }
       }
     ])

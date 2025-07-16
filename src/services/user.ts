@@ -7,6 +7,7 @@ interface UserResponse {
   nickname: string;
   role: string;
   nameRole: string;
+  isActive?: boolean;
 }
 
 const getAllUsers = async (): Promise<any[]> => {
@@ -96,7 +97,8 @@ const getUserSearch = async (input: string): Promise<UserResponse[]> => {
           role: '$role._id',
           nameRole: '$role.name',
           qtySaleUser: 1,
-          gain: 1
+          gain: 1,
+          isActive: 1
         }
       },
       {
@@ -185,7 +187,8 @@ const getUsers = async (skip: number, limit: number): Promise<UserResponse[]> =>
           role: '$role._id',
           nameRole: '$role.name',
           qtySaleUser: 1,
-          gain: 1
+          gain: 1,
+          isActive: 1
         }
       }
     ]
@@ -200,12 +203,13 @@ const qtyUsers = async (): Promise<any> => {
 }
 
 const getUser = async (id: Types.ObjectId): Promise<UserResponse | null> => {
-  const response = await UserModel.findById(id, { nickname: 1, role: 1, _id: 0 }).populate('role')
+  const response = await UserModel.findById(id, { nickname: 1, role: 1, _id: 0, isActive: 1 }).populate('role')
   if (!response) return null
   return {
     nickname: response.nickname,
     role: response.role._id,
-    nameRole: response.role.name
+    nameRole: response.role.name,
+    isActive: response.isActive
   }
 }
 

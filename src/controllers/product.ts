@@ -31,7 +31,7 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
   }
 }
 
-const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
+const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
 
@@ -60,10 +60,10 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
     }
 
     if (input !== undefined || filter.categoria !== undefined || filter.marca !== undefined || filter.proveedor !== undefined) {
-      const response = await getProductsSearch(input, filter)
+      const response = await getProductsSearch(input, filter, user.role)
       res.send(response)
     } else {
-      const response = await getProducts(parseInt(skip), parseInt(limit))
+      const response = await getProducts(parseInt(skip), parseInt(limit), user.role)
       const cantidad = await qtyProduct()
       res.send({ array: response, longitud: cantidad })
     }
@@ -212,7 +212,7 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
     doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
 
     products.forEach((itemProduct: Product) => {
-      if ((itemProduct.precioUnitario) <= 1){
+      if ((itemProduct.precioUnitario) <= 1) {
         return
       }
       if (itemProduct.NameCategoria !== categorieActive) {

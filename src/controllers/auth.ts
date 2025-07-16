@@ -22,6 +22,12 @@ const loginCtrl = async ({ body }: Request, res: Response): Promise<void> => {
     console.log("body", body)
     const responseUser = await loginUser(body)
 
+    if (responseUser === 'USUARIO_NO_ACTIVO') {
+      res.status(401)
+      res.send(responseUser)
+      return
+    }
+
     if (responseUser === 'PASSWORD_INCORRECT') {
       res.status(403)
       res.send(responseUser)

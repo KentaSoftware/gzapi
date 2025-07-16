@@ -25,6 +25,7 @@ const loginUser = async ({ nickname, password }: Auth): Promise<Partial<AuthWith
   const passwordHash = checkIs.password
   const isCorrect = await verified(password, passwordHash)
   if (!isCorrect) return 'PASSWORD_INCORRECT'
+  if (!checkIs.isActive) return 'USUARIO_NO_ACTIVO'
   const token = await generateToken(checkIs)
   const data = { nickname: checkIs.nickname, token, nameRole: checkIs.role.name }
   return data

@@ -10,11 +10,8 @@ const checkJwt = async (req: RequestExt, res: Response, next: NextFunction): Pro
   try {
 
     const jwtByUser = req.headers.authorization
-    console.log('jwtByUser', jwtByUser)
     const jwt = jwtByUser?.split(' ').pop()
-    console.log('jwt', jwt)
     const isUser = await verifyToken(`${jwt ?? ''}`)
-    console.log('isUser', isUser)
     const isOk = Boolean(isUser)
     if (!isOk) {
       res.status(401)

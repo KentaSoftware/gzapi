@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express'
 import { JwtPayload } from 'jsonwebtoken'
+import UserModel from '../models/user'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | any
@@ -9,8 +10,6 @@ const checkPermission = (action: string) => {
   return async (req: RequestExt, res: Response, next: NextFunction): Promise<void> => {
     try {
       const user = req.user as any
-
-      console.log('user', user)
 
       if (!user || !user.role || !user.role.permissions) {
         res.status(403)
@@ -29,6 +28,18 @@ const checkPermission = (action: string) => {
 
       // Agregar el ID del usuario a la respuesta
       res.locals.userId = user.id
+
+      const usuarioDB = await UserModel.findById(user.id);
+
+      console.log("usuarioDB", usuarioDB)
+
+      if (!usuarioDB || usuarioDB.isActive !== true) {
+        console.log("Usuario no activo", usuarioDB)
+        res.status(403);
+        res.send('USUARIO_NO_ACTIVO');
+        return;
+      }
+
       next()
     } catch (e) {
       console.error('Error checking permissions:', e)

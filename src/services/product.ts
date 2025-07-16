@@ -189,8 +189,83 @@ const getAllProductsCategories = async (categories: string[] | undefined): Promi
   ])
 }
 
-const getProducts = async (skip: number, limit: number): Promise<Product[]> => {
+const getProducts = async (skip: number, limit: number, userRole?: any): Promise<Product[]> => {
   console.log('skip getProducts service', skip, limit)
+  if (userRole && userRole.name === 'admin') {
+    // Agregamos un $match para filtrar productos con precioUnitario > 1
+    return await ProductModel.aggregate(
+      [
+        {
+          $lookup: {
+            from: 'categories',
+            localField: 'categoria',
+            foreignField: '_id',
+            as: 'categoria'
+          }
+        },
+        {
+          $lookup: {
+            from: 'brands',
+            localField: 'marca',
+            foreignField: '_id',
+            as: 'marca'
+          }
+        },
+        {
+          $lookup: {
+            from: 'providers',
+            localField: 'proveedor',
+            foreignField: '_id',
+            as: 'proveedor'
+          }
+        },
+        {
+          $project: {
+            descripcion: 1,
+            stock: 1,
+            codigoBarra: 1,
+            peso: 1,
+            /* sabor: 1, */
+            bulto: 1,
+            precioBulto: 1,
+            precioCompra: 1,
+            precioUnitario: 1,
+            precioDescuento: 1,
+            categoria: '$categoria._id',
+            proveedor: '$proveedor._id',
+            marca: '$marca._id',
+            NameProveedor: '$proveedor.descripcion',
+            NameMarca: '$marca.descripcion',
+            NameCategoria: '$categoria.descripcion',
+            createdAt: 1,
+            updatedAt: 1,
+            descripcionLower: { $toLower: '$descripcion' }
+          }
+        },
+        {
+          $unwind: '$categoria'
+        },
+        {
+          $unwind: '$proveedor'
+        },
+        {
+          $unwind: '$marca'
+        },
+        {
+          $unwind: '$NameProveedor'
+        },
+        {
+          $unwind: '$NameMarca'
+        },
+        {
+          $unwind: '$NameCategoria'
+        },
+        {
+          $sort: { descripcionLower: 1 }
+        }
+      ]
+    ).skip(skip).limit(limit)
+  }
   return await ProductModel.aggregate(
     [
       {
@@ -241,6 +316,11 @@ const getProducts = async (skip: number, limit: number): Promise<Product[]> => {
         }
       },
       {
+        $match: {
+          precioUnitario: { $gt: 1 }
+        }
+      },
+      {
         $unwind: '$categoria'
       },
       {
@@ -265,7 +345,7 @@ const getProducts = async (skip: number, limit: number): Promise<Product[]> => {
   ).skip(skip).limit(limit)
 }
 
-const getProductsSearch = async (input: string, filter: Filter): Promise<Product[]> => {
+const getProductsSearch = async (input: string, filter: Filter, userRole?: any): Promise<Product[]> => {
   let query: any = {
   }
 
@@ -281,6 +361,78 @@ const getProductsSearch = async (input: string, filter: Filter): Promise<Product
   }
 
   console.log('query', query)
+
+  if (userRole && userRole.name === 'admin') {
+    return await ProductModel.aggregate(
+      [
+        {
+          $lookup: {
+            from: 'categories',
+            localField: 'categoria',
+            foreignField: '_id',
+            as: 'categoria'
+          }
+        },
+        {
+          $lookup: {
+            from: 'brands',
+            localField: 'marca',
+            foreignField: '_id',
+            as: 'marca'
+          }
+        },
+        {
+          $lookup: {
+            from: 'providers',
+            localField: 'proveedor',
+            foreignField: '_id',
+            as: 'proveedor'
+          }
+        },
+        {
+          $project: {
+            descripcion: 1,
+            stock: 1,
+            codigoBarra: 1,
+            precioUnitario: 1,
+            precioDescuento: 1,
+            categoria: '$categoria._id',
+            marca: '$marca._id',
+            proveedor: '$proveedor._id',
+            NameMarca: '$marca.descripcion',
+            NameCategoria: '$categoria.descripcion',
+            NameProveedor: '$proveedor.descripcion',
+            createdAt: 1,
+            updatedAt: 1
+          }
+        },
+        {
+          $unwind: '$categoria'
+        },
+        {
+          $unwind: '$marca'
+        },
+        {
+          $unwind: '$proveedor'
+        },
+        {
+          $unwind: '$NameMarca'
+        },
+        {
+          $unwind: '$NameCategoria'
+        },
+        {
+          $unwind: '$NameProveedor'
+        },
+        {
+          $match: query
+        },
+        {
+          $sort: { descripcion: 1 }
+        }
+      ]
+    )
+  }
 
   return await ProductModel.aggregate(
     [
@@ -323,6 +475,11 @@ const getProductsSearch = async (input: string, filter: Filter): Promise<Product
           NameProveedor: '$proveedor.descripcion',
           createdAt: 1,
           updatedAt: 1
+        }
+      },
+      {
+        $match: {
+          precioUnitario: { $gt: 1 }
         }
       },
       {
