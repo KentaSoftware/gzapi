@@ -29,7 +29,6 @@ export function getIO(): ServerType {
 
 export function emitSocket(type: string, params: Object) {
   try {
-    console.log("emitSocket", type, params)
     /* if (params.res._id) {
       controller.addReg({
         coleccion: type,

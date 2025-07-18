@@ -3,7 +3,6 @@ import { Product } from '../interfaces/product.interface'
 import ProductModel from '../models/product'
 
 const insertProduct = async (item: Product): Promise<Product> => {
-  console.log("item insertProduct", item)
   const responseInsert = await ProductModel.create(item)
   return responseInsert
 }
@@ -190,7 +189,7 @@ const getAllProductsCategories = async (categories: string[] | undefined): Promi
 }
 
 const getProducts = async (skip: number, limit: number, userRole?: any): Promise<Product[]> => {
-  console.log('skip getProducts service', skip, limit)
+
   if (userRole && userRole.name === 'admin') {
     // Agregamos un $match para filtrar productos con precioUnitario > 1
     return await ProductModel.aggregate(
@@ -359,8 +358,6 @@ const getProductsSearch = async (input: string, filter: Filter, userRole?: any):
   if (filter.categoria !== undefined || filter.marca !== undefined || filter.proveedor !== undefined) {
     query = Object.assign({}, query, filter)
   }
-
-  console.log('query', query)
 
   if (userRole && userRole.name === 'admin') {
     return await ProductModel.aggregate(
@@ -625,4 +622,32 @@ const findProducts = async (filter: Filter): Promise<any> => {
   return response
 }
 
-export { getProduct, getProducts, insertProduct, updateProduct, getProductsSearch, findProducts, qtyProduct, getAllProducts, getAllProductsCategories }
+// Consulta para obtener la última fecha de updatedAt y createdAt de los productos
+const getUltimasFechasProductoService = async (): Promise<{ ultimaCreatedAt: Date | null, ultimaUpdatedAt: Date | null }> => {
+  // Obtener el producto con la fecha de creación más reciente
+  const ultimoCreado = await ProductModel.findOne({}, { createdAt: 1 }).sort({ createdAt: -1 }).lean() as Product;
+  // Obtener el producto con la fecha de actualización más reciente
+  const ultimoActualizado = await ProductModel.findOne({}, { updatedAt: 1 }).sort({ updatedAt: -1 }).lean() as Product;
+
+  // Restar 3 horas a las fechas si existen
+  let ultimaCreatedAt: Date | null = null;
+  let ultimaUpdatedAt: Date | null = null;
+
+  if (ultimoCreado?.createdAt) {
+    ultimaCreatedAt = new Date(ultimoCreado.createdAt);
+    ultimaCreatedAt.setHours(ultimaCreatedAt.getHours() - 3);
+  }
+
+  if (ultimoActualizado?.updatedAt) {
+    ultimaUpdatedAt = new Date(ultimoActualizado.updatedAt);
+    ultimaUpdatedAt.setHours(ultimaUpdatedAt.getHours() - 3);
+  }
+
+  return {
+    ultimaCreatedAt,
+    ultimaUpdatedAt
+  };
+};
+
+
+export { getProduct, getProducts, insertProduct, updateProduct, getProductsSearch, findProducts, qtyProduct, getAllProducts, getAllProductsCategories, getUltimasFechasProductoService }

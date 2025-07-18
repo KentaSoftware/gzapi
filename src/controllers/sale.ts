@@ -75,8 +75,6 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
 
 const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
-    console.log('body', body)
-
     const { input, skip, limit, filterUser } = body
 
     if (input !== undefined || filterUser !== undefined) {

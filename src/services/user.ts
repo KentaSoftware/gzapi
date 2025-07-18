@@ -111,7 +111,7 @@ const getUserSearch = async (input: string): Promise<UserResponse[]> => {
 }
 
 const getUsers = async (skip: number, limit: number): Promise<UserResponse[]> => {
-  console.log('skip getUsers service', skip, limit)
+
   const response = await UserModel.aggregate(
     [
       {
@@ -216,26 +216,17 @@ const getUser = async (id: Types.ObjectId): Promise<UserResponse | null> => {
 const updateUser = async (id: Types.ObjectId, item: Partial<User>): Promise<any> => {
   let updateData = { ...item };
 
-  console.log('updateData1', updateData, id)
-
   if (item.password && item.password !== '') {
-    console.log('cambie password')
     updateData.password = await encrypt(item.password);
   } else {
-    console.log('no cambie password')
     const { password, ...updateDataWithoutPassword } = updateData;
     updateData = updateDataWithoutPassword;
   }
-
-  console.log('updateData2', updateData)
-
   const response: any = await UserModel.findByIdAndUpdate(
     id,
     updateData,
     { new: true }
   );
-
-  console.log('response 123', response)
 
   if (!response) return null;
 

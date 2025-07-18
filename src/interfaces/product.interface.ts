@@ -19,6 +19,8 @@ export interface Product {
   NameProveedor?: string,
   NameMarca?: string,
   NameCategoria?: string
+  createdAt?: Date
+  updatedAt?: Date
 }
 
 interface Peso {

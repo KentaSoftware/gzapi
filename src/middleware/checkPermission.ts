@@ -31,10 +31,7 @@ const checkPermission = (action: string) => {
 
       const usuarioDB = await UserModel.findById(user.id);
 
-      console.log("usuarioDB", usuarioDB)
-
       if (!usuarioDB || usuarioDB.isActive !== true) {
-        console.log("Usuario no activo", usuarioDB)
         res.status(403);
         res.send('USUARIO_NO_ACTIVO');
         return;

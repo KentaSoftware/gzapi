@@ -11,7 +11,6 @@ interface RequestExt extends Request {
 
 const getAllItems = async (_: RequestExt, res: Response): Promise<void> => {
   try {
-    console.log('getAllItems')
     const response = await getAllUsers()
     res.send(response)
   } catch (e) {
@@ -32,7 +31,6 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
 const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
-    console.log('input', input, skip, limit)
     if (input !== undefined && skip === undefined && limit === undefined) {
       const response = await getUserSearch(input)
       res.send(response)
@@ -54,7 +52,6 @@ const updateItem = async ({ params, body }: Request, res: Response): Promise<voi
       action: 'update',
       data: response
     })
-    console.log('response', response)
     res.send(response)
   } catch (e) {
     console.log('error', e)

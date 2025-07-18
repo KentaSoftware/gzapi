@@ -17,13 +17,9 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
     }
   }
 
-  console.log('filteruser', filteruser)
-
   if (filteruser) {
     query.user = new Types.ObjectId(filteruser)
   }
-
-  console.log('query', query)
 
   // Si el usuario es admin, no filtrar por usuario
   if (userRole && userRole.name === 'admin') {

@@ -3,7 +3,7 @@ import { handleHttp } from '../utils/error.handle'
 import { Types } from 'mongoose'
 import { JwtPayload } from 'jsonwebtoken'
 import { emitSocket } from '../socket'
-import { findProducts, getAllProducts, getAllProductsCategories, getProduct, getProducts, getProductsSearch, insertProduct, qtyProduct, updateProduct } from '../services/product'
+import { findProducts, getAllProducts, getAllProductsCategories, getProduct, getProducts, getProductsSearch, getUltimasFechasProductoService, insertProduct, qtyProduct, updateProduct } from '../services/product'
 import { Product } from '../interfaces/product.interface'
 import { ObjectId } from 'mongodb'
 import PDFDocument from 'pdfkit'
@@ -74,9 +74,7 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
 const uptdateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
   try {
     const { id } = params
-    console.log("body", body)
     const response = await updateProduct(new Types.ObjectId(id), { ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) })
-    console.log("emit")
     emitSocket('product', {
       action: 'update',
       data: body
@@ -136,7 +134,6 @@ const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => 
 
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   try {
-    console.log("body", body)
     // Eliminar _id si existe y está vacío o es inválido
     if (body._id && (body._id === "" || body._id === null || body._id === undefined)) {
       delete body._id
@@ -343,4 +340,13 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
   }
 }
 
-export { getItem, getItems, uptdateItem, postItem, deleteItem, uptdateItems, uploadImage, getImage, getAllItems, getNothing, printList, printListWithDiscount }
+const getUltimasFechasProducto = async (_: RequestExt, res: Response): Promise<void> => {
+  try {
+    const response = await getUltimasFechasProductoService()
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_ULTIMAS_FECHAS_PRODUCTO')
+  }
+}
+
+export { getItem, getItems, uptdateItem, postItem, deleteItem, uptdateItems, uploadImage, getImage, getAllItems, getNothing, printList, printListWithDiscount, getUltimasFechasProducto }
