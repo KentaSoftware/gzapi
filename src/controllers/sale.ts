@@ -91,7 +91,7 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
   }
 }
 
-const updateItem = async ({ params, body, user }: RequestExt, res: Response): Promise<void> => {
+const updateItem = async ({ params, body }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
     const response = await updateSale(new Types.ObjectId(id), { ...body })
