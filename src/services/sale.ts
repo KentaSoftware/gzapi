@@ -7,7 +7,7 @@ const insertSale = async (item: Sale): Promise<Sale> => {
   return responseInsert
 }
 
-const getSales = async (input: string, user: Types.ObjectId, userRole?: any, filteruser?: any): Promise<Sale[]> => {
+const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Promise<Sale[]> => {
   const query: any = {}
 
   if (input !== '') {
@@ -17,18 +17,12 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
     }
   }
 
-  if (filteruser) {
-    query.user = new Types.ObjectId(filteruser)
-  }
 
   // Si el usuario es admin, no filtrar por usuario
   if (userRole && userRole.name === 'admin') {
     const response = await SaleModel.aggregate([
       {
         $sort: { createdAt: -1 }
-      },
-      {
-        $match: { ...query }
       },
       {
         $lookup: {
@@ -92,12 +86,23 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any, fil
   return response
 }
 
-const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, userRole?: any): Promise<Sale[]> => {
+const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, userRole?: any, filterUser?: any): Promise<Sale[]> => {
+  const query: any = {}
+
   // Si el usuario es admin, no filtrar por usuario
+  if (filterUser) {
+    query.user = new Types.ObjectId(filterUser)
+  }
+
+  console.log(query)
+
   if (userRole && userRole.name === 'admin') {
     const response = await SaleModel.aggregate([
       {
         $sort: { createdAt: -1 }
+      },
+      {
+        $match: { ...query }
       },
       {
         $skip: skip
