@@ -76,12 +76,13 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
 const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit, filterUser } = body
+    console.log("filterUserController", filterUser)
 
-    if (input !== undefined || filterUser !== undefined) {
-      const response = await getSales(input, new Types.ObjectId(user.id), user.role, filterUser)
+    if (input !== undefined) {
+      const response = await getSales(input, new Types.ObjectId(user.id), user.role)
       res.send(response)
     } else {
-      const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role)
+      const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role, filterUser)
       const cantidad = await qtySale()
       res.send({ array: response, longitud: cantidad })
     }
@@ -93,7 +94,7 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
 const updateItem = async ({ params, body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
-    const response = await updateSale(new Types.ObjectId(id), { ...body, user: new Types.ObjectId(user.id) })
+    const response = await updateSale(new Types.ObjectId(id), { ...body })
     await Promise.all(
       body.itemsSale.map(async (item: any) => {
         // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
