@@ -105,6 +105,7 @@ const updateItem = async ({ params, body }: RequestExt, res: Response): Promise<
         }
       })
     )
+    console.log("response", response)
     emitSocket('sale', {
       action: 'update',
       data: response
