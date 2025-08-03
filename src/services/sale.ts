@@ -191,7 +191,11 @@ const updateSale = async (id: Types.ObjectId, sale: Sale): Promise<any> => {
   return response
 }
 
-const qtySale = async (): Promise<any> => {
+const qtySale = async (filterUser: any): Promise<any> => {
+  if (filterUser) {
+    const response = await SaleModel.countDocuments({ user: filterUser })
+    return response
+  }
   const response = await SaleModel.countDocuments()
   return response
 }

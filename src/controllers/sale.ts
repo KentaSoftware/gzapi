@@ -83,7 +83,7 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
       res.send(response)
     } else {
       const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role, filterUser)
-      const cantidad = await qtySale()
+      const cantidad = await qtySale(filterUser)
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {

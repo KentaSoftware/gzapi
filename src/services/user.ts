@@ -11,8 +11,9 @@ interface UserResponse {
 }
 
 const getAllUsers = async (): Promise<any[]> => {
-  const response = await UserModel.find({})
-  return response
+  // Excluimos los campos 'password' y 'role' usando la proyección de Mongoose
+  const response = await UserModel.find({}, { password: 0, role: 0 });
+  return response;
 }
 
 const getUserSearch = async (input: string): Promise<UserResponse[]> => {
