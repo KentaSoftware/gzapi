@@ -7,6 +7,11 @@ const insertSale = async (item: Sale): Promise<Sale> => {
   return responseInsert
 }
 
+const deleteSaleService = async (id: Types.ObjectId): Promise<any> => {
+  const response = await SaleModel.updateOne({ _id: id }, { $set: { estado: 'Cancelado' } })
+  return response
+}
+
 const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Promise<Sale[]> => {
   const query: any = {}
 
@@ -200,4 +205,4 @@ const qtySale = async (filterUser: any): Promise<any> => {
   return response
 }
 
-export { insertSale, getSale, getSales, updateSale, qtySale, getSalesLimit }
+export { insertSale, getSale, getSales, updateSale, qtySale, getSalesLimit, deleteSaleService }

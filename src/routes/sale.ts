@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { checkJwt } from '../middleware/session'
-import { getItem, getItems, postItem, postMultipleItem, printSale, printSales, updateItem } from '../controllers/sale'
+import { deleteSaleController, getItem, getItems, postItem, postMultipleItem, printSale, printSales, updateItem } from '../controllers/sale'
 import { checkPermission } from '../middleware/checkPermission'
 
 const router = Router()
@@ -14,5 +14,6 @@ router.post('/multiple', checkJwt, checkPermission('create_sale'), postMultipleI
 router.patch('/:id', checkJwt, checkPermission('update_sale'), updateItem)
 router.get('/print/:id', checkJwt, checkPermission('read_sale'), printSale)
 router.post('/print', checkJwt, checkPermission('read_sale'), printSales)
+router.delete('/:id', checkJwt, checkPermission('delete_sale'), deleteSaleController)
 
 export { router }

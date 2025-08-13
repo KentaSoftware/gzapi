@@ -1,16 +1,28 @@
 import { Request, Response } from 'express'
-import { getSale, getSales, getSalesLimit, insertSale, qtySale, updateSale } from '../services/sale'
+import { deleteSaleService, getSale, getSales, getSalesLimit, insertSale, qtySale, updateSale } from '../services/sale'
 import { emitSocket } from '../socket'
 import { handleHttp } from '../utils/error.handle'
 import { JwtPayload } from 'jsonwebtoken'
 import { Types } from 'mongoose'
-import { getItemSale, insertItemSale, updateItemsSale } from '../services/itemSale'
+import { deleteItemSaleInSale, getItemSale, insertItemSale, updateItemsSale } from '../services/itemSale'
 import { ItemSale, Sale } from '../interfaces/sale.interface'
 import PDFDocument from 'pdfkit'
 import path from 'path'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
+}
+
+const deleteSaleController = async ({ params }: RequestExt, res: Response): Promise<void> => {
+  try {
+    const { id } = params
+    const response = await deleteSaleService(new Types.ObjectId(id))
+    await deleteItemSaleInSale(new Types.ObjectId(id))
+
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_DELETE_SALE', e)
+  }
 }
 
 const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
@@ -84,6 +96,7 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
     } else {
       const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role, filterUser)
       const cantidad = await qtySale(filterUser)
+      console.log("cantidad", cantidad)
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
@@ -359,4 +372,4 @@ const printSales = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
-export { postItem, getItem, getItems, updateItem, postMultipleItem, printSale, printSales }
+export { postItem, getItem, getItems, updateItem, postMultipleItem, printSale, printSales, deleteSaleController }

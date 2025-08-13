@@ -93,6 +93,14 @@ const updateItemsSale = async (id: Types.ObjectId, item: Partial<ItemSale>): Pro
   return response
 }
 
+const deleteItemSaleInSale = async (id: Types.ObjectId): Promise<any> => {
+  const itemsSale = await ItemSaleModel.find({ idVenta: id })
+  await Promise.all(
+    itemsSale.map(async (item: any) => await ItemSaleModel.updateOne({ _id: item._id }, { $set: { estado: false } }))
+  )
+  return itemsSale
+}
+
 const deleteItemsSale = async (id: Types.ObjectId): Promise<any> => {
   const response = await ItemSaleModel.deleteOne({ _id: id })
   return response
@@ -286,4 +294,4 @@ const getListBuyByDateRange = async (start: string, end: string, prov: string): 
   return response
 }
 
-export { insertItemSale, getItemSales, getItemSale, updateItemsSale, deleteItemsSale, getListBuyAvg, getListBuyByDateRange }
+export { insertItemSale, getItemSales, getItemSale, updateItemsSale, deleteItemsSale, getListBuyAvg, getListBuyByDateRange, deleteItemSaleInSale }

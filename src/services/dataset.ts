@@ -10,6 +10,7 @@ interface Response {
   label: string
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getDailyData = async (): Promise<Response[]> => {
   const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
   const today = new Date()
@@ -31,6 +32,7 @@ const getDailyData = async (): Promise<Response[]> => {
   const responseSale = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: start,
           $lte: end
@@ -49,6 +51,7 @@ const getDailyData = async (): Promise<Response[]> => {
   const responseSaleBefore = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: startBefore,
           $lte: endBefore
@@ -84,18 +87,19 @@ const getDailyData = async (): Promise<Response[]> => {
 
   return [
     responseSale[0] ? {
-      ...responseSale[0], 
-      label: 'sale', 
-      id: 0, 
+      ...responseSale[0],
+      label: 'sale',
+      id: 0,
       date: formattedDate,
       totalSalesDifference: responseSaleBefore[0] ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-      salesCountDifference: responseSaleBefore[0] ?`${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}`: 0
-    } : 
-    { totalSales: 0, salesCount: 0, label: 'sale', id: 0, date: formattedDate, totalSalesDifference: 0, salesCountDifference: 0 },
+      salesCountDifference: responseSaleBefore[0] ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
+    } :
+      { totalSales: 0, salesCount: 0, label: 'sale', id: 0, date: formattedDate, totalSalesDifference: 0, salesCountDifference: 0 },
     responseBuy[0] ? { ...responseBuy[0], label: 'buy', id: 1, date: formattedDate } : { totalSales: 0, salesCount: 0, label: 'buy', id: 1, date: formattedDate }
   ]
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getWeeklyData = async (): Promise<Response[]> => {
   const today = new Date()
   today.setHours(today.getHours() - 3)
@@ -119,6 +123,7 @@ const getWeeklyData = async (): Promise<Response[]> => {
   const responseSale = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: start,
           $lte: end
@@ -137,6 +142,7 @@ const getWeeklyData = async (): Promise<Response[]> => {
   const responseSaleBefore = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: startBefore,
           $lte: endBefore
@@ -170,10 +176,10 @@ const getWeeklyData = async (): Promise<Response[]> => {
     }
   ])
 
-  const rpSale ={
-    ...responseSale[0], 
-    label: 'sale', 
-    id: 0, 
+  const rpSale = {
+    ...responseSale[0],
+    label: 'sale',
+    id: 0,
     date: interval,
     totalSalesDifference: `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}`,
     salesCountDifference: `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}`
@@ -185,6 +191,7 @@ const getWeeklyData = async (): Promise<Response[]> => {
   ]
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getMonthlyData = async (): Promise<Response[]> => {
   const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
   const today = new Date()
@@ -205,6 +212,7 @@ const getMonthlyData = async (): Promise<Response[]> => {
   const responseSale = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: start,
           $lte: end
@@ -223,6 +231,7 @@ const getMonthlyData = async (): Promise<Response[]> => {
   const responseSaleBefore = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: startBefore,
           $lte: endBefore
@@ -256,10 +265,10 @@ const getMonthlyData = async (): Promise<Response[]> => {
     }
   ])
 
-  const rpSale ={
-    ...responseSale[0], 
-    label: 'sale', 
-    id: 0, 
+  const rpSale = {
+    ...responseSale[0],
+    label: 'sale',
+    id: 0,
     date: interval,
     totalSalesDifference: `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}`,
     salesCountDifference: `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}`
@@ -271,6 +280,7 @@ const getMonthlyData = async (): Promise<Response[]> => {
   ]
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getAnnuallyData = async (): Promise<Response[]> => {
   const today = new Date()
   today.setHours(today.getHours() - 3)
@@ -296,6 +306,7 @@ const getAnnuallyData = async (): Promise<Response[]> => {
   const responseSale = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: start,
           $lte: end
@@ -314,6 +325,7 @@ const getAnnuallyData = async (): Promise<Response[]> => {
   const responseSaleBefore = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: startBefore,
           $lte: endBefore
@@ -347,10 +359,10 @@ const getAnnuallyData = async (): Promise<Response[]> => {
     }
   ])
 
-  const rpSale ={
-    ...responseSale[0], 
-    label: 'sale', 
-    id: 0, 
+  const rpSale = {
+    ...responseSale[0],
+    label: 'sale',
+    id: 0,
     date: year,
     totalSalesDifference: `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}`,
     salesCountDifference: `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}`
@@ -362,24 +374,24 @@ const getAnnuallyData = async (): Promise<Response[]> => {
   ]
 }
 
-const getCustomData = async (start: string, end: string ): Promise<Response[]> => {
-  
-const startDate = new Date(start);
-const endDate = new Date(end);
+const getCustomData = async (start: string, end: string): Promise<Response[]> => {
 
-const clearStartDate = addHours(startOfDay(startDate), 3);
-const clearEndDate = addHours(endOfDay(endDate), 3);
+  const startDate = new Date(start);
+  const endDate = new Date(end);
 
-// Calcular la diferencia de días (en valor absoluto)
-const differenceInMilliseconds = Math.abs(clearEndDate.getTime() - clearStartDate.getTime());
-const differenceInDays = differenceInMilliseconds / (1000 * 60 * 60 * 24);
+  const clearStartDate = addHours(startOfDay(startDate), 3);
+  const clearEndDate = addHours(endOfDay(endDate), 3);
 
-// Calcular las fechas anteriores
-const startBefore = new Date(clearStartDate);
-startBefore.setDate(startBefore.getDate() - differenceInDays);
+  // Calcular la diferencia de días (en valor absoluto)
+  const differenceInMilliseconds = Math.abs(clearEndDate.getTime() - clearStartDate.getTime());
+  const differenceInDays = differenceInMilliseconds / (1000 * 60 * 60 * 24);
 
-const endBefore = new Date(clearEndDate);
-endBefore.setDate(endBefore.getDate() - differenceInDays);
+  // Calcular las fechas anteriores
+  const startBefore = new Date(clearStartDate);
+  startBefore.setDate(startBefore.getDate() - differenceInDays);
+
+  const endBefore = new Date(clearEndDate);
+  endBefore.setDate(endBefore.getDate() - differenceInDays);
 
   const dayStart = String(clearStartDate.getDate()).padStart(2, '0')
   const monthStart = String(clearStartDate.getMonth() + 1).padStart(2, '0')
@@ -393,6 +405,7 @@ endBefore.setDate(endBefore.getDate() - differenceInDays);
   const responseSale = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: clearStartDate,
           $lte: clearEndDate
@@ -411,6 +424,7 @@ endBefore.setDate(endBefore.getDate() - differenceInDays);
   const responseSaleBefore = await SaleModel.aggregate([
     {
       $match: {
+        estado: { $ne: 'Cancelado' },
         createdAt: {
           $gte: startBefore,
           $lte: endBefore
@@ -444,22 +458,22 @@ endBefore.setDate(endBefore.getDate() - differenceInDays);
     }
   ])
 
-  const rpSale ={
-    ...responseSale[0], 
-    label: 'sale', 
-    id: 0, 
+  const rpSale = {
+    ...responseSale[0],
+    label: 'sale',
+    id: 0,
     date: interval,
     totalSalesDifference: `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}`,
     salesCountDifference: `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}`
   }
- 
+
   return [
     responseSale[0] ? { ...rpSale } : { totalSales: 0, salesCount: 0, label: 'sale', id: 0, date: interval },
     responseBuy[0] ? { ...responseBuy[0], label: 'buy', id: 1, date: interval } : { totalSales: 0, salesCount: 0, label: 'buy', id: 1, date: interval }
   ]
- return []
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getDailyDataGraph = async (): Promise<any> => {
   const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
   const today = new Date()
@@ -478,7 +492,7 @@ const getDailyDataGraph = async (): Promise<any> => {
     const end = addHours(endOfDay(dayOfWeek), 3)
 
     const responseSale = await SaleModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
+      { $match: { estado: { $ne: 'Cancelado' }, createdAt: { $gte: start, $lte: end } } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
@@ -500,7 +514,7 @@ const getDailyDataGraph = async (): Promise<any> => {
       totalSales: responseBuy[0]?.totalSales || 0,
       salesCount: responseBuy[0]?.salesCount || 0
     }) */
-    
+
     data.push({
       id: i,
       label: days[dayIndex],
@@ -512,6 +526,7 @@ const getDailyDataGraph = async (): Promise<any> => {
   return { data }
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getWeeklyDataGraph = async (): Promise<any> => {
   const today = new Date()
   today.setHours(today.getHours() - 3)
@@ -539,7 +554,7 @@ const getWeeklyDataGraph = async (): Promise<any> => {
     }
 
     const responseSale = await SaleModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
+      { $match: { estado: { $ne: 'Cancelado' }, createdAt: { $gte: start, $lte: end } } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
@@ -573,14 +588,15 @@ const getWeeklyDataGraph = async (): Promise<any> => {
   return { data }
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getMonthlyDataGraph = async (): Promise<any> => {
   const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
   const today = new Date()
   today.setHours(today.getHours() - 3)
   const currentYear = today.getFullYear() // Año actual
 
- /*  const sales = []
-  const buy = [] */
+  /*  const sales = []
+   const buy = [] */
   const data = []
 
   for (let i = 0; i < 12; i++) { // Intentando obtener datos de los últimos 12 meses
@@ -593,7 +609,7 @@ const getMonthlyDataGraph = async (): Promise<any> => {
     }
 
     const responseSale = await SaleModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
+      { $match: { estado: { $ne: 'Cancelado' }, createdAt: { $gte: start, $lte: end } } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
@@ -646,6 +662,7 @@ const getMonthlyDataGraph = async (): Promise<any> => {
   return { data }
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getAnnuallyDataGraph = async (): Promise<any> => {
   const today = new Date()
   today.setHours(today.getHours() - 3)
@@ -698,6 +715,7 @@ const getAnnuallyDataGraph = async (): Promise<any> => {
   return { data }
 }
 
+// Modelos usados: SaleModel (no usa ItemSaleModel)
 const getCustomDataGraph = async (start: string, end: string): Promise<any> => {
   const startDate = new Date(start);
   const endDate = new Date(end);
@@ -725,7 +743,7 @@ const getCustomDataGraph = async (start: string, end: string): Promise<any> => {
 
     // Realizar la consulta de ventas
     const responseSale = await SaleModel.aggregate([
-      { $match: { createdAt: { $gte: startDay, $lte: endDay } } },
+      { $match: { estado: { $ne: 'Cancelado' }, createdAt: { $gte: startDay, $lte: endDay } } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ]);
 
@@ -766,6 +784,7 @@ const getCustomDataGraph = async (start: string, end: string): Promise<any> => {
   return { data };
 };
 
+// Modelos usados: ItemSaleModel (no usa SaleModel)
 const bestSelling = async (): Promise<any[]> => {
   const productosMasVendidos = await ItemSaleModel.aggregate([
     {
@@ -811,6 +830,7 @@ const bestSelling = async (): Promise<any[]> => {
   return productosMasVendidos
 }
 
+// Modelos usados: ItemSaleModel (no usa SaleModel)
 const highProfit = async (): Promise<any[]> => {
   const productosQueGeneranMasDinero = await ItemSaleModel.aggregate([
     {
@@ -856,6 +876,7 @@ const highProfit = async (): Promise<any[]> => {
   return productosQueGeneranMasDinero
 }
 
+// Modelos usados: ItemSaleModel (no usa SaleModel)
 const dataProduct = async (): Promise<any[]> => {
   const productosConMasGanancia = await ItemSaleModel.aggregate([
     {
