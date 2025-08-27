@@ -8,6 +8,7 @@ import { deleteItemSaleInSale, getItemSale, insertItemSale, updateItemsSale } fr
 import { ItemSale, Sale } from '../interfaces/sale.interface'
 import PDFDocument from 'pdfkit'
 import path from 'path'
+import { getClient } from '../services/client'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
@@ -79,7 +80,8 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const { id } = params
     const response = await getSale(new Types.ObjectId(id))
     const response2 = await getItemSale(new Types.ObjectId(id))
-    res.send({ r: response[0], itemsSale: response2 })
+    const response3 = response[0].idCliente ? await getClient(new Types.ObjectId(response[0].idCliente.toString())) : null
+    res.send({ r: response[0], itemsSale: response2, cliente: response3 })
   } catch (e) {
     handleHttp(res, 'ERROR_GET_SALE_BY_ID', e)
   }

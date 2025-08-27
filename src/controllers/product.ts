@@ -162,9 +162,10 @@ const deleteItem = (_: Request, res: Response): void => {
   }
 }
 
-const uploadImage = async (req: Request, res: Response): Promise<void> => {
+const uploadImage = async (_: Request, res: Response): Promise<void> => {
   try {
-    res.send(req.file)
+    /* res.send(req.file) */
+    res.send('hola')
   } catch (e) {
     handleHttp(res, 'ERROR_POST_ITEM', e)
   }

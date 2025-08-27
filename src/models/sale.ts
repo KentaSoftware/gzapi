@@ -21,6 +21,10 @@ const SaleSchema = new Schema<Sale>(
     },
     porcentaje: {
       type: Number
+    },
+    idCliente: {
+      type: Schema.ObjectId,
+      ref: 'Client'
     }
   },
   {
