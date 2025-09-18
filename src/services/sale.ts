@@ -22,10 +22,14 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Pr
     }
   }
 
+  console.log("query", query)
 
   // Si el usuario es admin, no filtrar por usuario
   if (userRole && userRole.name === 'admin') {
     const response = await SaleModel.aggregate([
+      {
+        $match: { ...query }
+      },
       {
         $sort: { createdAt: -1 }
       },

@@ -90,7 +90,6 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
 const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit, filterUser } = body
-    console.log("filterUserController", filterUser)
 
     if (input !== undefined) {
       const response = await getSales(input, new Types.ObjectId(user.id), user.role)
