@@ -1,5 +1,7 @@
 import { Schema, model } from 'mongoose'
 import { Product } from '../interfaces/product.interface'
+import versioned from 'mongoose-versioned'
+import { attachUpdatedBy } from './hooks/versioned-metadata'
 
 const ProductSchema = new Schema<Product>(
   {
@@ -71,6 +73,10 @@ const ProductSchema = new Schema<Product>(
     versionKey: false
   }
 )
+
+ProductSchema.add({ updatedBy: { type: String, required: false } })
+ProductSchema.plugin(versioned, { collection: 'product_versions' as any })
+attachUpdatedBy(ProductSchema)
 
 const ProductModel = model('product', ProductSchema)
 export default ProductModel

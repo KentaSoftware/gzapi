@@ -26,8 +26,9 @@ const checkPermission = (action: string) => {
         return
       }
 
-      // Agregar el ID del usuario a la respuesta
+      // Agregar datos útiles al ciclo de request
       res.locals.userId = user.id
+      res.locals.permission = action
 
       const usuarioDB = await UserModel.findById(user.id);
 

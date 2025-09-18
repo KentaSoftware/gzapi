@@ -214,7 +214,7 @@ const getUser = async (id: Types.ObjectId): Promise<UserResponse | null> => {
   }
 }
 
-const updateUser = async (id: Types.ObjectId, item: Partial<User>): Promise<any> => {
+const updateUser = async (id: Types.ObjectId, item: Partial<User>, context?: { userId?: string }): Promise<any> => {
   let updateData = { ...item };
 
   if (item.password && item.password !== '') {
@@ -226,7 +226,7 @@ const updateUser = async (id: Types.ObjectId, item: Partial<User>): Promise<any>
   const response: any = await UserModel.findByIdAndUpdate(
     id,
     updateData,
-    { new: true }
+    { new: true, context }
   );
 
   if (!response) return null;

@@ -71,10 +71,14 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
     handleHttp(res, 'ERROR_GET_PRODUCTS_LIST', e)
   }
 }
-const uptdateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
+const uptdateItem = async ({ params, body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
-    const response = await updateProduct(new Types.ObjectId(id), { ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) })
+    const response = await updateProduct(
+      new Types.ObjectId(id),
+      { ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) },
+      { userId: user?.id }
+    )
     emitSocket('product', {
       action: 'update',
       data: body
@@ -118,7 +122,7 @@ const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => 
     const response = products.map(async (item: Product): Promise<Product> => {
       const newPrice = parseFloat((item.precioUnitario + (item.precioUnitario * porcentaje) / 100).toFixed(2))
       item.precioUnitario = newPrice
-      await updateProduct(item._id, item)
+      await updateProduct(item._id, item, { userId: ({} as any).user?.id })
       return item
     })
 

@@ -14,10 +14,10 @@ interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
 }
 
-const deleteSaleController = async ({ params }: RequestExt, res: Response): Promise<void> => {
+const deleteSaleController = async ({ params, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
-    const response = await deleteSaleService(new Types.ObjectId(id))
+    const response = await deleteSaleService(new Types.ObjectId(id), { userId: user?.id })
     await deleteItemSaleInSale(new Types.ObjectId(id))
 
     res.send(response)
@@ -81,6 +81,9 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const response = await getSale(new Types.ObjectId(id))
     const response2 = await getItemSale(new Types.ObjectId(id))
     const response3 = response[0].idCliente ? await getClient(new Types.ObjectId(response[0].idCliente.toString())) : null
+    /* emitSocket('sale', {
+      action: 'get'
+    }) */
     res.send({ r: response[0], itemsSale: response2, cliente: response3 })
   } catch (e) {
     handleHttp(res, 'ERROR_GET_SALE_BY_ID', e)
@@ -94,11 +97,16 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
 
     if (input !== undefined) {
       const response = await getSales(input, new Types.ObjectId(user.id), user.role)
+      /* emitSocket('sale', {
+        action: 'get'
+      }) */
       res.send(response)
     } else {
       const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role, filterUser)
       const cantidad = await qtySale(filterUser)
-      console.log("cantidad", cantidad)
+      /* emitSocket('sale', {
+        action: 'get'
+      }) */
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
@@ -106,10 +114,10 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
   }
 }
 
-const updateItem = async ({ params, body }: RequestExt, res: Response): Promise<void> => {
+const updateItem = async ({ params, body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
-    const response = await updateSale(new Types.ObjectId(id), { ...body })
+    const response = await updateSale(new Types.ObjectId(id), { ...body }, { userId: user?.id })
     await Promise.all(
       body.itemsSale.map(async (item: any) => {
         // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
@@ -120,7 +128,6 @@ const updateItem = async ({ params, body }: RequestExt, res: Response): Promise<
         }
       })
     )
-    console.log("response", response)
     emitSocket('sale', {
       action: 'update',
       data: response

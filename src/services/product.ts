@@ -586,8 +586,8 @@ const getProduct = async (id: Types.ObjectId): Promise<any> => {
   )
 }
 
-const updateProduct = async (id: Types.ObjectId, item: Partial<Product>): Promise<any> => {
-  const response = await ProductModel.updateOne({ _id: id }, { $set: item })
+const updateProduct = async (id: Types.ObjectId, item: Partial<Product>, context?: { userId?: string }): Promise<any> => {
+  const response = await ProductModel.updateOne({ _id: id }, { $set: item }, { context })
   return response
 }
 

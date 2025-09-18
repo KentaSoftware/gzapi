@@ -1,5 +1,7 @@
 import { Schema, model } from 'mongoose'
 import { Sale } from '../interfaces/sale.interface'
+import versioned from 'mongoose-versioned'
+import { attachUpdatedBy } from './hooks/versioned-metadata'
 
 const SaleSchema = new Schema<Sale>(
   {
@@ -32,6 +34,10 @@ const SaleSchema = new Schema<Sale>(
     versionKey: false
   }
 )
+
+SaleSchema.add({ updatedBy: { type: String, required: false } })
+SaleSchema.plugin(versioned, { collection: 'sale_versions' as any })
+attachUpdatedBy(SaleSchema)
 
 const SaleModel = model('sale', SaleSchema)
 export default SaleModel

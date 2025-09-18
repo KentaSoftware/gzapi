@@ -44,10 +44,10 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
   }
 }
 
-const updateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
+const updateItem = async ({ params, body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
-    const response = await updateUser(new Types.ObjectId(id), body)
+    const response = await updateUser(new Types.ObjectId(id), body, { userId: user?.id })
     emitSocket('user', {
       action: 'update',
       data: response

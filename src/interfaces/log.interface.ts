@@ -5,5 +5,7 @@ export interface Log {
     idColeccion: Types.ObjectId
     accion: string
     coleccion: string
+    user: Types.ObjectId
     createdAt: Date
+    valueBefore?: Object
 }

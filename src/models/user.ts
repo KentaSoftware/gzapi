@@ -25,6 +25,8 @@ export default UserModel
 
 import { Schema, model } from 'mongoose'
 import { User } from '../interfaces/auth.interface'
+import versioned from 'mongoose-versioned'
+import { attachUpdatedBy } from './hooks/versioned-metadata'
 
 const UserSchema = new Schema<User>(
   {
@@ -54,6 +56,10 @@ const UserSchema = new Schema<User>(
     versionKey: false
   }
 )
+
+UserSchema.add({ updatedBy: { type: String, required: false } })
+UserSchema.plugin(versioned, { collection: 'user_versions' as any })
+attachUpdatedBy(UserSchema)
 
 const UserModel = model('user', UserSchema)
 export default UserModel 

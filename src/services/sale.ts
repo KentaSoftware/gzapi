@@ -7,8 +7,8 @@ const insertSale = async (item: Sale): Promise<Sale> => {
   return responseInsert
 }
 
-const deleteSaleService = async (id: Types.ObjectId): Promise<any> => {
-  const response = await SaleModel.updateOne({ _id: id }, { $set: { estado: 'Cancelado' } })
+const deleteSaleService = async (id: Types.ObjectId, context?: { userId?: string }): Promise<any> => {
+  const response = await SaleModel.updateOne({ _id: id }, { $set: { estado: 'Cancelado' } }, { context } as any)
   return response
 }
 
@@ -191,9 +191,17 @@ const getSale = async (id: Types.ObjectId): Promise<Sale[]> => {
   return response
 }
 
-const updateSale = async (id: Types.ObjectId, sale: Sale): Promise<any> => {
-  const response = await SaleModel.updateOne({ _id: id }, { $set: sale })
-  return response
+const updateSale = async (id: Types.ObjectId, sale: Sale, context?: { userId?: string }): Promise<Record<string, any>> => {
+  const before = await SaleModel.findById(id).lean()
+  const previousValues: Record<string, any> = {}
+  if (before) {
+    Object.keys(sale || {}).forEach((key) => {
+      if (key === 'itemsSale') return
+      previousValues[key] = (before as any)[key]
+    })
+  }
+  await SaleModel.updateOne({ _id: id }, { $set: sale }, { context } as any)
+  return previousValues
 }
 
 const qtySale = async (filterUser: any): Promise<any> => {
