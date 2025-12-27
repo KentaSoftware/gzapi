@@ -282,3 +282,52 @@ export const getExpensesKPI = async ({ query, user }: RequestExt, res: Response)
     handleHttp(res, 'ERROR_GET_EXPENSES_KPI', error)
   }
 }
+
+export const getSimpleResultKPI = async ({ query, user }: RequestExt, res: Response): Promise<void> => {
+  try {
+    const result = await ExpenseService.getSimpleResult(query)
+
+    // Emitir evento BI dashboard_simple_result_viewed
+    emitSocket('dashboard', {
+      action: 'simple_result_viewed',
+      data: {
+        event: 'dashboard_simple_result_viewed',
+        timestamp: new Date().toISOString(),
+        user: {
+          id: user?.id,
+          email: user?.email,
+          name: user?.name
+        },
+        period: {
+          from: query.from,
+          to: query.to
+        },
+        filter: {
+          onlyOperativeExpenses: query.onlyOperativeExpenses === 'true'
+        },
+        result: {
+          totalSales: result.totalSales,
+          totalBuys: result.totalBuys,
+          totalExpenses: result.totalExpenses,
+          expensesBreakdown: result.expensesBreakdown,
+          simpleResult: result.simpleResult,
+          currency: result.currency
+        }
+      }
+    })
+
+    res.status(200).json(result)
+  } catch (error: any) {
+    // Validaciones retornan 400
+    if (
+      error.message.includes('requeridos') ||
+      error.message.includes('Formato inválido') ||
+      error.message.includes('no puede ser posterior')
+    ) {
+      res.status(400).json({ error: error.message })
+      return
+    }
+    handleHttp(res, 'ERROR_GET_SIMPLE_RESULT_KPI', error)
+  }
+}
+

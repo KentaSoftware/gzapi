@@ -1,7 +1,8 @@
 import { Types } from 'mongoose'
 import ExpenseModel from '../models/expense'
 import BuyModel from '../models/buy'
-import { IExpense, RELATED_KIND, CreateExpenseDTO, ListExpensesQuery, EXPENSE_TYPE, PAYMENT_METHOD } from '../interfaces/expense.interface'
+import SaleModel from '../models/sale'
+import { IExpense, RELATED_KIND, CreateExpenseDTO, ListExpensesQuery, EXPENSE_TYPE, PAYMENT_METHOD, SimpleResultKPIResponse } from '../interfaces/expense.interface'
 import { insertLog } from './log'
 import { emitSocket } from '../socket'
 
@@ -608,6 +609,142 @@ class ExpenseService {
     return {
       totalCents,
       totalAmount,
+      currency: 'ARS'
+    }
+  }
+
+  // Helper para redondear a 2 decimales (consistencia entre float y cents)
+  private round2(value: number): number {
+    return parseFloat(value.toFixed(2))
+  }
+
+  /**
+   * KPI Resultado Simple: Ventas - Compras - Egresos
+   * Combina datos de 3 colecciones: Sales, Buys, Expenses
+   * @param query - from, to (YYYY-MM-DD), onlyOperativeExpenses (opcional)
+   * @returns SimpleResultKPIResponse con totales y breakdown
+   */
+  async getSimpleResult(query: any): Promise<SimpleResultKPIResponse> {
+    const { from, to, onlyOperativeExpenses } = query
+
+    // Validar parámetros requeridos
+    if (!from || !to) {
+      throw new Error('Los parámetros from y to son requeridos')
+    }
+
+    // Validar formato de fechas
+    const fromDate = new Date(from)
+    const toDate = new Date(to)
+
+    if (isNaN(fromDate.getTime())) {
+      throw new Error("Formato inválido para 'from'. Esperado: YYYY-MM-DD")
+    }
+    if (isNaN(toDate.getTime())) {
+      throw new Error("Formato inválido para 'to'. Esperado: YYYY-MM-DD")
+    }
+
+    // Validar rango
+    if (fromDate > toDate) {
+      throw new Error("La fecha 'from' no puede ser posterior a 'to'")
+    }
+
+    // Ajustar toDate para incluir todo el día (hasta 23:59:59.999)
+    const endOfDayDate = new Date(toDate)
+    endOfDayDate.setHours(23, 59, 59, 999)
+
+    // Normalizar onlyOperativeExpenses
+    const filterOnlyOperative = onlyOperativeExpenses === 'true'
+
+    // Ejecutar 3 agregaciones en paralelo
+    const [salesResult, buysResult, expensesResult] = await Promise.all([
+      // 1. Total de Ventas (por createdAt)
+      SaleModel.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: fromDate,
+              $lte: endOfDayDate
+            }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$total' }
+          }
+        }
+      ]),
+
+      // 2. Total de Compras (por createdAt)
+      BuyModel.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: fromDate,
+              $lte: endOfDayDate
+            }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$total' }
+          }
+        }
+      ]),
+
+      // 3. Breakdown de Egresos (por date + type)
+      ExpenseModel.aggregate([
+        {
+          $match: {
+            isDeleted: false,
+            date: {
+              $gte: fromDate,
+              $lte: endOfDayDate
+            }
+          }
+        },
+        {
+          $group: {
+            _id: '$type',
+            totalCents: { $sum: '$amountCents' }
+          }
+        }
+      ])
+    ])
+
+    // Extraer totales con redondeo a 2 decimales
+    const totalSales = this.round2(salesResult[0]?.total || 0)
+    const totalBuys = this.round2(buysResult[0]?.total || 0)
+
+    // Procesar breakdown de egresos
+    const operative = expensesResult.find(e => e._id === EXPENSE_TYPE.OPERATIVO)?.totalCents || 0
+    const personal = expensesResult.find(e => e._id === EXPENSE_TYPE.PERSONAL)?.totalCents || 0
+    const other = expensesResult.find(e => e._id === EXPENSE_TYPE.OTRO_NEGOCIO)?.totalCents || 0
+
+    const operativeAmount = this.round2(operative / 100)
+    const personalAmount = this.round2(personal / 100)
+    const otherAmount = this.round2(other / 100)
+    const totalExpenses = this.round2(operativeAmount + personalAmount + otherAmount)
+
+    // Calcular simpleResult según flag
+    let simpleResult: number
+    if (filterOnlyOperative) {
+      simpleResult = this.round2(totalSales - totalBuys - operativeAmount)
+    } else {
+      simpleResult = this.round2(totalSales - totalBuys - totalExpenses)
+    }
+
+    return {
+      totalSales,
+      totalBuys,
+      totalExpenses,
+      expensesBreakdown: {
+        operative: operativeAmount,
+        personal: personalAmount,
+        other: otherAmount
+      },
+      simpleResult,
       currency: 'ARS'
     }
   }
