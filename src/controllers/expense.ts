@@ -123,14 +123,69 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
   }
 }
 
-export const getExpense = async ({ params }: RequestExt, res: Response): Promise<void> => {
+export const getExpense = async ({ params, user }: RequestExt, res: Response): Promise<void> => {
   try {
+    // GAP-01: Validar ObjectId antes de query
+    const { Types } = require('mongoose')
+    if (!Types.ObjectId.isValid(params.id)) {
+      res.status(400).json({ error: 'ID de egreso inválido' })
+      return
+    }
+
     const expense = await ExpenseService.getById(params.id)
+    
     if (!expense) {
+      // GAP-02: Verificar si está eliminado (soft delete) para retornar 410
+      const ExpenseModel = require('../models/expense').default
+      const deleted = await ExpenseModel.findOne({ _id: params.id, isDeleted: true })
+      
+      if (deleted) {
+        res.status(410).json({ 
+          error: 'Egreso eliminado',
+          deletedAt: deleted.deletedAt 
+        })
+        return
+      }
+      
       res.status(404).json({ error: 'Egreso no encontrado' })
       return
     }
-    res.json({ expense })
+
+    // GAP-03: Emitir evento BI expense_detail_viewed (solo en éxito)
+    const { emitSocket } = require('../socket')
+    emitSocket('expense', {
+      action: 'detail_viewed',
+      data: {
+        event: 'expense_detail_viewed',
+        timestamp: new Date().toISOString(),
+        user: {
+          id: user?.id,
+          email: user?.email,
+          name: user?.name
+        },
+        expense: {
+          id: expense._id,
+          type: expense.type,
+          category: expense.category,
+          paymentMethod: expense.paymentMethod,
+          amountCents: expense.amountCents,
+          date: expense.date
+        }
+      }
+    })
+
+    // GAP-04: Calcular flags de permisos
+    const userPermissions = user?.permissions || []
+    const canEdit = userPermissions.includes('update_expense')
+    const canDelete = userPermissions.includes('delete_expense')
+
+    res.json({ 
+      expense,
+      permissions: {
+        canEdit,
+        canDelete
+      }
+    })
   } catch (error: any) {
     handleHttp(res, 'ERROR_GET_EXPENSE', error)
   }
