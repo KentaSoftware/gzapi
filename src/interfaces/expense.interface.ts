@@ -64,3 +64,15 @@ export interface ListExpensesQuery {
   limit?: number
   sort?: string
 }
+
+export interface ExpensesKPIQuery {
+  from: string
+  to: string
+  type?: string
+}
+
+export interface ExpensesKPIResponse {
+  totalCents: number
+  totalAmount: number
+  currency: string
+}

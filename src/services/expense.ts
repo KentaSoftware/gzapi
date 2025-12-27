@@ -540,6 +540,77 @@ class ExpenseService {
 
     return { expenses }
   }
+
+  async getExpensesTotal (query: any): Promise<any> {
+    const { from, to, type } = query
+
+    // Validar parámetros requeridos
+    if (!from || !to) {
+      throw new Error('Los parámetros from y to son requeridos')
+    }
+
+    // Validar formato de fechas
+    const fromDate = new Date(from)
+    const toDate = new Date(to)
+
+    if (isNaN(fromDate.getTime())) {
+      throw new Error("Formato inválido para 'from'. Esperado: YYYY-MM-DD")
+    }
+    if (isNaN(toDate.getTime())) {
+      throw new Error("Formato inválido para 'to'. Esperado: YYYY-MM-DD")
+    }
+
+    // Validar rango
+    if (fromDate > toDate) {
+      throw new Error("La fecha 'from' no puede ser posterior a 'to'")
+    }
+
+    // Ajustar toDate para incluir todo el día (hasta 23:59:59.999)
+    const endOfDayDate = new Date(toDate)
+    endOfDayDate.setHours(23, 59, 59, 999)
+
+    // Construir $match
+    const matchStage: any = {
+      isDeleted: false,
+      date: {
+        $gte: fromDate,
+        $lte: endOfDayDate
+      }
+    }
+
+    // Validar y normalizar type si viene
+    if (type) {
+      const normalizedType = type.toLowerCase()
+      const validTypes = Object.values(EXPENSE_TYPE)
+      
+      if (!validTypes.includes(normalizedType as EXPENSE_TYPE)) {
+        throw new Error('Tipo de egreso inválido. Valores permitidos: operativo, personal, otro_negocio')
+      }
+      
+      matchStage.type = normalizedType
+    }
+
+    // Aggregation pipeline
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $group: {
+          _id: null,
+          totalCents: { $sum: '$amountCents' }
+        }
+      }
+    ]
+
+    const result = await ExpenseModel.aggregate(pipeline)
+    const totalCents = result[0]?.totalCents || 0
+    const totalAmount = parseFloat((totalCents / 100).toFixed(2))
+
+    return {
+      totalCents,
+      totalAmount,
+      currency: 'ARS'
+    }
+  }
 }
 
 export default new ExpenseService()
