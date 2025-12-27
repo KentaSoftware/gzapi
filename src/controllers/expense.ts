@@ -65,9 +65,21 @@ export const updateExpense = async ({ params, body, user }: RequestExt, res: Res
 export const deleteExpense = async ({ params, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const userId = user?.id
-    await ExpenseService.softDelete(params.id, userId)
-    res.json({ message: 'Egreso eliminado correctamente' })
+    const expense = await ExpenseService.softDelete(params.id, userId)
+    res.json({ 
+      message: 'Egreso eliminado correctamente',
+      expense 
+    })
   } catch (error: any) {
+    // Manejar status codes específicos
+    if (error.status === 404) {
+      res.status(404).json({ error: error.message })
+      return
+    }
+    if (error.status === 400) {
+      res.status(400).json({ error: error.message })
+      return
+    }
     handleHttp(res, 'ERROR_DELETE_EXPENSE', error)
   }
 }
