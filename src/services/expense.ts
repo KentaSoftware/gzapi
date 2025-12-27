@@ -67,6 +67,45 @@ class ExpenseService {
       createdBy: new Types.ObjectId(userId)
     })
 
+    // Registrar en logs (auditoría completa)
+    await insertLog({
+      accion: 'create',
+      coleccion: 'expense',
+      idColeccion: expense._id,
+      userId: new Types.ObjectId(userId),
+      metadata: {
+        monto: expense.amountCents / 100,
+        tipo_egreso: expense.type,
+        categoria: expense.category,
+        medio_pago: expense.paymentMethod,
+        fecha: expense.date,
+        descripcion: expense.description || null,
+        relatedTo: expense.relatedTo
+      }
+    })
+
+    // Emitir evento BI
+    emitSocket('expense', {
+      action: 'create',
+      data: {
+        event: 'expense_created',
+        timestamp: new Date().toISOString(),
+        data: {
+          id_egreso: expense._id.toString(),
+          usuario: {
+            id: userId
+          },
+          tipo_egreso: expense.type,
+          categoria: expense.category,
+          monto: expense.amountCents / 100,
+          currency: expense.currency,
+          medio_pago: expense.paymentMethod,
+          fecha: expense.date.toISOString(),
+          relatedTo: expense.relatedTo
+        }
+      }
+    })
+
     return expense
   }
 
