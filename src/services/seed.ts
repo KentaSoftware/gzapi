@@ -38,6 +38,11 @@ export const seedDatabase = async () => {
     'delete_buy',
     'update_buy',
     'read_buy',
+    //Egresos x
+    'create_expense',
+    'delete_expense',
+    'update_expense',
+    'read_expense',
     //Datasets x
     'read_dataset',
     //Logs x
