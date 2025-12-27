@@ -114,7 +114,8 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
         error.message?.includes('no puede ser posterior') ||
         error.message?.includes('Preset inválido') ||
         error.message?.includes('Límite máximo') ||
-        error.message?.includes('término de búsqueda')) {
+        error.message?.includes('término de búsqueda') ||
+        error.message?.includes('inválido')) {
       res.status(400).json({ error: error.message })
       return
     }
