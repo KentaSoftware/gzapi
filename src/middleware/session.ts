@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express'
 import { verifyToken } from '../utils/jwt.handle'
 import { JwtPayload } from 'jsonwebtoken'
+import mongoose from 'mongoose'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload
@@ -8,6 +9,13 @@ interface RequestExt extends Request {
 
 const checkJwt = async (req: RequestExt, res: Response, next: NextFunction): Promise<void> => {
   try {
+    // Verificar estado de conexión a MongoDB
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('MongoDB no conectado. Estado:', mongoose.connection.readyState)
+      res.status(503)
+      res.send('BASE_DE_DATOS_NO_DISPONIBLE')
+      return
+    }
 
     const jwtByUser = req.headers.authorization
     const jwt = jwtByUser?.split(' ').pop()
