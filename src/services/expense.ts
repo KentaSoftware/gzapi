@@ -69,8 +69,59 @@ class ExpenseService {
     return expense
   }
 
+  // Helpers para presets de fechas (timezone Argentina UTC-3)
+  private getTodayDateRange(): [string, string] {
+    const now = new Date()
+    const todayStr = now.toISOString().split('T')[0]
+    return [todayStr, todayStr]
+  }
+
+  private getCurrentWeekRange(): [string, string] {
+    // Semana de lunes a domingo (ISO 8601)
+    const now = new Date()
+    const dayOfWeek = now.getDay() // 0=domingo, 1=lunes, ..., 6=sábado
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+    
+    const monday = new Date(now)
+    monday.setDate(now.getDate() + mondayOffset)
+    monday.setHours(0, 0, 0, 0)
+    
+    const sunday = new Date(monday)
+    sunday.setDate(monday.getDate() + 6)
+    sunday.setHours(23, 59, 59, 999)
+    
+    return [
+      monday.toISOString().split('T')[0],
+      sunday.toISOString().split('T')[0]
+    ]
+  }
+
+  private getCurrentMonthRange(): [string, string] {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth()
+    
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    
+    return [
+      firstDay.toISOString().split('T')[0],
+      lastDay.toISOString().split('T')[0]
+    ]
+  }
+
+  // Validar formato YYYY-MM-DD y fecha real
+  private isValidDateFormat(dateStr: string): boolean {
+    const regex = /^\d{4}-\d{2}-\d{2}$/
+    if (!regex.test(dateStr)) return false
+    
+    const date = new Date(dateStr + 'T00:00:00.000Z')
+    return !isNaN(date.getTime())
+  }
+
   async list (query: ListExpensesQuery) {
     const {
+      preset,
       from,
       to,
       type,
@@ -92,27 +143,78 @@ class ExpenseService {
 
     const filter: any = { isDeleted: false }
 
-    // Aplicar rango por defecto "mes actual" si no hay from/to
-    let effectiveFrom = from
-    let effectiveTo = to
-    let defaultApplied = false
+    // Determinar rango de fechas: preset > custom (from/to) > default (mes actual)
+    let effectiveFrom: string | undefined
+    let effectiveTo: string | undefined
+    let tipoFiltro: 'rápido' | 'personalizado' | 'default'
+    let presetUsed: string | null = null
 
-    if (!from && !to) {
-      // Calcular mes actual en timezone del negocio (Argentina UTC-3)
+    if (preset) {
+      // PRIORIDAD 1: Preset (today, week, month)
+      if (!['today', 'week', 'month'].includes(preset)) {
+        throw new Error("Preset inválido. Valores permitidos: 'today', 'week', 'month'")
+      }
+      
+      switch (preset) {
+        case 'today':
+          [effectiveFrom, effectiveTo] = this.getTodayDateRange()
+          break
+        case 'week':
+          [effectiveFrom, effectiveTo] = this.getCurrentWeekRange()
+          break
+        case 'month':
+          [effectiveFrom, effectiveTo] = this.getCurrentMonthRange()
+          break
+      }
+      
+      tipoFiltro = 'rápido'
+      presetUsed = preset
+    } else if (from || to) {
+      // PRIORIDAD 2: Rango personalizado (from/to)
+      // Validar formato
+      if (from && !this.isValidDateFormat(from)) {
+        throw new Error(`Formato inválido para 'from'. Esperado: YYYY-MM-DD`)
+      }
+      if (to && !this.isValidDateFormat(to)) {
+        throw new Error(`Formato inválido para 'to'. Esperado: YYYY-MM-DD`)
+      }
+      
+      // Validar from <= to
+      if (from && to && new Date(from) > new Date(to)) {
+        throw new Error("La fecha 'from' no puede ser posterior a 'to'")
+      }
+      
+      effectiveFrom = from
+      effectiveTo = to
+      tipoFiltro = 'personalizado'
+      presetUsed = null
+    } else {
+      // PRIORIDAD 3: Default (mes actual)
       const now = new Date()
       const year = now.getFullYear()
       const month = now.getMonth() // 0-11
       
       effectiveFrom = new Date(year, month, 1).toISOString().split('T')[0]
       effectiveTo = new Date(year, month + 1, 0).toISOString().split('T')[0]
-      defaultApplied = true
+      tipoFiltro = 'default'
+      presetUsed = null
     }
 
-    // Filtro por rango de fechas (siempre aplicado con default o custom)
+    // Filtro por rango de fechas (siempre aplicado)
     if (effectiveFrom || effectiveTo) {
       filter.date = {}
-      if (effectiveFrom) filter.date.$gte = new Date(effectiveFrom)
-      if (effectiveTo) filter.date.$lte = new Date(effectiveTo)
+      
+      if (effectiveFrom) {
+        const fromDate = new Date(effectiveFrom + 'T00:00:00.000Z')
+        filter.date.$gte = fromDate
+      }
+      
+      if (effectiveTo) {
+        // INCLUSIVIDAD CORREGIDA: incluir todo el día hasta 23:59:59.999
+        const toDate = new Date(effectiveTo + 'T00:00:00.000Z')
+        toDate.setHours(23, 59, 59, 999)
+        filter.date.$lte = toDate
+      }
     }
 
     // Filtros adicionales
@@ -163,7 +265,8 @@ class ExpenseService {
       _metadata: {
         effectiveFrom,
         effectiveTo,
-        defaultApplied,
+        tipo_filtro: tipoFiltro,
+        preset: presetUsed,
         appliedFilters: {
           type: type || null,
           category: category || null,

@@ -53,6 +53,7 @@ export interface CreateExpenseDTO {
 }
 
 export interface ListExpensesQuery {
+  preset?: 'today' | 'week' | 'month'
   from?: string
   to?: string
   type?: string
