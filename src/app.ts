@@ -6,6 +6,7 @@ import db from './config/mongo'
 import { init } from './socket'
 import path from 'path'
 import { seedDatabase } from './services/seed'
+import { requestLogger } from './middleware/requestLogger'
 
 const PORT = process.env.PORT ?? 3002
 const app = express()
@@ -14,6 +15,10 @@ app.use(cors())
 app.use('/image', express.static(path.join(__dirname, '..', '/public')))
 console.log(path.join(__dirname, '..', '/public'))
 app.use(express.json())
+
+// Middleware de logging para todas las requests
+app.use(requestLogger)
+
 app.use(router)
 
 db().then(async () => {
