@@ -7,6 +7,9 @@ export interface Buy {
   proveedor: string
   total: Number
   itemsBuy: ItemBuy[]
+  fecha?: Date
+  docNumber?: string
+  fingerprint?: string
 }
 
 export interface ItemBuy {

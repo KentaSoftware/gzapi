@@ -5,7 +5,9 @@ import {
   getCatalogVersion,
   getCatalogSnapshot,
   searchProducts,
-  getAllProvidersWithVersion
+  getAllProvidersWithVersion,
+  createOrUpdateAlias,
+  confirmMatch
 } from '../controllers/catalog'
 
 const router = Router()
@@ -47,5 +49,33 @@ router.get('/snapshot', checkJwt, checkPermission('catalog_read'), getCatalogSna
  * @query   limit - Cantidad máxima de resultados (default: 20, max: 100)
  */
 router.get('/search', checkJwt, checkPermission('catalog_read'), searchProducts)
+
+/**
+ * @route   POST /catalog/aliases
+ * @desc    Crea o actualiza un alias de producto
+ * @access  Private (catalog_write)
+ * @body    providerId - ID del proveedor (required)
+ * @body    aliasType - Tipo de alias: DESCRIPTION | BARCODE | SKU (required)
+ * @body    aliasValueRaw - Valor original del alias (required)
+ * @body    productId - ID del producto al que apunta (required)
+ * @body    confidence - Confianza 0-1 (optional, default: 0.95)
+ */
+router.post('/aliases', checkJwt, checkPermission('catalog_write'), createOrUpdateAlias)
+
+/**
+ * @route   POST /catalog/matches/confirm
+ * @desc    Confirma un matching de ítem y aprende del resultado
+ * @access  Private (catalog_write)
+ * @body    providerId - ID del proveedor (required)
+ * @body    rawDescription - Descripción original del ítem (required)
+ * @body    normalizedDescription - Descripción normalizada (optional)
+ * @body    productId - ID del producto elegido (required)
+ * @body    method - Método de match: EXACT_BARCODE | EXACT_ALIAS | FUZZY_MATCH | MANUAL_SELECTION (required)
+ * @body    suggestionScore - Score de la sugerencia 0-1 (optional)
+ * @body    suggestionRank - Posición en ranking (optional)
+ * @body    detected - Datos detectados: { barcode?, unit?, qty? } (optional)
+ * @body    doc - Info del documento: { draftId?, buyId?, date?, total? } (optional)
+ */
+router.post('/matches/confirm', checkJwt, checkPermission('catalog_write'), confirmMatch)
 
 export { router }

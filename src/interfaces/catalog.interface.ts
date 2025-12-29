@@ -94,6 +94,7 @@ export interface IConfirmedItemMatch extends Document {
 export interface CreateConfirmedMatchDTO {
   providerId: string
   rawDescription: string
+  normalizedDescription?: string
   detected?: IConfirmedItemMatchDetected
   chosen: {
     productId: string

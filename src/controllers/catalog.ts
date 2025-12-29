@@ -8,6 +8,11 @@ import {
   searchProductsService,
   getAllProvidersWithVersionService
 } from '../services/catalog'
+import {
+  upsertProductAlias,
+  createConfirmedMatch
+} from '../services/productAlias'
+import { AliasType, MatchMethod } from '../interfaces/catalog.interface'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | any
@@ -177,5 +182,200 @@ export const getAllProvidersWithVersion = async (_req: RequestExt, res: Response
     })
   } catch (e: any) {
     handleHttp(res, 'ERROR_GET_PROVIDERS', e)
+  }
+}
+
+/**
+ * POST /catalog/aliases
+ * Crea o actualiza un alias de producto
+ * @access Private (catalog_write)
+ */
+export const createOrUpdateAlias = async (req: RequestExt, res: Response): Promise<void> => {
+  try {
+    const { providerId, aliasType, aliasValueRaw, productId, confidence } = req.body
+    const userId = req.user?.id
+
+    // Validaciones
+    if (!providerId || !aliasType || !aliasValueRaw || !productId) {
+      res.status(400).json({
+        error: 'MISSING_REQUIRED_FIELDS',
+        message: 'Los campos providerId, aliasType, aliasValueRaw y productId son obligatorios'
+      })
+      return
+    }
+
+    if (!isValidObjectId(providerId)) {
+      res.status(400).json({
+        error: 'INVALID_PROVIDER_ID',
+        message: 'El providerId no tiene un formato válido'
+      })
+      return
+    }
+
+    if (!isValidObjectId(productId)) {
+      res.status(400).json({
+        error: 'INVALID_PRODUCT_ID',
+        message: 'El productId no tiene un formato válido'
+      })
+      return
+    }
+
+    // Validar aliasType
+    const validAliasTypes = Object.values(AliasType)
+    if (!validAliasTypes.includes(aliasType)) {
+      res.status(400).json({
+        error: 'INVALID_ALIAS_TYPE',
+        message: `El aliasType debe ser uno de: ${validAliasTypes.join(', ')}`
+      })
+      return
+    }
+
+    // Validar confidence si viene
+    if (confidence !== undefined && (typeof confidence !== 'number' || confidence < 0 || confidence > 1)) {
+      res.status(400).json({
+        error: 'INVALID_CONFIDENCE',
+        message: 'El confidence debe ser un número entre 0 y 1'
+      })
+      return
+    }
+
+    // Upsert alias
+    const alias = await upsertProductAlias({
+      providerId,
+      aliasType,
+      aliasValueRaw,
+      productId,
+      confidence,
+      userId
+    })
+
+    res.status(201).json({
+      success: true,
+      alias: {
+        id: alias._id,
+        providerId: alias.providerId,
+        aliasType: alias.aliasType,
+        aliasValueRaw: alias.aliasValueRaw,
+        aliasValueNormalized: alias.aliasValueNormalized,
+        productId: alias.productId,
+        confidence: alias.confidence,
+        usedCount: alias.stats?.usedCount || 0,
+        isActive: alias.isActive
+      }
+    })
+  } catch (e: any) {
+    if (e.message?.includes('vacío después de normalizar')) {
+      res.status(400).json({
+        error: 'INVALID_ALIAS_VALUE',
+        message: e.message
+      })
+      return
+    }
+    handleHttp(res, 'ERROR_CREATE_ALIAS', e)
+  }
+}
+
+/**
+ * POST /catalog/matches/confirm
+ * Confirma un matching y aprende del resultado
+ * @access Private (catalog_write)
+ */
+export const confirmMatch = async (req: RequestExt, res: Response): Promise<void> => {
+  try {
+    const {
+      providerId,
+      rawDescription,
+      normalizedDescription,
+      productId,
+      method,
+      suggestionScore,
+      suggestionRank,
+      detected,
+      doc
+    } = req.body
+    const userId = req.user?.id
+
+    // Validaciones
+    if (!providerId || !rawDescription || !productId || !method) {
+      res.status(400).json({
+        error: 'MISSING_REQUIRED_FIELDS',
+        message: 'Los campos providerId, rawDescription, productId y method son obligatorios'
+      })
+      return
+    }
+
+    if (!isValidObjectId(providerId)) {
+      res.status(400).json({
+        error: 'INVALID_PROVIDER_ID',
+        message: 'El providerId no tiene un formato válido'
+      })
+      return
+    }
+
+    if (!isValidObjectId(productId)) {
+      res.status(400).json({
+        error: 'INVALID_PRODUCT_ID',
+        message: 'El productId no tiene un formato válido'
+      })
+      return
+    }
+
+    // Validar method
+    const validMethods = Object.values(MatchMethod)
+    if (!validMethods.includes(method)) {
+      res.status(400).json({
+        error: 'INVALID_METHOD',
+        message: `El method debe ser uno de: ${validMethods.join(', ')}`
+      })
+      return
+    }
+
+    // Crear registro de confirmación
+    const confirmedMatch = await createConfirmedMatch({
+      providerId,
+      rawDescription,
+      normalizedDescription,
+      detected,
+      chosen: {
+        productId,
+        method,
+        suggestionScore,
+        suggestionRank
+      },
+      doc,
+      userId
+    })
+
+    // Si el método fue MANUAL_SELECTION o FUZZY_MATCH, crear alias automáticamente
+    // para aprender de la elección del usuario
+    if (method === MatchMethod.MANUAL_SELECTION || method === MatchMethod.FUZZY_MATCH) {
+      try {
+        await upsertProductAlias({
+          providerId,
+          aliasType: AliasType.DESCRIPTION,
+          aliasValueRaw: rawDescription,
+          productId,
+          confidence: method === MatchMethod.MANUAL_SELECTION ? 1.0 : (suggestionScore || 0.8),
+          userId
+        })
+      } catch (aliasError) {
+        // Log pero no fallar el request
+        console.error('Error creando alias automático:', aliasError)
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      confirmedMatch: {
+        id: confirmedMatch._id,
+        providerId: confirmedMatch.providerId,
+        rawDescription: confirmedMatch.rawDescription,
+        productId: confirmedMatch.chosen.productId,
+        method: confirmedMatch.chosen.method,
+        createdAt: confirmedMatch.createdAt
+      }
+    })
+  } catch (e: any) {
+    handleHttp(res, 'ERROR_CONFIRM_MATCH', e)
   }
 }
