@@ -379,3 +379,116 @@ export const confirmMatch = async (req: RequestExt, res: Response): Promise<void
     handleHttp(res, 'ERROR_CONFIRM_MATCH', e)
   }
 }
+
+/**
+ * POST /catalog/search/batch
+ * Búsqueda batch de productos con soporte para PROVIDER_FIRST, PROVIDER_ONLY, GLOBAL_ONLY
+ */
+export const batchSearch = async (req: RequestExt, res: Response): Promise<void> => {
+  try {
+    const { queries, providerId, scope, topK, minCandidates } = req.body
+
+    // Validar queries array
+    if (!queries || !Array.isArray(queries)) {
+      res.status(400).json({
+        error: 'INVALID_QUERIES',
+        message: 'El campo queries debe ser un array'
+      })
+      return
+    }
+
+    if (queries.length === 0) {
+      res.status(400).json({
+        error: 'EMPTY_QUERIES',
+        message: 'El array queries no puede estar vacío'
+      })
+      return
+    }
+
+    if (queries.length > 50) {
+      res.status(400).json({
+        error: 'TOO_MANY_QUERIES',
+        message: 'El máximo de queries por batch es 50'
+      })
+      return
+    }
+
+    // Validar cada query
+    for (let i = 0; i < queries.length; i++) {
+      const query = queries[i]
+
+      if (!query.queryId) {
+        res.status(400).json({
+          error: 'MISSING_QUERY_ID',
+          message: `La query en posición ${i} no tiene queryId`
+        })
+        return
+      }
+
+      if (!query.q && !query.barcode) {
+        res.status(400).json({
+          error: 'MISSING_SEARCH_TERM',
+          message: `La query ${query.queryId} debe tener al menos 'q' o 'barcode'`
+        })
+        return
+      }
+
+      if (query.q && query.q.length < 2) {
+        res.status(400).json({
+          error: 'QUERY_TOO_SHORT',
+          message: `La query ${query.queryId} tiene un término de búsqueda demasiado corto (mínimo 2 caracteres)`
+        })
+        return
+      }
+    }
+
+    // Validar providerId si está presente
+    if (providerId && !isValidObjectId(providerId)) {
+      res.status(400).json({
+        error: 'INVALID_PROVIDER_ID',
+        message: 'El providerId no tiene un formato válido'
+      })
+      return
+    }
+
+    // Validar scope si está presente
+    const validScopes = ['PROVIDER_ONLY', 'GLOBAL_ONLY', 'PROVIDER_FIRST']
+    if (scope && !validScopes.includes(scope)) {
+      res.status(400).json({
+        error: 'INVALID_SCOPE',
+        message: `El scope debe ser uno de: ${validScopes.join(', ')}`
+      })
+      return
+    }
+
+    // Validar topK si está presente
+    if (topK !== undefined) {
+      if (!Number.isInteger(topK) || topK < 1 || topK > 50) {
+        res.status(400).json({
+          error: 'INVALID_TOP_K',
+          message: 'El parámetro topK debe ser un entero entre 1 y 50'
+        })
+        return
+      }
+    }
+
+    // Validar minCandidates si está presente
+    if (minCandidates !== undefined) {
+      if (!Number.isInteger(minCandidates) || minCandidates < 0) {
+        res.status(400).json({
+          error: 'INVALID_MIN_CANDIDATES',
+          message: 'El parámetro minCandidates debe ser un entero >= 0'
+        })
+        return
+      }
+    }
+
+    // Importar servicio y ejecutar búsqueda
+    const { batchCatalogSearchService } = await import('../services/catalog')
+    const result = await batchCatalogSearchService(req.body)
+
+    res.json(result)
+  } catch (e: any) {
+    handleHttp(res, 'ERROR_BATCH_SEARCH', e)
+  }
+}

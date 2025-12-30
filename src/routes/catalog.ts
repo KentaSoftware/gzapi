@@ -7,7 +7,8 @@ import {
   searchProducts,
   getAllProvidersWithVersion,
   createOrUpdateAlias,
-  confirmMatch
+  confirmMatch,
+  batchSearch
 } from '../controllers/catalog'
 
 const router = Router()
@@ -49,6 +50,18 @@ router.get('/snapshot', checkJwt, checkPermission('catalog_read'), getCatalogSna
  * @query   limit - Cantidad máxima de resultados (default: 20, max: 100)
  */
 router.get('/search', checkJwt, checkPermission('catalog_read'), searchProducts)
+
+/**
+ * @route   POST /catalog/search/batch
+ * @desc    Búsqueda batch de productos con soporte para múltiples queries
+ * @access  Private (catalog_read)
+ * @body    queries - Array de queries [{ queryId, q?, barcode? }] (1-50 items)
+ * @body    providerId - ID del proveedor para búsqueda scoped (optional)
+ * @body    scope - PROVIDER_ONLY | GLOBAL_ONLY | PROVIDER_FIRST (default: PROVIDER_FIRST)
+ * @body    topK - Cantidad máxima de candidatos por query (default: 20, max: 50)
+ * @body    minCandidates - Mínimo de candidatos antes de fallback global (default: 10)
+ */
+router.post('/search/batch', checkJwt, checkPermission('catalog_read'), batchSearch)
 
 /**
  * @route   POST /catalog/aliases

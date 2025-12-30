@@ -453,3 +453,307 @@ export const getAllProvidersWithVersionService = async (): Promise<Array<{
 
   return results
 }
+
+// ============================================
+// BATCH CATALOG SEARCH
+// ============================================
+
+import {
+  BatchCatalogSearchRequest,
+  BatchCatalogSearchResponse,
+  CatalogQuery,
+  CatalogSearchResult,
+  CatalogSearchScope,
+  ProductSummary,
+  RetrievalMethod
+} from '../interfaces/catalog.interface'
+
+/**
+ * Mapea Product de MongoDB a ProductSummary (payload liviano)
+ */
+function mapToProductSummary(product: any): ProductSummary {
+  return {
+    productId: product._id.toString(),
+    description: product.descripcion || product.description || '',
+    codigoBarra: product.codigoBarra || undefined,
+    proveedor: product.proveedor?.toString() || undefined,
+    categoria: product.categoria?.toString() || undefined,
+    marca: product.marca?.toString() || undefined,
+    unidad: product.unidad || undefined,
+    pack: product.pack || 1
+  }
+}
+
+/**
+ * Búsqueda de candidatos por barcode exacto
+ */
+async function searchByBarcode(
+  barcode: string,
+  providerId?: string,
+  limit: number = 20
+): Promise<ProductSummary[]> {
+  const normalizedBarcode = normalizeBarcode(barcode)
+  
+  const filter: any = {
+    codigoBarra: normalizedBarcode
+  }
+  
+  if (providerId) {
+    filter.proveedor = new Types.ObjectId(providerId)
+  }
+  
+  const products = await ProductModel.find(filter)
+    .select('_id descripcion description codigoBarra proveedor categoria marca unidad pack')
+    .limit(limit)
+    .lean()
+  
+  return products.map(mapToProductSummary)
+}
+
+/**
+ * Búsqueda de candidatos por texto
+ * Estrategia: Regex con tokens normalizados
+ */
+async function searchByText(
+  q: string,
+  providerId?: string,
+  limit: number = 20
+): Promise<ProductSummary[]> {
+  const normalized = normalizeText(q)
+  
+  // Tokenizar query (split por espacios)
+  const tokens = normalized.split(/\s+/).filter(t => t.length >= 2)
+  
+  if (tokens.length === 0) {
+    return []
+  }
+  
+  // Crear regex: buscar todos los tokens (orden independiente)
+  const regexPattern = tokens.map(t => `(?=.*${t})`).join('')
+  const regex = new RegExp(regexPattern, 'i')
+  
+  const filter: any = {
+    $or: [
+      { descripcion: regex },
+      { description: regex }
+    ]
+  }
+  
+  if (providerId) {
+    filter.proveedor = new Types.ObjectId(providerId)
+  }
+  
+  const products = await ProductModel.find(filter)
+    .select('_id descripcion description codigoBarra proveedor categoria marca unidad pack')
+    .limit(limit)
+    .lean()
+  
+  return products.map(mapToProductSummary)
+}
+
+/**
+ * Procesa una query individual con scope PROVIDER_FIRST
+ */
+async function processQueryProviderFirst(
+  query: CatalogQuery,
+  providerId: string,
+  topK: number,
+  minCandidates: number
+): Promise<CatalogSearchResult> {
+  const methods: RetrievalMethod[] = []
+  
+  let providerCandidates: ProductSummary[] = []
+  let globalCandidates: ProductSummary[] = []
+  
+  // 1. Búsqueda por provider
+  if (query.barcode) {
+    providerCandidates = await searchByBarcode(query.barcode, providerId, topK)
+    methods.push(RetrievalMethod.BARCODE_EXACT)
+  } else if (query.q && query.q.length >= 2) {
+    providerCandidates = await searchByText(query.q, providerId, topK)
+    methods.push(RetrievalMethod.TEXT_REGEX)
+  }
+  
+  const providerCount = providerCandidates.length
+  
+  // 2. Si no hay suficientes, buscar global
+  if (providerCount < minCandidates) {
+    if (query.barcode) {
+      globalCandidates = await searchByBarcode(query.barcode, undefined, topK)
+    } else if (query.q && query.q.length >= 2) {
+      globalCandidates = await searchByText(query.q, undefined, topK)
+    }
+    methods.push(RetrievalMethod.GLOBAL_FALLBACK)
+  }
+  
+  // 3. Merge y dedup (priorizar provider)
+  const allCandidates = [...providerCandidates, ...globalCandidates]
+  const seen = new Set<string>()
+  const unique: ProductSummary[] = []
+  
+  for (const candidate of allCandidates) {
+    if (!seen.has(candidate.productId)) {
+      seen.add(candidate.productId)
+      unique.push(candidate)
+    }
+  }
+  
+  // 4. Limitar a topK
+  const finalCandidates = unique.slice(0, topK)
+  
+  return {
+    queryId: query.queryId,
+    query: {
+      q: query.q || null,
+      barcode: query.barcode || null
+    },
+    candidates: finalCandidates,
+    meta: {
+      providerCount,
+      globalCount: globalCandidates.length,
+      totalReturned: finalCandidates.length,
+      usedScope: providerCount >= minCandidates 
+        ? CatalogSearchScope.PROVIDER_ONLY 
+        : CatalogSearchScope.PROVIDER_FIRST,
+      retrievalMethods: methods,
+      noCandidates: finalCandidates.length === 0
+    }
+  }
+}
+
+/**
+ * Procesa una query individual con scope PROVIDER_ONLY
+ */
+async function processQueryProviderOnly(
+  query: CatalogQuery,
+  providerId: string,
+  topK: number
+): Promise<CatalogSearchResult> {
+  const methods: RetrievalMethod[] = []
+  let candidates: ProductSummary[] = []
+  
+  if (query.barcode) {
+    candidates = await searchByBarcode(query.barcode, providerId, topK)
+    methods.push(RetrievalMethod.BARCODE_EXACT)
+  } else if (query.q && query.q.length >= 2) {
+    candidates = await searchByText(query.q, providerId, topK)
+    methods.push(RetrievalMethod.TEXT_REGEX)
+  }
+  
+  return {
+    queryId: query.queryId,
+    query: {
+      q: query.q || null,
+      barcode: query.barcode || null
+    },
+    candidates,
+    meta: {
+      providerCount: candidates.length,
+      globalCount: 0,
+      totalReturned: candidates.length,
+      usedScope: CatalogSearchScope.PROVIDER_ONLY,
+      retrievalMethods: methods,
+      noCandidates: candidates.length === 0
+    }
+  }
+}
+
+/**
+ * Procesa una query individual con scope GLOBAL_ONLY
+ */
+async function processQueryGlobalOnly(
+  query: CatalogQuery,
+  topK: number
+): Promise<CatalogSearchResult> {
+  const methods: RetrievalMethod[] = []
+  let candidates: ProductSummary[] = []
+  
+  if (query.barcode) {
+    candidates = await searchByBarcode(query.barcode, undefined, topK)
+    methods.push(RetrievalMethod.BARCODE_EXACT)
+  } else if (query.q && query.q.length >= 2) {
+    candidates = await searchByText(query.q, undefined, topK)
+    methods.push(RetrievalMethod.TEXT_REGEX)
+  }
+  
+  return {
+    queryId: query.queryId,
+    query: {
+      q: query.q || null,
+      barcode: query.barcode || null
+    },
+    candidates,
+    meta: {
+      providerCount: 0,
+      globalCount: candidates.length,
+      totalReturned: candidates.length,
+      usedScope: CatalogSearchScope.GLOBAL_ONLY,
+      retrievalMethods: methods,
+      noCandidates: candidates.length === 0
+    }
+  }
+}
+
+/**
+ * Servicio principal de batch catalog search
+ */
+export const batchCatalogSearchService = async (
+  request: BatchCatalogSearchRequest
+): Promise<BatchCatalogSearchResponse> => {
+  const startTime = Date.now()
+  
+  const {
+    queries,
+    providerId,
+    scope = CatalogSearchScope.PROVIDER_FIRST,
+    topK = 20,
+    minCandidates = 10
+  } = request
+  
+  // Procesar cada query según el scope
+  const results: CatalogSearchResult[] = []
+  
+  for (const query of queries) {
+    let result: CatalogSearchResult
+    
+    switch (scope) {
+      case CatalogSearchScope.PROVIDER_ONLY:
+        if (!providerId) {
+          throw new Error('providerId is required for PROVIDER_ONLY scope')
+        }
+        result = await processQueryProviderOnly(query, providerId, topK)
+        break
+        
+      case CatalogSearchScope.GLOBAL_ONLY:
+        result = await processQueryGlobalOnly(query, topK)
+        break
+        
+      case CatalogSearchScope.PROVIDER_FIRST:
+        if (!providerId) {
+          // Si no hay providerId, actuar como GLOBAL_ONLY
+          result = await processQueryGlobalOnly(query, topK)
+        } else {
+          result = await processQueryProviderFirst(query, providerId, topK, minCandidates)
+        }
+        break
+        
+      default:
+        result = await processQueryGlobalOnly(query, topK)
+    }
+    
+    results.push(result)
+  }
+  
+  const executionTimeMs = Date.now() - startTime
+  const avgCandidates = results.reduce((sum, r) => sum + r.candidates.length, 0) / results.length
+  
+  return {
+    success: true,
+    results,
+    meta: {
+      totalQueries: queries.length,
+      avgCandidatesPerQuery: Math.round(avgCandidates * 100) / 100,
+      executionTimeMs
+    }
+  }
+}

@@ -189,3 +189,98 @@ export interface ProductSearchResult {
   matchScore?: number
   matchSource?: 'BARCODE' | 'DESCRIPTION' | 'ALIAS'
 }
+
+// ============================================
+// BATCH SEARCH
+// ============================================
+
+/**
+ * Scope de búsqueda para batch catalog search
+ */
+export enum CatalogSearchScope {
+  PROVIDER_ONLY = 'PROVIDER_ONLY',     // Solo buscar en proveedor especificado
+  GLOBAL_ONLY = 'GLOBAL_ONLY',         // Solo búsqueda global (sin provider)
+  PROVIDER_FIRST = 'PROVIDER_FIRST'    // Primero provider, fallback a global si necesario
+}
+
+/**
+ * Métodos de retrieval utilizados
+ */
+export enum RetrievalMethod {
+  BARCODE_EXACT = 'BARCODE_EXACT',
+  TEXT_REGEX = 'TEXT_REGEX',
+  TEXT_INDEX = 'TEXT_INDEX',
+  GLOBAL_FALLBACK = 'GLOBAL_FALLBACK'
+}
+
+/**
+ * Query individual para batch search
+ */
+export interface CatalogQuery {
+  queryId: string           // Identificador único (ej: "L1", "L2")
+  q?: string | null         // Texto de búsqueda (mínimo 2 caracteres)
+  barcode?: string | null   // Código de barras (exacto)
+}
+
+/**
+ * Request para batch catalog search
+ */
+export interface BatchCatalogSearchRequest {
+  queries: CatalogQuery[]           // Array de queries (máximo 50)
+  providerId?: string               // ID del proveedor (opcional)
+  scope?: CatalogSearchScope        // Default: PROVIDER_FIRST
+  topK?: number                     // Candidatos por query (default: 20, max: 50)
+  minCandidates?: number            // Mínimo para activar fallback (default: 10)
+}
+
+/**
+ * Producto resumido (payload liviano)
+ */
+export interface ProductSummary {
+  productId: string         // _id del producto
+  description: string       // Descripción del producto
+  codigoBarra?: string      // Código de barras (si existe)
+  proveedor?: string        // ID del proveedor
+  categoria?: string        // ID de categoría
+  marca?: string            // ID de marca
+  unidad?: string           // Unidad de medida (ej: "LITROS", "KG")
+  pack?: number             // Cantidad en pack (default: 1)
+}
+
+/**
+ * Metadata de resultado individual
+ */
+export interface CatalogSearchResultMeta {
+  providerCount: number                  // Candidatos encontrados por provider
+  globalCount: number                    // Candidatos encontrados global
+  totalReturned: number                  // Total devuelto
+  usedScope: CatalogSearchScope          // Scope usado finalmente
+  retrievalMethods: RetrievalMethod[]    // Métodos de retrieval aplicados
+  noCandidates: boolean                  // true si candidates vacío tras aplicar scope
+}
+
+/**
+ * Resultado de una query individual
+ */
+export interface CatalogSearchResult {
+  queryId: string
+  query: {
+    q?: string | null
+    barcode?: string | null
+  }
+  candidates: ProductSummary[]
+  meta: CatalogSearchResultMeta
+}
+
+/**
+ * Response del batch catalog search
+ */
+export interface BatchCatalogSearchResponse {
+  success: boolean
+  results: CatalogSearchResult[]
+  meta: {
+    totalQueries: number
+    avgCandidatesPerQuery: number
+    executionTimeMs: number
+  }
+}
