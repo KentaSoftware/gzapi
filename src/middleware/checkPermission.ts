@@ -12,7 +12,7 @@ const checkPermission = (action: string) => {
     try {
       // Verificar estado de conexión a MongoDB
       if (mongoose.connection.readyState !== 1) {
-        console.error('MongoDB no conectado. Estado:', mongoose.connection.readyState)
+        console.error('❌ [checkPermission] MongoDB no conectado. Estado:', mongoose.connection.readyState)
         res.status(503)
         res.send('BASE_DE_DATOS_NO_DISPONIBLE')
         return
@@ -25,7 +25,7 @@ const checkPermission = (action: string) => {
         res.send('TOKEN_NO_VALIDO_O_SIN_PERMISOS')
         return
       }
-
+      
       // Verificar si el usuario tiene el permiso específico
       const hasPermission = user.role.permissions.includes(action)
 
@@ -50,7 +50,8 @@ const checkPermission = (action: string) => {
 
       next()
     } catch (e: any) {
-      console.error('Error checking permissions:', e.message)
+      console.error('❌ [checkPermission] Error verificando permisos:', e.message)
+      console.error('❌ [checkPermission] Stack:', e.stack)
       
       if (e.name === 'MongooseError' || e.name === 'MongoError') {
         res.status(503)

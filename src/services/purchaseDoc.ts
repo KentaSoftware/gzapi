@@ -50,21 +50,54 @@ const transformDocumentAIResult = (aiResult: any): AnalyzeResult => {
       total: aiResult.header ? extractValue(aiResult.header.total) : undefined,
       confidence: aiResult.header ? (aiResult.header.total?.confidence || aiResult.confidenceGlobal || 0) : 0
     },
-    items: aiResult.items?.map((item: any, index: number) => ({
-      itemId: item.lineId || `L${index + 1}`,
-      description: item.normalizedDescription || item.rawDescription || '',
-      quantity: extractValue(item.quantity) || 0,
-      unitPrice: extractValue(item.unitPrice) || 0,
-      subtotal: extractValue(item.subtotal) || 0,
-      barcode: extractValue(item.productCode),
-      catalogMatch: item.catalogLink?.linkedProductId ? {
-        productId: item.catalogLink.linkedProductId,
-        description: item.normalizedDescription,
-        confidence: 1.0,
-        method: 'AI_LINKED',
-        source: 'DOCUMENT_AI'
-      } : undefined
-    })) || [],
+    items: aiResult.items?.map((item: any, index: number) => {
+      // Construir catalogMatch con sugerencias si existen
+      let catalogMatch: any = undefined
+      
+      if (item.catalogLink) {
+        // Si hay producto vinculado, crear match completo
+        if (item.catalogLink.linkedProductId) {
+          catalogMatch = {
+            productId: item.catalogLink.linkedProductId,
+            description: item.normalizedDescription,
+            confidence: 1.0,
+            method: 'AI_LINKED',
+            source: 'DOCUMENT_AI',
+            candidates: item.catalogLink.suggestions?.map((sug: any) => ({
+              productId: sug.productId,
+              description: sug.description,
+              score: sug.score
+            })) || []
+          }
+        } 
+        // Si hay sugerencias pero no match, crear solo con candidates
+        else if (item.catalogLink.suggestions && item.catalogLink.suggestions.length > 0) {
+          const topSuggestion = item.catalogLink.suggestions[0]
+          catalogMatch = {
+            productId: topSuggestion.productId,
+            description: topSuggestion.description,
+            confidence: topSuggestion.score,
+            method: topSuggestion.reason || 'FUZZY_MATCH',
+            source: topSuggestion.source || 'CATALOG_SEARCH',
+            candidates: item.catalogLink.suggestions.map((sug: any) => ({
+              productId: sug.productId,
+              description: sug.description,
+              score: sug.score
+            }))
+          }
+        }
+      }
+
+      return {
+        itemId: item.lineId || `L${index + 1}`,
+        description: item.normalizedDescription || item.rawDescription || '',
+        quantity: extractValue(item.quantity) || 0,
+        unitPrice: extractValue(item.unitPrice) || 0,
+        subtotal: extractValue(item.subtotal) || 0,
+        barcode: extractValue(item.productCode),
+        catalogMatch
+      }
+    }) || [],
     meta: {
       itemsProcessed: aiResult.items?.length || 0,
       itemsWithMatch: aiResult.items?.filter((i: any) => i.catalogLink?.linkedProductId).length || 0,
@@ -129,9 +162,10 @@ export const listUserDrafts = async (
 /**
  * Analizar draft con Document AI
  * @param draft Draft a analizar
+ * @param authToken Token JWT para autenticación (opcional)
  * @returns Resultado del análisis
  */
-export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc): Promise<AnalyzeResult> => {
+export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: string): Promise<AnalyzeResult> => {
   const maxRetries = 3
   let lastError: Error | null = null
 
@@ -174,9 +208,20 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc): Promise<Analy
       const url = new URL(`${DOCUMENT_AI_URL}/analyze`)
       url.searchParams.set('debug', (DOCUMENT_AI_DEBUG > 0).toString())
 
+      // Preparar headers
+      const headers: any = formData.getHeaders() // Incluir headers con boundary
+      
+      // Agregar Authorization header si está disponible
+      if (authToken) {
+        headers['Authorization'] = authToken // Ya incluye "Bearer "
+        console.log(`[Document AI] Enviando con token de autenticación`)
+      } else {
+        console.log(`[Document AI] Enviando sin token de autenticación`)
+      }
+
       // Llamar a Document AI usando axios con FormData
       const response = await axios.post(url.toString(), formData, {
-        headers: formData.getHeaders(), // Incluir headers con boundary
+        headers,
         timeout: DOCUMENT_AI_TIMEOUT,
         maxBodyLength: Infinity,
         maxContentLength: Infinity
@@ -298,7 +343,7 @@ export const runDuplicateCheck = async (
 /**
  * Procesar draft completo: analizar + duplicate check
  */
-export const processDraft = async (draftId: Types.ObjectId): Promise<DraftPurchaseDoc> => {
+export const processDraft = async (draftId: Types.ObjectId, authToken?: string): Promise<DraftPurchaseDoc> => {
   const draft = await getDraftById(draftId)
   if (!draft) {
     throw new Error('Draft no encontrado')
@@ -307,7 +352,7 @@ export const processDraft = async (draftId: Types.ObjectId): Promise<DraftPurcha
   try {
     // 1. Analizar con Document AI
     console.log(`[Process Draft] Iniciando análisis para draft ${draftId}`)
-    const analysisResult = await analyzeDraftWithAI(draft)
+    const analysisResult = await analyzeDraftWithAI(draft, authToken)
 
     // 2. Ejecutar duplicate check
     console.log(`[Process Draft] Ejecutando duplicate check para draft ${draftId}`)

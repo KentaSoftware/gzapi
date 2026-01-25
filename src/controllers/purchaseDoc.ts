@@ -19,6 +19,9 @@ import {
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
+  headers: Request['headers'] & {
+    authorization?: string
+  }
 }
 
 /**
@@ -89,9 +92,12 @@ export const uploadPurchaseDoc = async (req: RequestExt, res: Response): Promise
 
     console.log(`[Upload] Draft creado: ${draft._id}`)
 
+    // Extraer token JWT del header Authorization
+    const authToken = req.headers.authorization
+
     // Procesar draft de forma asíncrona (análisis + duplicate check)
     // NOTA: En producción considerar usar una cola de jobs (Bull, BullMQ)
-    processDraft(draft._id as Types.ObjectId)
+    processDraft(draft._id as Types.ObjectId, authToken)
       .then(() => {
         console.log(`[Upload] Draft ${draft._id} procesado correctamente`)
       })
