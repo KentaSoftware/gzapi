@@ -18,10 +18,17 @@ app.use(router)
 
 db().then(async () => {
   console.log('Conexion lista')
-  await seedDatabase();
-  console.log('✅ Database seeded');
+  try {
+    await seedDatabase();
+    console.log('✅ Database seeded');
+  } catch (seedError: any) {
+    console.warn('⚠️ Error durante seed (no es crítico):', seedError?.message || seedError);
+  }
 }
-).catch((e) => console.log('Ocurrio un error en la conexion con la bd', e))
+).catch((e: any) => {
+  console.error('Ocurrio un error en la conexion con la bd', e);
+  process.exit(1);
+})
 
 const server = app.listen(PORT, () => {
   console.log(`Listening on port ${PORT}...`)

@@ -222,9 +222,28 @@ class ExpenseService {
     if (category) filter.category = category
     if (paymentMethod) filter.paymentMethod = paymentMethod
 
-    // Búsqueda por texto (usa índice text)
+    // Búsqueda por texto (usa índice text) con validaciones
+    let trimmedSearch: string | null = null
     if (search) {
-      filter.$text = { $search: search }
+      trimmedSearch = search.trim()
+      
+      // Ignorar si vacío después de trim
+      if (trimmedSearch.length === 0) {
+        trimmedSearch = null
+      } else {
+        // Validar longitud mínima
+        if (trimmedSearch.length < 2) {
+          throw new Error('El término de búsqueda debe tener al menos 2 caracteres')
+        }
+        
+        // Validar longitud máxima
+        if (trimmedSearch.length > 100) {
+          throw new Error('El término de búsqueda no puede superar 100 caracteres')
+        }
+        
+        // Aplicar búsqueda
+        filter.$text = { $search: trimmedSearch }
+      }
     }
 
     const skip = (page - 1) * effectiveLimit
@@ -271,7 +290,7 @@ class ExpenseService {
           type: type || null,
           category: category || null,
           paymentMethod: paymentMethod || null,
-          search: search || null
+          search: trimmedSearch || null  // Usar término normalizado
         }
       }
     }

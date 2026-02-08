@@ -57,6 +57,42 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
       }
     })
     
+    // Emitir evento BI expense_search_used SI search presente
+    if (result._metadata.appliedFilters.search) {
+      const searchTerm = result._metadata.appliedFilters.search
+      emitSocket('expense', {
+        action: 'search_used',
+        data: {
+          event: 'expense_search_used',
+          timestamp: new Date().toISOString(),
+          user: {
+            id: userId,
+            email: user?.email,
+            name: user?.name
+          },
+          search: {
+            término: searchTerm,
+            longitud: searchTerm.length,
+            hay_resultados: result.pagination.total > 0,
+            total_resultados: result.pagination.total
+          },
+          filtros_adicionales: {
+            from: result._metadata.effectiveFrom,
+            to: result._metadata.effectiveTo,
+            tipo_filtro: result._metadata.tipo_filtro,
+            preset: result._metadata.preset,
+            type: result._metadata.appliedFilters.type,
+            category: result._metadata.appliedFilters.category,
+            paymentMethod: result._metadata.appliedFilters.paymentMethod
+          },
+          pagination: {
+            page: result.pagination.page,
+            limit: result.pagination.limit
+          }
+        }
+      })
+    }
+    
     // Agregar flags de permisos a la respuesta
     const userPermissions = user?.permissions || []
     const canEdit = userPermissions.includes('update_expense')
@@ -77,7 +113,8 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
     if (error.message?.includes('formato inválido') || 
         error.message?.includes('no puede ser posterior') ||
         error.message?.includes('Preset inválido') ||
-        error.message?.includes('Límite máximo')) {
+        error.message?.includes('Límite máximo') ||
+        error.message?.includes('término de búsqueda')) {
       res.status(400).json({ error: error.message })
       return
     }
