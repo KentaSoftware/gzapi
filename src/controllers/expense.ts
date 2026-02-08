@@ -38,7 +38,8 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
           rango_fechas: {
             from: result._metadata.effectiveFrom,
             to: result._metadata.effectiveTo,
-            default_applied: result._metadata.defaultApplied
+            tipo_filtro: result._metadata.tipo_filtro,
+            preset: result._metadata.preset
           },
           type: result._metadata.appliedFilters.type,
           category: result._metadata.appliedFilters.category,
@@ -72,6 +73,14 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
       }
     })
   } catch (error: any) {
+    // Manejar errores de validación con código 400
+    if (error.message?.includes('formato inválido') || 
+        error.message?.includes('no puede ser posterior') ||
+        error.message?.includes('Preset inválido') ||
+        error.message?.includes('Límite máximo')) {
+      res.status(400).json({ error: error.message })
+      return
+    }
     handleHttp(res, 'ERROR_LIST_EXPENSES', error)
   }
 }
