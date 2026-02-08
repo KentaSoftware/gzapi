@@ -82,13 +82,37 @@ class ExpenseService {
       sort = '-date'
     } = query
 
+    // Validar límite máximo
+    const MAX_LIMIT = 100
+    const effectiveLimit = Math.min(limit, MAX_LIMIT)
+    
+    if (limit > MAX_LIMIT) {
+      throw new Error(`Límite máximo permitido es ${MAX_LIMIT}`)
+    }
+
     const filter: any = { isDeleted: false }
 
-    // Filtro por rango de fechas
-    if (from || to) {
+    // Aplicar rango por defecto "mes actual" si no hay from/to
+    let effectiveFrom = from
+    let effectiveTo = to
+    let defaultApplied = false
+
+    if (!from && !to) {
+      // Calcular mes actual en timezone del negocio (Argentina UTC-3)
+      const now = new Date()
+      const year = now.getFullYear()
+      const month = now.getMonth() // 0-11
+      
+      effectiveFrom = new Date(year, month, 1).toISOString().split('T')[0]
+      effectiveTo = new Date(year, month + 1, 0).toISOString().split('T')[0]
+      defaultApplied = true
+    }
+
+    // Filtro por rango de fechas (siempre aplicado con default o custom)
+    if (effectiveFrom || effectiveTo) {
       filter.date = {}
-      if (from) filter.date.$gte = new Date(from)
-      if (to) filter.date.$lte = new Date(to)
+      if (effectiveFrom) filter.date.$gte = new Date(effectiveFrom)
+      if (effectiveTo) filter.date.$lte = new Date(effectiveTo)
     }
 
     // Filtros adicionales
@@ -101,13 +125,26 @@ class ExpenseService {
       filter.$text = { $search: search }
     }
 
-    const skip = (page - 1) * limit
+    const skip = (page - 1) * effectiveLimit
+
+    // Sorting estable con fallback a createdAt
+    const sortField = sort || '-date'
+    const sortQuery: any = {}
+    
+    if (sortField.startsWith('-')) {
+      const field = sortField.substring(1)
+      sortQuery[field] = -1
+      sortQuery.createdAt = -1  // Fallback para desempate
+    } else {
+      sortQuery[sortField] = 1
+      sortQuery.createdAt = -1
+    }
 
     const [expenses, total] = await Promise.all([
       ExpenseModel.find(filter)
-        .sort(sort)
+        .sort(sortQuery)
         .skip(skip)
-        .limit(limit)
+        .limit(effectiveLimit)
         .populate('createdBy', 'name email')
         .populate('updatedBy', 'name email')
         .lean(),
@@ -119,8 +156,20 @@ class ExpenseService {
       pagination: {
         total,
         page,
-        limit,
-        pages: Math.ceil(total / limit)
+        limit: effectiveLimit,
+        pages: Math.ceil(total / effectiveLimit)
+      },
+      // Metadatos para eventos BI
+      _metadata: {
+        effectiveFrom,
+        effectiveTo,
+        defaultApplied,
+        appliedFilters: {
+          type: type || null,
+          category: category || null,
+          paymentMethod: paymentMethod || null,
+          search: search || null
+        }
       }
     }
   }
