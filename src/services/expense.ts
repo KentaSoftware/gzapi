@@ -1,7 +1,7 @@
 import { Types } from 'mongoose'
 import ExpenseModel from '../models/expense'
 import BuyModel from '../models/buy'
-import { IExpense, RELATED_KIND, CreateExpenseDTO, ListExpensesQuery } from '../interfaces/expense.interface'
+import { IExpense, RELATED_KIND, CreateExpenseDTO, ListExpensesQuery, EXPENSE_TYPE, PAYMENT_METHOD } from '../interfaces/expense.interface'
 import { insertLog } from './log'
 import { emitSocket } from '../socket'
 
@@ -141,6 +141,29 @@ class ExpenseService {
       throw new Error(`Límite máximo permitido es ${MAX_LIMIT}`)
     }
 
+    // VALIDACIÓN DE ENUMS (GAP-01)
+    if (type) {
+      const validTypes = Object.values(EXPENSE_TYPE)
+      if (!validTypes.includes(type as EXPENSE_TYPE)) {
+        throw new Error(
+          `Tipo de egreso inválido. Valores permitidos: ${validTypes.join(', ')}`
+        )
+      }
+    }
+
+    if (paymentMethod) {
+      const validPaymentMethods = Object.values(PAYMENT_METHOD)
+      if (!validPaymentMethods.includes(paymentMethod as PAYMENT_METHOD)) {
+        throw new Error(
+          `Medio de pago inválido. Valores permitidos: ${validPaymentMethods.join(', ')}`
+        )
+      }
+    }
+
+    // Normalización de case-sensitivity (GAP-02)
+    const normalizedType = type?.toLowerCase()
+    const normalizedPaymentMethod = paymentMethod?.toLowerCase()
+
     const filter: any = { isDeleted: false }
 
     // Determinar rango de fechas: preset > custom (from/to) > default (mes actual)
@@ -217,10 +240,10 @@ class ExpenseService {
       }
     }
 
-    // Filtros adicionales
-    if (type) filter.type = type
+    // Filtros adicionales (usar valores normalizados)
+    if (normalizedType) filter.type = normalizedType
     if (category) filter.category = category
-    if (paymentMethod) filter.paymentMethod = paymentMethod
+    if (normalizedPaymentMethod) filter.paymentMethod = normalizedPaymentMethod
 
     // Búsqueda por texto (usa índice text) con validaciones
     let trimmedSearch: string | null = null
@@ -287,9 +310,9 @@ class ExpenseService {
         tipo_filtro: tipoFiltro,
         preset: presetUsed,
         appliedFilters: {
-          type: type || null,
+          type: normalizedType || null,
           category: category || null,
-          paymentMethod: paymentMethod || null,
+          paymentMethod: normalizedPaymentMethod || null,
           search: trimmedSearch || null  // Usar término normalizado
         }
       }
