@@ -246,16 +246,83 @@ class ExpenseService {
     return expense
   }
 
-  async softDelete (id: string, userId: string): Promise<void> {
-    const expense = await ExpenseModel.findOne({ _id: id, isDeleted: false })
-    if (!expense) {
-      throw new Error('Egreso no encontrado')
+  async softDelete (id: string, userId: string): Promise<IExpense> {
+    // Validar ObjectId
+    if (!Types.ObjectId.isValid(id)) {
+      const error: any = new Error('ID de egreso inválido')
+      error.status = 400
+      throw error
     }
 
+    // Buscar egreso (sin filtro isDeleted para manejar idempotencia)
+    const expense = await ExpenseModel.findById(id)
+    
+    if (!expense) {
+      const error: any = new Error('Egreso no encontrado')
+      error.status = 404
+      throw error
+    }
+
+    // Idempotencia: si ya está eliminado, retornar sin error
+    if (expense.isDeleted) {
+      await expense.populate('deletedBy', 'name email')
+      await expense.populate('createdBy', 'name email')
+      return expense
+    }
+
+    // Guardar metadata antes de eliminar
+    const metadata = {
+      monto: expense.amountCents / 100,
+      tipo_egreso: expense.type,
+      categoria: expense.category,
+      medio_pago: expense.paymentMethod,
+      fecha: expense.date,
+      descripcion: expense.description,
+      relatedTo: expense.relatedTo
+    }
+
+    // Realizar soft delete
     expense.isDeleted = true
     expense.deletedAt = new Date()
     expense.deletedBy = new Types.ObjectId(userId)
     await expense.save()
+
+    // Registrar en logs con metadata
+    await insertLog({
+      accion: 'delete',
+      coleccion: 'expense',
+      idColeccion: expense._id,
+      userId: new Types.ObjectId(userId),
+      metadata: metadata
+    })
+
+    // Emitir evento BI
+    emitSocket('expense', {
+      action: 'delete',
+      data: {
+        event: 'expense_deleted',
+        timestamp: new Date().toISOString(),
+        data: {
+          id_egreso: expense._id.toString(),
+          usuario: {
+            id: userId
+          },
+          tipo_egreso: expense.type,
+          categoria: expense.category,
+          monto: expense.amountCents / 100,
+          currency: expense.currency,
+          medio_pago: expense.paymentMethod,
+          fecha: expense.date.toISOString(),
+          relatedTo: expense.relatedTo
+        }
+      }
+    })
+
+    // Repoblar referencias
+    await expense.populate('deletedBy', 'name email')
+    await expense.populate('createdBy', 'name email')
+
+    return expense
   }
 
   async listByBuy (buyId: string, query: ListExpensesQuery) {
