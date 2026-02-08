@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { handleHttp } from '../utils/error.handle'
 import { JwtPayload } from 'jsonwebtoken'
 import ExpenseService from '../services/expense'
+import { emitSocket } from '../socket'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
@@ -233,5 +234,51 @@ export const deleteExpense = async ({ params, user }: RequestExt, res: Response)
       return
     }
     handleHttp(res, 'ERROR_DELETE_EXPENSE', error)
+  }
+}
+
+export const getExpensesKPI = async ({ query, user }: RequestExt, res: Response): Promise<void> => {
+  try {
+    const result = await ExpenseService.getExpensesTotal(query)
+
+    // Emitir evento BI dashboard_expense_kpi_viewed
+    emitSocket('dashboard', {
+      action: 'kpi_viewed',
+      data: {
+        event: 'dashboard_expense_kpi_viewed',
+        timestamp: new Date().toISOString(),
+        user: {
+          id: user?.id,
+          email: user?.email,
+          name: user?.name
+        },
+        period: {
+          from: query.from,
+          to: query.to
+        },
+        filter: {
+          tipo_egreso: query.type || null
+        },
+        result: {
+          totalAmount: result.totalAmount,
+          totalCents: result.totalCents,
+          currency: result.currency
+        }
+      }
+    })
+
+    res.status(200).json(result)
+  } catch (error: any) {
+    // Validaciones retornan 400
+    if (
+      error.message.includes('requeridos') ||
+      error.message.includes('Formato inválido') ||
+      error.message.includes('no puede ser posterior') ||
+      error.message.includes('inválido')
+    ) {
+      res.status(400).json({ error: error.message })
+      return
+    }
+    handleHttp(res, 'ERROR_GET_EXPENSES_KPI', error)
   }
 }
