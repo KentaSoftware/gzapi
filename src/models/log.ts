@@ -14,6 +14,16 @@ const LogSchema = new Schema<Log>(
     idColeccion : {
         type: Schema.ObjectId,
         required: true
+    },
+    userId: {
+        type: Schema.ObjectId,
+        ref: 'user'
+    },
+    changedFields: {
+        type: Schema.Types.Mixed
+    },
+    metadata: {
+        type: Schema.Types.Mixed
     }
   },
   {

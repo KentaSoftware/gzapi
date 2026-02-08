@@ -2,8 +2,34 @@ import { Types } from 'mongoose'
 import ExpenseModel from '../models/expense'
 import BuyModel from '../models/buy'
 import { IExpense, RELATED_KIND, CreateExpenseDTO, ListExpensesQuery } from '../interfaces/expense.interface'
+import { insertLog } from './log'
+import { emitSocket } from '../socket'
 
 class ExpenseService {
+  // Función auxiliar para calcular campos modificados
+  private calculateChangedFields(
+    before: any,
+    after: any,
+    fields: string[]
+  ): Record<string, { before: any; after: any }> {
+    const changes: Record<string, { before: any; after: any }> = {}
+
+    fields.forEach(field => {
+      const beforeValue = before[field]
+      const afterValue = after[field]
+
+      // Comparación profunda para objetos
+      if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) {
+        changes[field] = {
+          before: beforeValue,
+          after: afterValue
+        }
+      }
+    })
+
+    return changes
+  }
+
   async create (dto: CreateExpenseDTO, userId: string): Promise<IExpense> {
     // Validar fecha no futura
     const expenseDate = new Date(dto.date)
@@ -106,10 +132,31 @@ class ExpenseService {
   }
 
   async update (id: string, dto: Partial<CreateExpenseDTO>, userId: string): Promise<IExpense | null> {
-    const expense = await ExpenseModel.findOne({ _id: id, isDeleted: false })
-    if (!expense) {
-      throw new Error('Egreso no encontrado')
+    // Validar ObjectId
+    if (!Types.ObjectId.isValid(id)) {
+      const error: any = new Error('ID de egreso inválido')
+      error.status = 400
+      throw error
     }
+
+    // Buscar egreso
+    const expense = await ExpenseModel.findById(id)
+    
+    if (!expense) {
+      const error: any = new Error('Egreso no encontrado')
+      error.status = 404
+      throw error
+    }
+
+    // Verificar si está eliminado
+    if (expense.isDeleted) {
+      const error: any = new Error('El egreso ha sido eliminado y no puede ser editado')
+      error.status = 410
+      throw error
+    }
+
+    // Guardar snapshot antes de modificar
+    const expenseBefore = expense.toObject()
 
     // Actualizar campos permitidos
     if (dto.date) {
@@ -150,6 +197,51 @@ class ExpenseService {
 
     expense.updatedBy = new Types.ObjectId(userId)
     await expense.save()
+
+    // Calcular campos modificados
+    const expenseAfter = expense.toObject()
+    const changedFields = this.calculateChangedFields(
+      expenseBefore,
+      expenseAfter,
+      ['date', 'amountCents', 'category', 'type', 'paymentMethod', 'description', 'relatedTo']
+    )
+
+    // Solo registrar si hay cambios
+    if (Object.keys(changedFields).length > 0) {
+      // Registrar en logs
+      await insertLog({
+        accion: 'update',
+        coleccion: 'expense',
+        idColeccion: expense._id,
+        userId: new Types.ObjectId(userId),
+        changedFields: changedFields
+      })
+
+      // Emitir evento BI
+      emitSocket('expense', {
+        action: 'update',
+        data: {
+          event: 'expense_updated',
+          timestamp: new Date().toISOString(),
+          data: {
+            id_egreso: expense._id.toString(),
+            usuario: {
+              id: userId
+            },
+            tipo_egreso: expense.type,
+            categoria: expense.category,
+            monto: expense.amountCents / 100,
+            currency: expense.currency,
+            campos_modificados: Object.keys(changedFields),
+            changes: changedFields
+          }
+        }
+      })
+    }
+
+    // Repoblar updatedBy
+    await expense.populate('updatedBy', 'name email')
+    await expense.populate('createdBy', 'name email')
 
     return expense
   }

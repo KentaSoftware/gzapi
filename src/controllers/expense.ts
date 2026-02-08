@@ -43,12 +43,21 @@ export const updateExpense = async ({ params, body, user }: RequestExt, res: Res
   try {
     const userId = user?.id
     const expense = await ExpenseService.update(params.id, body, userId)
-    if (!expense) {
-      res.status(404).json({ error: 'Egreso no encontrado' })
-      return
-    }
     res.json({ expense })
   } catch (error: any) {
+    // Manejar status codes específicos
+    if (error.status === 404) {
+      res.status(404).json({ error: error.message })
+      return
+    }
+    if (error.status === 410) {
+      res.status(410).json({ error: error.message })
+      return
+    }
+    if (error.status === 400) {
+      res.status(400).json({ error: error.message })
+      return
+    }
     handleHttp(res, 'ERROR_UPDATE_EXPENSE', error)
   }
 }
