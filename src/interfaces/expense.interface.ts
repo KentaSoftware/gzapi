@@ -76,3 +76,22 @@ export interface ExpensesKPIResponse {
   totalAmount: number
   currency: string
 }
+
+export interface SimpleResultKPIQuery {
+  from: string
+  to: string
+  onlyOperativeExpenses?: string // "true" | "false"
+}
+
+export interface SimpleResultKPIResponse {
+  totalSales: number
+  totalBuys: number
+  totalExpenses: number
+  expensesBreakdown: {
+    operative: number
+    personal: number
+    other: number
+  }
+  simpleResult: number
+  currency: string
+}
