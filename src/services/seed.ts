@@ -47,6 +47,9 @@ export const seedDatabase = async () => {
     'read_dataset',
     //Logs x
     'read_log',
+    //Catálogo (Document AI) - Fase 3 v0.4.0
+    'catalog_read',
+    'catalog_write',
   ];
 
 

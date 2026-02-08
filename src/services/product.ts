@@ -1,9 +1,24 @@
 import { Types } from 'mongoose'
 import { Product } from '../interfaces/product.interface'
 import ProductModel from '../models/product'
+import { bumpCatalogVersion } from './productAlias'
+import { CatalogVersionReason } from '../interfaces/catalog.interface'
 
 const insertProduct = async (item: Product): Promise<Product> => {
   const responseInsert = await ProductModel.create(item)
+  
+  // Bump catalog version de forma asíncrona (fire and forget)
+  // No bloqueará ni fallará la creación del producto
+  if (responseInsert.proveedor) {
+    bumpCatalogVersion(
+      responseInsert.proveedor.toString(),
+      CatalogVersionReason.PRODUCT_CREATED
+    ).catch(error => {
+      console.error('[PRODUCT] Error bumping catalog version on create:', error)
+      // Error silencioso - no afecta la operación principal
+    })
+  }
+  
   return responseInsert
 }
 
@@ -587,7 +602,23 @@ const getProduct = async (id: Types.ObjectId): Promise<any> => {
 }
 
 const updateProduct = async (id: Types.ObjectId, item: Partial<Product>): Promise<any> => {
+  // Obtener el producto antes de actualizar para saber su proveedor
+  const product = await ProductModel.findById(id).select('proveedor').lean()
+  
   const response = await ProductModel.updateOne({ _id: id }, { $set: item })
+  
+  // Bump catalog version de forma asíncrona (fire and forget)
+  // No bloqueará ni fallará la actualización del producto
+  if (product?.proveedor) {
+    bumpCatalogVersion(
+      product.proveedor.toString(),
+      CatalogVersionReason.PRODUCT_UPDATED
+    ).catch(error => {
+      console.error('[PRODUCT] Error bumping catalog version on update:', error)
+      // Error silencioso - no afecta la operación principal
+    })
+  }
+  
   return response
 }
 
