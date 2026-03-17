@@ -1,7 +1,7 @@
 {
   "name": "gzapi",
   "version": "1.0.0",
-  "description": "api golozur",
+  "description": "API REST Golozur - backend para ventas, compras, productos, clientes y usuarios",
   "main": "app.ts",
   "scripts": {
     "lint": "ts-standard",
@@ -11,7 +11,7 @@
     "test": "cross-env TS_NODE_TRANSPILE_ONLY=1 mocha -r ts-node/register \"test/**/*.test.ts\" --timeout 10000"
   },
   "author": "turo1111",
-  "license": "ISC",
+  "license": "UNLICENSED",
   "dependencies": {
     "@types/form-data": "^2.2.1",
     "axios": "^1.13.2",
