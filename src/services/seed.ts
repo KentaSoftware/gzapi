@@ -33,6 +33,7 @@ export const seedDatabase = async () => {
     'delete_sale',
     'update_sale',
     'read_sale',
+    'read_stats',
     //Compras x
     'create_buy',
     'delete_buy',
