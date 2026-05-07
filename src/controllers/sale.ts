@@ -9,9 +9,17 @@ import { ItemSale, Sale } from '../interfaces/sale.interface'
 import PDFDocument from 'pdfkit'
 import path from 'path'
 import { getClient } from '../services/client'
+import { getSaleStatsByUser, getSaleStatsOverview } from '../services/saleStats'
+import { parseSaleStatsRequest } from '../utils/statsDateRange'
+import { STATS_SCOPE, type StatsValidationFailure } from '../interfaces/saleStats.interface'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
+}
+
+const sendStatsValidationError = (res: Response, failure: StatsValidationFailure): void => {
+  res.status(failure.status)
+  res.send(failure.error)
 }
 
 const deleteSaleController = async ({ params }: RequestExt, res: Response): Promise<void> => {
@@ -102,6 +110,44 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
     }
   } catch (e) {
     handleHttp(res, 'ERROR_GET_SALES_LIST', e)
+  }
+}
+
+const getSaleStatsByUserController = async ({ body }: RequestExt, res: Response): Promise<void> => {
+  const parsedRequest = parseSaleStatsRequest(body, {
+    allowUserId: true,
+    scope: STATS_SCOPE.BY_USER
+  })
+
+  if (!parsedRequest.ok) {
+    sendStatsValidationError(res, parsedRequest)
+    return
+  }
+
+  try {
+    const response = await getSaleStatsByUser(parsedRequest.value)
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_SALE_STATS_BY_USER', e)
+  }
+}
+
+const getSaleStatsOverviewController = async ({ body }: RequestExt, res: Response): Promise<void> => {
+  const parsedRequest = parseSaleStatsRequest(body, {
+    allowUserId: false,
+    scope: STATS_SCOPE.OVERVIEW
+  })
+
+  if (!parsedRequest.ok) {
+    sendStatsValidationError(res, parsedRequest)
+    return
+  }
+
+  try {
+    const response = await getSaleStatsOverview(parsedRequest.value)
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_SALE_STATS_OVERVIEW', e)
   }
 }
 
@@ -373,4 +419,15 @@ const printSales = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
-export { postItem, getItem, getItems, updateItem, postMultipleItem, printSale, printSales, deleteSaleController }
+export {
+  postItem,
+  getItem,
+  getItems,
+  getSaleStatsByUserController,
+  getSaleStatsOverviewController,
+  updateItem,
+  postMultipleItem,
+  printSale,
+  printSales,
+  deleteSaleController
+}
