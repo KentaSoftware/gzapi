@@ -25,6 +25,10 @@ const SaleSchema = new Schema<Sale>(
     idCliente: {
       type: Schema.ObjectId,
       ref: 'Client'
+    },
+    paidAt: {
+      type: Date,
+      required: false
     }
   },
   {

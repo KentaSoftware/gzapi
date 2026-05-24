@@ -51,6 +51,9 @@ export const seedDatabase = async () => {
     //Catálogo (Document AI) - Fase 3 v0.4.0
     'catalog_read',
     'catalog_write',
+    //Cash Flow Real - cash-flow-real-v1
+    'read_cashflow',
+    'configure_cashflow',
   ];
 
 

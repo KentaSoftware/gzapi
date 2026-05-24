@@ -10,6 +10,7 @@ export interface Buy {
   fecha?: Date
   docNumber?: string
   fingerprint?: string
+  paidAt?: Date
 }
 
 export interface ItemBuy {

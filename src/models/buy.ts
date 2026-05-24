@@ -30,6 +30,10 @@ const BuySchema = new Schema<Buy>(
     fingerprint: {
       type: String,
       required: false
+    },
+    paidAt: {
+      type: Date,
+      required: false
     }
   },
   {

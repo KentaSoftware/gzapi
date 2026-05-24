@@ -3,5 +3,5 @@ node_modules/
 dist/
 .vercel
 backups/
-test/
+# test/ — unignored for cash-flow-real-v1 (TICKET-003)
 public/uploads/
