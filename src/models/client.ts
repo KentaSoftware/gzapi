@@ -7,7 +7,7 @@ const ClientSchema = new Schema<Client>(
       type: String,
       require: true
     },
-    direccion: {
+    address: {
       type: String
     },
     telefonos: {
@@ -15,10 +15,11 @@ const ClientSchema = new Schema<Client>(
         Number
       ]
     },
-    idCiudad: {
-      type: Schema.ObjectId,
-      ref: 'City',
-      required: true
+    lat: {
+      type: Number
+    },
+    lng: {
+      type: Number
     },
   },
   {

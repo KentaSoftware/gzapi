@@ -3,7 +3,7 @@ import { handleHttp } from '../utils/error.handle'
 import { Types } from 'mongoose'
 import { JwtPayload } from 'jsonwebtoken'
 import { emitSocket } from '../socket'
-import { findProducts, getAllProducts, getAllProductsCategories, getProduct, getProducts, getProductsSearch, insertProduct, qtyProduct, updateProduct } from '../services/product'
+import { findProducts, getAllProducts, getAllProductsCategories, getProduct, getProducts, getProductsSearch, getUltimasFechasProductoService, insertProduct, qtyProduct, updateProduct } from '../services/product'
 import { Product } from '../interfaces/product.interface'
 import { ObjectId } from 'mongodb'
 import PDFDocument from 'pdfkit'
@@ -27,11 +27,11 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const response = await getProduct(new Types.ObjectId(id))
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_PRODUCT_BY_ID', e)
   }
 }
 
-const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
+const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
 
@@ -60,15 +60,15 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
     }
 
     if (input !== undefined || filter.categoria !== undefined || filter.marca !== undefined || filter.proveedor !== undefined) {
-      const response = await getProductsSearch(input, filter)
+      const response = await getProductsSearch(input, filter, user.role)
       res.send(response)
     } else {
-      const response = await getProducts(parseInt(skip), parseInt(limit))
+      const response = await getProducts(parseInt(skip), parseInt(limit), user.role)
       const cantidad = await qtyProduct()
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_PRODUCTS_LIST', e)
   }
 }
 const uptdateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
@@ -81,9 +81,10 @@ const uptdateItem = async ({ params, body }: Request, res: Response): Promise<vo
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_UPDATE_ITEM')
+    handleHttp(res, 'ERROR_UPDATE_PRODUCT', e)
   }
 }
+
 const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => {
   try {
     const filter = {
@@ -130,8 +131,17 @@ const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => 
     handleHttp(res, 'ERROR_UPDATE_ITEM')
   }
 }
+
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   try {
+    // Eliminar _id si existe y está vacío o es inválido
+    if (body._id && (body._id === "" || body._id === null || body._id === undefined)) {
+      delete body._id
+    }
+    // También eliminar _id si existe pero no es válido para ObjectId
+    if (body._id && typeof body._id === 'string' && body._id.trim() === '') {
+      delete body._id
+    }
     const response = await insertProduct({ ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) })
     emitSocket('product', {
       action: 'create',
@@ -139,20 +149,23 @@ const postItem = async ({ body }: Request, res: Response): Promise<void> => {
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    console.log("error", e)
+    handleHttp(res, 'ERROR_CREATE_PRODUCT', e)
   }
 }
+
 const deleteItem = (_: Request, res: Response): void => {
   try {
     res.send({ data: 'algo' })
   } catch (e) {
-    handleHttp(res, 'ERROR_DELETE_ITEM')
+    handleHttp(res, 'ERROR_DELETE_PRODUCT', e)
   }
 }
 
-const uploadImage = async (req: Request, res: Response): Promise<void> => {
+const uploadImage = async (_: Request, res: Response): Promise<void> => {
   try {
-    res.send(req.file)
+    /* res.send(req.file) */
+    res.send('hola')
   } catch (e) {
     handleHttp(res, 'ERROR_POST_ITEM', e)
   }
@@ -196,13 +209,16 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
     // Agregar el listener solo una vez
     doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
 
-    products.forEach((itemProduct: Product)=>{
+    products.forEach((itemProduct: Product) => {
+      if ((itemProduct.precioUnitario) <= 1) {
+        return
+      }
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
-        .text(`${categorieActive}`, 25)
+          .text(`${categorieActive}`, 25)
       }
-      
+
       const yPosition = doc.y;
 
       // Escribir la descripción del producto
@@ -210,7 +226,7 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
         .text(`${itemProduct.descripcion}`, 50, yPosition);
 
       // Escribir el precio del producto en la misma posición Y
-      if (itemProduct.precioDescuento !== undefined && itemProduct.precioDescuento > 0) {
+      if (itemProduct.precioDescuento !== undefined && itemProduct.precioDescuento > 1) {
         if (isPrecioUnitario || isPrecioUnitario === undefined) {
           doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
             .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition);
@@ -222,15 +238,15 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
         doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
           .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition);
       }
-      
+
       doc.moveDown(0.1);
 
       doc.lineWidth(0.5);
       doc.strokeColor('#d9d9d9');
 
       doc.moveTo(20, doc.y)
-      .lineTo(550, doc.y)
-      .stroke();
+        .lineTo(550, doc.y)
+        .stroke();
 
       doc.moveDown(0.3);
 
@@ -238,7 +254,7 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
         doc.addPage()
       }
     })
-    
+
     // Finalizar el documento
     doc.end()
   } catch (e) {
@@ -248,12 +264,12 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
 
 const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
-    const { categories, discount }: { categories: {conDescuento: {_id: string, descripcion: string}[], sinDescuento: {_id: string, descripcion: string}[] }, discount: number } = body
+    const { categories, discount }: { categories: { conDescuento: { _id: string, descripcion: string }[], sinDescuento: { _id: string, descripcion: string }[] }, discount: number } = body
     let categoriesArray: string[] = []
-    categories.conDescuento.forEach(item=>{
+    categories.conDescuento.forEach(item => {
       categoriesArray.push(item.descripcion)
     })
-    categories.sinDescuento.forEach(item=>{
+    categories.sinDescuento.forEach(item => {
       categoriesArray.push(item.descripcion)
     })
     const products = await getAllProductsCategories(categoriesArray)
@@ -273,13 +289,15 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
     // Agregar el listener solo una vez
     doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
 
-    products.forEach((itemProduct: Product)=>{
+    products.forEach((itemProduct: Product) => {
+      if (itemProduct.precioUnitario <= 1) return
+
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
-        .text(`${categorieActive}`, 25)
+          .text(`${categorieActive}`, 25)
       }
-      
+
       const yPosition = doc.y;
 
       // Escribir la descripción del producto
@@ -288,8 +306,8 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
 
       // Calcular el precio con descuento si el producto pertenece a una categoría seleccionada
       let precioFinal = itemProduct.precioUnitario;
-      let isDescuento = categories.conDescuento.find(elem=>elem.descripcion === itemProduct.NameCategoria) ? true : false
-      let isNormal = categories.sinDescuento.find(elem=>elem.descripcion === itemProduct.NameCategoria) ? true : false
+      let isDescuento = categories.conDescuento.find(elem => elem.descripcion === itemProduct.NameCategoria) ? true : false
+      let isNormal = categories.sinDescuento.find(elem => elem.descripcion === itemProduct.NameCategoria) ? true : false
       if (isDescuento) {
         precioFinal = itemProduct.precioUnitario * (1 - discount);
       } else if (isNormal) {
@@ -297,16 +315,16 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
       }
       // Escribir el precio del producto en la misma posición Y
       doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
-            .text(`$ ${precioFinal.toFixed(2)}`, 440, yPosition);
-      
+        .text(`$ ${precioFinal.toFixed(2)}`, 440, yPosition);
+
       doc.moveDown(0.1);
 
       doc.lineWidth(0.5);
       doc.strokeColor('#d9d9d9');
 
       doc.moveTo(20, doc.y)
-      .lineTo(550, doc.y)
-      .stroke();
+        .lineTo(550, doc.y)
+        .stroke();
 
       doc.moveDown(0.3);
 
@@ -314,13 +332,22 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
         doc.addPage()
       }
     })
-    
+
     // Finalizar el documento
     doc.end()
-    
+
   } catch (e) {
     handleHttp(res, 'ERROR_PRINT_LIST')
   }
 }
 
-export { getItem, getItems, uptdateItem, postItem, deleteItem, uptdateItems, uploadImage, getImage, getAllItems, getNothing, printList, printListWithDiscount }
+const getUltimasFechasProducto = async (_: RequestExt, res: Response): Promise<void> => {
+  try {
+    const response = await getUltimasFechasProductoService()
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_ULTIMAS_FECHAS_PRODUCTO')
+  }
+}
+
+export { getItem, getItems, uptdateItem, postItem, deleteItem, uptdateItems, uploadImage, getImage, getAllItems, getNothing, printList, printListWithDiscount, getUltimasFechasProducto }

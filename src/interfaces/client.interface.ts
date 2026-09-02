@@ -10,5 +10,8 @@ export interface Client {
     nombreCompleto: string
     idCiudad: Types.ObjectId
     direccion?: string
-    telefonos? : [number]
+    telefonos?: [number]
+    lat?: number
+    lng?: number
+    address?: string
 }

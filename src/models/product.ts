@@ -72,5 +72,9 @@ const ProductSchema = new Schema<Product>(
   }
 )
 
+// Índices para batch catalog search
+ProductSchema.index({ codigoBarra: 1 }) // Búsqueda por barcode exacto
+ProductSchema.index({ proveedor: 1, descripcion: 1 }) // Búsqueda por proveedor + texto
+
 const ProductModel = model('product', ProductSchema)
 export default ProductModel

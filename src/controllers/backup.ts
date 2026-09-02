@@ -2,6 +2,10 @@ import { Request, Response } from 'express'
 import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+/* import { handleHttp } from '../utils/error.handle'
+import { Types } from 'mongoose'
+import { JwtPayload } from 'jsonwebtoken'
+import { emitSocket } from '../socket' */
 
 const backupCtrl = async (_: Request, res: Response): Promise<void> => {
     const BACKUP_URI = process.env.BACKUP_URI as string;
@@ -14,7 +18,7 @@ const backupCtrl = async (_: Request, res: Response): Promise<void> => {
         fs.mkdirSync(backupPath, { recursive: true });
     }
 
-    exec(`mongodump --uri="${BACKUP_URI}" --out=${backupPath} --username="${USER}" --password="${PASS}"`, (error: any, stdout: any, stderr: any) => {
+    exec(`mongodump --uri="${BACKUP_URI}" --out=${backupPath} --username="${USER}" --password="${PASS}"`, (error: any, _stdout: any, stderr: any) => {
         if (error) {
             console.error(`Error: ${error.message}`);
             return res.status(500).send('Error generando el backup');
@@ -41,7 +45,7 @@ const restoreCtrl = async (_: Request, res: Response): Promise<void> => {
         return
     }
 
-    exec(`mongorestore --uri="${BACKUP_URI}" --username="${USER}" --password="${PASS}" --drop --nsInclude=test.* ${backupPath}`, (error: any, stdout: any, stderr: any) => {
+    exec(`mongorestore --uri="${BACKUP_URI}" --username="${USER}" --password="${PASS}" --drop --nsInclude=test.* ${backupPath}`, (error: any, _stdout: any, stderr: any) => {
         if (error) {
             console.error(`Error: ${error.message}`);
             return res.status(500).send('Error restaurando el backup');

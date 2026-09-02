@@ -7,9 +7,58 @@ import { getBuy, getBuys, getBuysLimit, insertBuy, qtyBuy, updateBuy } from '../
 import { getItemBuy, insertItemBuy, updateItemsBuy } from '../services/itemBuy'
 import { updateProduct } from '../services/product'
 import { ItemBuy } from '../interfaces/buy.interface'
+import ExpenseService from '../services/expense'
+import { RELATED_KIND } from '../interfaces/expense.interface'
+import BuyModel from '../models/buy'
+import { getBuyStatsByUser, getBuyStatsOverview } from '../services/buyStats'
+import { parseSaleStatsRequest } from '../utils/statsDateRange'
+import { STATS_SCOPE, type StatsValidationFailure } from '../interfaces/saleStats.interface'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
+}
+
+const sendStatsValidationError = (res: Response, failure: StatsValidationFailure): void => {
+  res.status(failure.status)
+  res.send(failure.error)
+}
+
+const getBuyStatsByUserController = async ({ body }: RequestExt, res: Response): Promise<void> => {
+  const parsedRequest = parseSaleStatsRequest(body, {
+    allowUserId: true,
+    scope: STATS_SCOPE.BY_USER
+  })
+
+  if (!parsedRequest.ok) {
+    sendStatsValidationError(res, parsedRequest)
+    return
+  }
+
+  try {
+    const response = await getBuyStatsByUser(parsedRequest.value)
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_BUY_STATS_BY_USER', e)
+  }
+}
+
+const getBuyStatsOverviewController = async ({ body }: RequestExt, res: Response): Promise<void> => {
+  const parsedRequest = parseSaleStatsRequest(body, {
+    allowUserId: false,
+    scope: STATS_SCOPE.OVERVIEW
+  })
+
+  if (!parsedRequest.ok) {
+    sendStatsValidationError(res, parsedRequest)
+    return
+  }
+
+  try {
+    const response = await getBuyStatsOverview(parsedRequest.value)
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_BUY_STATS_OVERVIEW', e)
+  }
 }
 
 const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
@@ -92,4 +141,43 @@ const patchItemBuy = async ({ params, body }: RequestExt, res: Response): Promis
   }
 }
 
-export { postItem, getItem, getItems, updateItem, patchItemBuy }
+// Endpoints de conveniencia para egresos asociados a compras
+const createBuyExpense = async ({ params, body, user }: RequestExt, res: Response): Promise<void> => {
+  try {
+    const { buyId } = params
+    const userId = user?.id
+
+    // Verificar que la compra existe
+    const buy = await BuyModel.findById(buyId)
+    if (!buy) {
+      res.status(404).json({ error: 'Compra no encontrada' })
+      return
+    }
+
+    // Inyectar relatedTo y llamar al servicio
+    const dto = {
+      ...body,
+      relatedTo: {
+        kind: RELATED_KIND.BUY,
+        id: buyId
+      }
+    }
+
+    const expense = await ExpenseService.create(dto, userId)
+    res.status(201).json({ expense })
+  } catch (error: any) {
+    handleHttp(res, 'ERROR_CREATE_BUY_EXPENSE', error)
+  }
+}
+
+const listBuyExpenses = async ({ params, query }: RequestExt, res: Response): Promise<void> => {
+  try {
+    const { buyId } = params
+    const result = await ExpenseService.listByBuy(buyId, query)
+    res.json(result)
+  } catch (error: any) {
+    handleHttp(res, 'ERROR_LIST_BUY_EXPENSES', error)
+  }
+}
+
+export { postItem, getItem, getItems, updateItem, patchItemBuy, createBuyExpense, listBuyExpenses, getBuyStatsByUserController, getBuyStatsOverviewController }

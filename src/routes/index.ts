@@ -1,7 +1,7 @@
 import { Router } from 'express'
-/* import { readdirSync } from 'fs' */
+import { readdirSync } from 'fs'
 
-/* const PATH_ROUTER = `${__dirname}`
+const PATH_ROUTER = `${__dirname}`
 const router = Router()
 
 const cleanFileName = (fileName: string): string => {
@@ -14,14 +14,13 @@ readdirSync(PATH_ROUTER).map((fileName): string => {
 
   if (cleanName !== 'index') {
     import(`./${cleanName}`).then((moduleRouter) => {
-      console.log(cleanName )
       router.use(`/${cleanName}`, moduleRouter.router)
     }).catch((e) => console.log('Ocurrio un error en la ruta', e))
   }
   return cleanName
-}) */
+})
 
-import { router as authRouter } from './auth';
+/* import { router as authRouter } from './auth';
 import { router as backupRouter } from './backup';
 import { router as brandRouter } from './brand';
 import { router as buyRouter } from './buy';
@@ -52,6 +51,6 @@ router.use('/itemSale', itemSaleRouter);
 router.use('/log', logRouter);
 router.use('/product', productRouter);
 router.use('/provider', providerRouter);
-router.use('/sale', saleRouter);
+router.use('/sale', saleRouter); */
 
 export { router }

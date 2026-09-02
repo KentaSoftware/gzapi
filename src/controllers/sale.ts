@@ -1,16 +1,37 @@
 import { Request, Response } from 'express'
-import { getSale, getSales, getSalesLimit, insertSale, qtySale, updateSale } from '../services/sale'
+import { deleteSaleService, getSale, getSales, getSalesLimit, insertSale, qtySale, updateSale } from '../services/sale'
 import { emitSocket } from '../socket'
 import { handleHttp } from '../utils/error.handle'
 import { JwtPayload } from 'jsonwebtoken'
 import { Types } from 'mongoose'
-import { getItemSale, insertItemSale, updateItemsSale } from '../services/itemSale'
+import { deleteItemSaleInSale, getItemSale, insertItemSale, updateItemsSale } from '../services/itemSale'
 import { ItemSale, Sale } from '../interfaces/sale.interface'
 import PDFDocument from 'pdfkit'
 import path from 'path'
+import { getClient } from '../services/client'
+import { getSaleStatsByUser, getSaleStatsOverview } from '../services/saleStats'
+import { parseSaleStatsRequest } from '../utils/statsDateRange'
+import { STATS_SCOPE, type StatsValidationFailure } from '../interfaces/saleStats.interface'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
+}
+
+const sendStatsValidationError = (res: Response, failure: StatsValidationFailure): void => {
+  res.status(failure.status)
+  res.send(failure.error)
+}
+
+const deleteSaleController = async ({ params }: RequestExt, res: Response): Promise<void> => {
+  try {
+    const { id } = params
+    const response = await deleteSaleService(new Types.ObjectId(id))
+    await deleteItemSaleInSale(new Types.ObjectId(id))
+
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_DELETE_SALE', e)
+  }
 }
 
 const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
@@ -25,7 +46,7 @@ const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    handleHttp(res, 'ERROR_CREATE_SALE_WITH_ITEMS', e)
   }
 }
 
@@ -58,7 +79,7 @@ const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Prom
     })
     res.send('Ventas guardadas')
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    handleHttp(res, 'ERROR_CREATE_MULTIPLE_SALES', e)
   }
 }
 
@@ -67,33 +88,73 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const { id } = params
     const response = await getSale(new Types.ObjectId(id))
     const response2 = await getItemSale(new Types.ObjectId(id))
-    res.send({ r: response[0], itemsSale: response2 })
+    const response3 = response[0].idCliente ? await getClient(new Types.ObjectId(response[0].idCliente.toString())) : null
+    res.send({ r: response[0], itemsSale: response2, cliente: response3 })
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_SALE_BY_ID', e)
   }
 }
 
-const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
+const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
-    const { input, skip, limit } = body
+    const { input, skip, limit, filterUser } = body
 
     if (input !== undefined) {
-      const response = await getSales(input)
+      const response = await getSales(input, new Types.ObjectId(user.id), user.role)
       res.send(response)
     } else {
-      const response = await getSalesLimit(parseInt(skip), parseInt(limit))
-      const cantidad = await qtySale()
+      const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role, filterUser)
+      const cantidad = await qtySale(filterUser)
+      console.log("cantidad", cantidad)
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_SALES_LIST', e)
   }
 }
 
-const updateItem = async ({ params, body, user }: RequestExt, res: Response): Promise<void> => {
+const getSaleStatsByUserController = async ({ body }: RequestExt, res: Response): Promise<void> => {
+  const parsedRequest = parseSaleStatsRequest(body, {
+    allowUserId: true,
+    scope: STATS_SCOPE.BY_USER
+  })
+
+  if (!parsedRequest.ok) {
+    sendStatsValidationError(res, parsedRequest)
+    return
+  }
+
+  try {
+    const response = await getSaleStatsByUser(parsedRequest.value)
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_SALE_STATS_BY_USER', e)
+  }
+}
+
+const getSaleStatsOverviewController = async ({ body }: RequestExt, res: Response): Promise<void> => {
+  const parsedRequest = parseSaleStatsRequest(body, {
+    allowUserId: false,
+    scope: STATS_SCOPE.OVERVIEW
+  })
+
+  if (!parsedRequest.ok) {
+    sendStatsValidationError(res, parsedRequest)
+    return
+  }
+
+  try {
+    const response = await getSaleStatsOverview(parsedRequest.value)
+    res.send(response)
+  } catch (e) {
+    handleHttp(res, 'ERROR_GET_SALE_STATS_OVERVIEW', e)
+  }
+}
+
+const updateItem = async ({ params, body }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
-    const response = await updateSale(new Types.ObjectId(id), { ...body, user: new Types.ObjectId(user.id) })
+    const response = await updateSale(new Types.ObjectId(id), { ...body })
     await Promise.all(
       body.itemsSale.map(async (item: any) => {
         // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
@@ -104,13 +165,14 @@ const updateItem = async ({ params, body, user }: RequestExt, res: Response): Pr
         }
       })
     )
+    console.log("response", response)
     emitSocket('sale', {
       action: 'update',
       data: response
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_PATCH_ITEM', e)
+    handleHttp(res, 'ERROR_UPDATE_SALE_WITH_ITEMS', e)
   }
 }
 
@@ -125,7 +187,7 @@ const printSale = async (req: Request, res: Response): Promise<void> => {
     }
 
     const itemsSale: ItemSale[] = await getItemSale(saleId)
-    
+
     const doc = new PDFDocument()
 
     // Configurar los encabezados para el archivo PDF
@@ -211,9 +273,8 @@ const printSale = async (req: Request, res: Response): Promise<void> => {
 
     // Finalizar el documento
     doc.end()
-  } catch (e: any) {
-    console.error('Error al generar el PDF:', e.message, e.stack)
-    handleHttp(res, 'ERROR_PRINT_SALE')
+  } catch (e) {
+    handleHttp(res, 'ERROR_PRINT_SALE_PDF', e)
   }
 }
 
@@ -354,8 +415,19 @@ const printSales = async (req: Request, res: Response): Promise<void> => {
     doc.end()
   } catch (e: any) {
     console.error('Error al generar el PDF:', e.message, e.stack)
-    handleHttp(res, 'ERROR_PRINT_SALES')
+    handleHttp(res, 'ERROR_PRINT_MULTIPLE_SALES_PDF', e)
   }
 }
 
-export { postItem, getItem, getItems, updateItem, postMultipleItem, printSale, printSales }
+export {
+  postItem,
+  getItem,
+  getItems,
+  getSaleStatsByUserController,
+  getSaleStatsOverviewController,
+  updateItem,
+  postMultipleItem,
+  printSale,
+  printSales,
+  deleteSaleController
+}

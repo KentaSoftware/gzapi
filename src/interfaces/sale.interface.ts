@@ -9,6 +9,8 @@ export interface Sale {
   createdAt: string
   itemsSale: ItemSale[]
   porcentaje?: number
+  idCliente?: ObjectId
+  paidAt?: Date
 }
 
 export interface ItemSale {

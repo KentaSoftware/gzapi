@@ -65,7 +65,7 @@ const getItemSale = async (id: Types.ObjectId): Promise<any> => {
       },
       {
         $project: {
-          _id: 1, 
+          _id: 1,
           estado: 1,
           idVenta: 1,
           idProducto: 1,
@@ -91,6 +91,14 @@ const getItemSale = async (id: Types.ObjectId): Promise<any> => {
 const updateItemsSale = async (id: Types.ObjectId, item: Partial<ItemSale>): Promise<any> => {
   const response = await ItemSaleModel.updateOne({ _id: id }, { $set: item })
   return response
+}
+
+const deleteItemSaleInSale = async (id: Types.ObjectId): Promise<any> => {
+  const itemsSale = await ItemSaleModel.find({ idVenta: id })
+  await Promise.all(
+    itemsSale.map(async (item: any) => await ItemSaleModel.updateOne({ _id: item._id }, { $set: { estado: false } }))
+  )
+  return itemsSale
 }
 
 const deleteItemsSale = async (id: Types.ObjectId): Promise<any> => {
@@ -159,7 +167,7 @@ const getListBuyAvg = async (prov: string): Promise<any> => {
       {
         $unwind: '$proveedor'
       },
-  		{
+      {
         $project: {
           _id: 0,
           idProducto: '$producto._id',
@@ -168,17 +176,17 @@ const getListBuyAvg = async (prov: string): Promise<any> => {
           proveedor: '$proveedor.descripcion',
           totalVendido: '$totalSales',
           cantidad: { $ceil: '$weeklyAverages' },
-          total: {$multiply: ['$producto.precioCompra', { $ceil: '$weeklyAverages' }]}
+          total: { $multiply: ['$producto.precioCompra', { $ceil: '$weeklyAverages' }] }
         }
       },
-  		{
-    		$match: {
-      		proveedor: prov,
-    		}
-  		},
       {
-        $sort: { totalVendido: -1 }
-      } 
+        $match: {
+          proveedor: prov,
+        }
+      },
+      {
+        $sort: { descripcion: -1 }
+      }
     ]);
 
     return result;
@@ -195,95 +203,95 @@ const getListBuyByDateRange = async (start: string, end: string, prov: string): 
 
   const response = await ItemSaleModel.aggregate([
     {
-        $lookup: {
-          from: 'sales',
-          localField: 'idVenta',
-          foreignField: '_id',
-          as: 'venta'
-        }
-      },
-      {
-        $unwind: '$venta'
-      },
-      {
-        $project: {
-          _id: 0,
-          idProducto: 1,
-          cantidad: 1,
-          idVenta: 1,
-          total: 1,
-          precioUnitario: 1,
-          estado: 1,
-          fechaVenta: '$venta.createdAt',
-          createdAt: 1
-        }
-      },
-      {
-        $match: {
-          fechaVenta: {
-            $gte: startDate,
-            $lte: endDate
-          },
-          $or: [
-            { estado: true },
-            { estado: { $exists: false } }
-          ]
-        }
-      },
-      {
-        $group: {
-          _id: "$idProducto",
-          cantidad: { $sum: "$cantidad" },
-          createdAt: { $first: "$createdAt" }
-        }
-      },
-      {
-        $lookup: {
-          from: 'products',
-          localField: '_id',
-          foreignField: '_id',
-          as: 'producto'
-        }
-      },
-      {
-        $unwind: '$producto'
-      },
-    
-      {
-        $lookup: {
-          from: 'providers',
-          localField: 'producto.proveedor',
-          foreignField: '_id',
-          as: 'proveedor'
-        }
-      },
-      {
-        $unwind: '$proveedor'
-      },
-      {
-        $project: {
-          _id: 0,
-          idProducto: '$producto._id',
-          descripcion: '$producto.descripcion',
-          precio: { $ifNull: ['$producto.precioCompra', '$producto.precioUnitario'] },
-          proveedor: '$proveedor.descripcion',
-          cantidad: 1,
-          createdAt: "$createdAt",
-          total: {$multiply: [{ $ifNull: ['$producto.precioCompra', '$producto.precioUnitario'] }, '$cantidad' ]},
-          fechaVenta: 1,
-        }
-      },
-      {
-        $match: {
-          proveedor: prov,
-        }
-      },
-      {
-        $sort: { cantidad: -1 }
+      $lookup: {
+        from: 'sales',
+        localField: 'idVenta',
+        foreignField: '_id',
+        as: 'venta'
       }
+    },
+    {
+      $unwind: '$venta'
+    },
+    {
+      $project: {
+        _id: 0,
+        idProducto: 1,
+        cantidad: 1,
+        idVenta: 1,
+        total: 1,
+        precioUnitario: 1,
+        estado: 1,
+        fechaVenta: '$venta.createdAt',
+        createdAt: 1
+      }
+    },
+    {
+      $match: {
+        fechaVenta: {
+          $gte: startDate,
+          $lte: endDate
+        },
+        $or: [
+          { estado: true },
+          { estado: { $exists: false } }
+        ]
+      }
+    },
+    {
+      $group: {
+        _id: "$idProducto",
+        cantidad: { $sum: "$cantidad" },
+        createdAt: { $first: "$createdAt" }
+      }
+    },
+    {
+      $lookup: {
+        from: 'products',
+        localField: '_id',
+        foreignField: '_id',
+        as: 'producto'
+      }
+    },
+    {
+      $unwind: '$producto'
+    },
+
+    {
+      $lookup: {
+        from: 'providers',
+        localField: 'producto.proveedor',
+        foreignField: '_id',
+        as: 'proveedor'
+      }
+    },
+    {
+      $unwind: '$proveedor'
+    },
+    {
+      $project: {
+        _id: 0,
+        idProducto: '$producto._id',
+        descripcion: '$producto.descripcion',
+        precio: { $ifNull: ['$producto.precioCompra', '$producto.precioUnitario'] },
+        proveedor: '$proveedor.descripcion',
+        cantidad: 1,
+        createdAt: "$createdAt",
+        total: { $multiply: [{ $ifNull: ['$producto.precioCompra', '$producto.precioUnitario'] }, '$cantidad'] },
+        fechaVenta: 1,
+      }
+    },
+    {
+      $match: {
+        proveedor: prov,
+      }
+    },
+    {
+      $sort: { descripcion: -1 }
+    }
   ])
 
   return response
 }
 
-export { insertItemSale, getItemSales, getItemSale, updateItemsSale, deleteItemsSale, getListBuyAvg, getListBuyByDateRange }
+export { insertItemSale, getItemSales, getItemSale, updateItemsSale, deleteItemsSale, getListBuyAvg, getListBuyByDateRange, deleteItemSaleInSale }

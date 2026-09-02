@@ -1,9 +1,24 @@
 import { Types } from 'mongoose'
 import { Product } from '../interfaces/product.interface'
 import ProductModel from '../models/product'
+import { bumpCatalogVersion } from './productAlias'
+import { CatalogVersionReason } from '../interfaces/catalog.interface'
 
 const insertProduct = async (item: Product): Promise<Product> => {
   const responseInsert = await ProductModel.create(item)
+  
+  // Bump catalog version de forma asíncrona (fire and forget)
+  // No bloqueará ni fallará la creación del producto
+  if (responseInsert.proveedor) {
+    bumpCatalogVersion(
+      responseInsert.proveedor.toString(),
+      CatalogVersionReason.PRODUCT_CREATED
+    ).catch(error => {
+      console.error('[PRODUCT] Error bumping catalog version on create:', error)
+      // Error silencioso - no afecta la operación principal
+    })
+  }
+  
   return responseInsert
 }
 
@@ -51,7 +66,9 @@ const getAllProducts = async (): Promise<Product[]> => {
           marca: '$marca._id',
           NameProveedor: '$proveedor.descripcion',
           NameMarca: '$marca.descripcion',
-          NameCategoria: '$categoria.descripcion'
+          NameCategoria: '$categoria.descripcion',
+          createdAt: 1,
+          updatedAt: 1
         }
       },
       {
@@ -144,7 +161,9 @@ const getAllProductsCategories = async (categories: string[] | undefined): Promi
         marca: '$marca._id',
         NameCategoria: '$categoria.descripcion',
         NameProveedor: '$proveedor.descripcion',
-        NameMarca: '$marca.descripcion'
+        NameMarca: '$marca.descripcion',
+        createdAt: 1,
+        updatedAt: 1
       }
     },
     {
@@ -184,7 +203,83 @@ const getAllProductsCategories = async (categories: string[] | undefined): Promi
   ])
 }
 
-const getProducts = async (skip: number, limit: number): Promise<Product[]> => {
+const getProducts = async (skip: number, limit: number, userRole?: any): Promise<Product[]> => {
+
+  if (userRole && userRole.name === 'admin') {
+    // Agregamos un $match para filtrar productos con precioUnitario > 1
+    return await ProductModel.aggregate(
+      [
+        {
+          $lookup: {
+            from: 'categories',
+            localField: 'categoria',
+            foreignField: '_id',
+            as: 'categoria'
+          }
+        },
+        {
+          $lookup: {
+            from: 'brands',
+            localField: 'marca',
+            foreignField: '_id',
+            as: 'marca'
+          }
+        },
+        {
+          $lookup: {
+            from: 'providers',
+            localField: 'proveedor',
+            foreignField: '_id',
+            as: 'proveedor'
+          }
+        },
+        {
+          $project: {
+            descripcion: 1,
+            stock: 1,
+            codigoBarra: 1,
+            peso: 1,
+            /* sabor: 1, */
+            bulto: 1,
+            precioBulto: 1,
+            precioCompra: 1,
+            precioUnitario: 1,
+            precioDescuento: 1,
+            categoria: '$categoria._id',
+            proveedor: '$proveedor._id',
+            marca: '$marca._id',
+            NameProveedor: '$proveedor.descripcion',
+            NameMarca: '$marca.descripcion',
+            NameCategoria: '$categoria.descripcion',
+            createdAt: 1,
+            updatedAt: 1,
+            descripcionLower: { $toLower: '$descripcion' }
+          }
+        },
+        {
+          $unwind: '$categoria'
+        },
+        {
+          $unwind: '$proveedor'
+        },
+        {
+          $unwind: '$marca'
+        },
+        {
+          $unwind: '$NameProveedor'
+        },
+        {
+          $unwind: '$NameMarca'
+        },
+        {
+          $unwind: '$NameCategoria'
+        },
+        {
+          $sort: { descripcionLower: 1 }
+        }
+      ]
+    ).skip(skip).limit(limit)
+  }
   return await ProductModel.aggregate(
     [
       {
@@ -230,7 +325,13 @@ const getProducts = async (skip: number, limit: number): Promise<Product[]> => {
           NameMarca: '$marca.descripcion',
           NameCategoria: '$categoria.descripcion',
           createdAt: 1,
+          updatedAt: 1,
           descripcionLower: { $toLower: '$descripcion' }
+        }
+      },
+      {
+        $match: {
+          precioUnitario: { $gt: 1 }
         }
       },
       {
@@ -258,7 +359,7 @@ const getProducts = async (skip: number, limit: number): Promise<Product[]> => {
   ).skip(skip).limit(limit)
 }
 
-const getProductsSearch = async (input: string, filter: Filter): Promise<Product[]> => {
+const getProductsSearch = async (input: string, filter: Filter, userRole?: any): Promise<Product[]> => {
   let query: any = {
   }
 
@@ -271,6 +372,78 @@ const getProductsSearch = async (input: string, filter: Filter): Promise<Product
 
   if (filter.categoria !== undefined || filter.marca !== undefined || filter.proveedor !== undefined) {
     query = Object.assign({}, query, filter)
+  }
+
+  if (userRole && userRole.name === 'admin') {
+    return await ProductModel.aggregate(
+      [
+        {
+          $lookup: {
+            from: 'categories',
+            localField: 'categoria',
+            foreignField: '_id',
+            as: 'categoria'
+          }
+        },
+        {
+          $lookup: {
+            from: 'brands',
+            localField: 'marca',
+            foreignField: '_id',
+            as: 'marca'
+          }
+        },
+        {
+          $lookup: {
+            from: 'providers',
+            localField: 'proveedor',
+            foreignField: '_id',
+            as: 'proveedor'
+          }
+        },
+        {
+          $project: {
+            descripcion: 1,
+            stock: 1,
+            codigoBarra: 1,
+            precioUnitario: 1,
+            precioDescuento: 1,
+            categoria: '$categoria._id',
+            marca: '$marca._id',
+            proveedor: '$proveedor._id',
+            NameMarca: '$marca.descripcion',
+            NameCategoria: '$categoria.descripcion',
+            NameProveedor: '$proveedor.descripcion',
+            createdAt: 1,
+            updatedAt: 1
+          }
+        },
+        {
+          $unwind: '$categoria'
+        },
+        {
+          $unwind: '$marca'
+        },
+        {
+          $unwind: '$proveedor'
+        },
+        {
+          $unwind: '$NameMarca'
+        },
+        {
+          $unwind: '$NameCategoria'
+        },
+        {
+          $unwind: '$NameProveedor'
+        },
+        {
+          $match: query
+        },
+        {
+          $sort: { descripcion: 1 }
+        }
+      ]
+    )
   }
 
   return await ProductModel.aggregate(
@@ -312,7 +485,13 @@ const getProductsSearch = async (input: string, filter: Filter): Promise<Product
           NameMarca: '$marca.descripcion',
           NameCategoria: '$categoria.descripcion',
           NameProveedor: '$proveedor.descripcion',
-          createdAt: 1
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      {
+        $match: {
+          precioUnitario: { $gt: 1 }
         }
       },
       {
@@ -395,7 +574,9 @@ const getProduct = async (id: Types.ObjectId): Promise<any> => {
           marca: '$marca._id',
           NameProveedor: '$proveedor.descripcion',
           NameMarca: '$marca.descripcion',
-          NameCategoria: '$categoria.descripcion'
+          NameCategoria: '$categoria.descripcion',
+          createdAt: 1,
+          updatedAt: 1
         }
       },
       {
@@ -421,7 +602,23 @@ const getProduct = async (id: Types.ObjectId): Promise<any> => {
 }
 
 const updateProduct = async (id: Types.ObjectId, item: Partial<Product>): Promise<any> => {
+  // Obtener el producto antes de actualizar para saber su proveedor
+  const product = await ProductModel.findById(id).select('proveedor').lean()
+  
   const response = await ProductModel.updateOne({ _id: id }, { $set: item })
+  
+  // Bump catalog version de forma asíncrona (fire and forget)
+  // No bloqueará ni fallará la actualización del producto
+  if (product?.proveedor) {
+    bumpCatalogVersion(
+      product.proveedor.toString(),
+      CatalogVersionReason.PRODUCT_UPDATED
+    ).catch(error => {
+      console.error('[PRODUCT] Error bumping catalog version on update:', error)
+      // Error silencioso - no afecta la operación principal
+    })
+  }
+  
   return response
 }
 
@@ -456,4 +653,32 @@ const findProducts = async (filter: Filter): Promise<any> => {
   return response
 }
 
-export { getProduct, getProducts, insertProduct, updateProduct, getProductsSearch, findProducts, qtyProduct, getAllProducts, getAllProductsCategories }
+// Consulta para obtener la última fecha de updatedAt y createdAt de los productos
+const getUltimasFechasProductoService = async (): Promise<{ ultimaCreatedAt: Date | null, ultimaUpdatedAt: Date | null }> => {
+  // Obtener el producto con la fecha de creación más reciente
+  const ultimoCreado = await ProductModel.findOne({}, { createdAt: 1 }).sort({ createdAt: -1 }).lean() as Product;
+  // Obtener el producto con la fecha de actualización más reciente
+  const ultimoActualizado = await ProductModel.findOne({}, { updatedAt: 1 }).sort({ updatedAt: -1 }).lean() as Product;
+
+  // Restar 3 horas a las fechas si existen
+  let ultimaCreatedAt: Date | null = null;
+  let ultimaUpdatedAt: Date | null = null;
+
+  if (ultimoCreado?.createdAt) {
+    ultimaCreatedAt = new Date(ultimoCreado.createdAt);
+    ultimaCreatedAt.setHours(ultimaCreatedAt.getHours() - 3);
+  }
+
+  if (ultimoActualizado?.updatedAt) {
+    ultimaUpdatedAt = new Date(ultimoActualizado.updatedAt);
+    ultimaUpdatedAt.setHours(ultimaUpdatedAt.getHours() - 3);
+  }
+
+  return {
+    ultimaCreatedAt,
+    ultimaUpdatedAt
+  };
+};
+
+
+export { getProduct, getProducts, insertProduct, updateProduct, getProductsSearch, findProducts, qtyProduct, getAllProducts, getAllProductsCategories, getUltimasFechasProductoService }
