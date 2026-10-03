@@ -6,7 +6,7 @@ import { CatalogVersionReason } from '../interfaces/catalog.interface'
 
 const insertProduct = async (item: Product): Promise<Product> => {
   const responseInsert = await ProductModel.create(item)
-  
+
   // Bump catalog version de forma asíncrona (fire and forget)
   // No bloqueará ni fallará la creación del producto
   if (responseInsert.proveedor) {
@@ -18,7 +18,7 @@ const insertProduct = async (item: Product): Promise<Product> => {
       // Error silencioso - no afecta la operación principal
     })
   }
-  
+
   return responseInsert
 }
 
@@ -204,7 +204,6 @@ const getAllProductsCategories = async (categories: string[] | undefined): Promi
 }
 
 const getProducts = async (skip: number, limit: number, userRole?: any): Promise<Product[]> => {
-
   if (userRole && userRole.name === 'admin') {
     // Agregamos un $match para filtrar productos con precioUnitario > 1
     return await ProductModel.aggregate(
@@ -604,12 +603,12 @@ const getProduct = async (id: Types.ObjectId): Promise<any> => {
 const updateProduct = async (id: Types.ObjectId, item: Partial<Product>): Promise<any> => {
   // Obtener el producto antes de actualizar para saber su proveedor
   const product = await ProductModel.findById(id).select('proveedor').lean()
-  
+
   const response = await ProductModel.updateOne({ _id: id }, { $set: item })
-  
+
   // Bump catalog version de forma asíncrona (fire and forget)
   // No bloqueará ni fallará la actualización del producto
-  if (product?.proveedor) {
+  if ((product?.proveedor) != null) {
     bumpCatalogVersion(
       product.proveedor.toString(),
       CatalogVersionReason.PRODUCT_UPDATED
@@ -618,7 +617,7 @@ const updateProduct = async (id: Types.ObjectId, item: Partial<Product>): Promis
       // Error silencioso - no afecta la operación principal
     })
   }
-  
+
   return response
 }
 
@@ -656,29 +655,28 @@ const findProducts = async (filter: Filter): Promise<any> => {
 // Consulta para obtener la última fecha de updatedAt y createdAt de los productos
 const getUltimasFechasProductoService = async (): Promise<{ ultimaCreatedAt: Date | null, ultimaUpdatedAt: Date | null }> => {
   // Obtener el producto con la fecha de creación más reciente
-  const ultimoCreado = await ProductModel.findOne({}, { createdAt: 1 }).sort({ createdAt: -1 }).lean() as Product;
+  const ultimoCreado = await ProductModel.findOne({}, { createdAt: 1 }).sort({ createdAt: -1 }).lean() as Product
   // Obtener el producto con la fecha de actualización más reciente
-  const ultimoActualizado = await ProductModel.findOne({}, { updatedAt: 1 }).sort({ updatedAt: -1 }).lean() as Product;
+  const ultimoActualizado = await ProductModel.findOne({}, { updatedAt: 1 }).sort({ updatedAt: -1 }).lean() as Product
 
   // Restar 3 horas a las fechas si existen
-  let ultimaCreatedAt: Date | null = null;
-  let ultimaUpdatedAt: Date | null = null;
+  let ultimaCreatedAt: Date | null = null
+  let ultimaUpdatedAt: Date | null = null
 
-  if (ultimoCreado?.createdAt) {
-    ultimaCreatedAt = new Date(ultimoCreado.createdAt);
-    ultimaCreatedAt.setHours(ultimaCreatedAt.getHours() - 3);
+  if ((ultimoCreado?.createdAt) != null) {
+    ultimaCreatedAt = new Date(ultimoCreado.createdAt)
+    ultimaCreatedAt.setHours(ultimaCreatedAt.getHours() - 3)
   }
 
-  if (ultimoActualizado?.updatedAt) {
-    ultimaUpdatedAt = new Date(ultimoActualizado.updatedAt);
-    ultimaUpdatedAt.setHours(ultimaUpdatedAt.getHours() - 3);
+  if ((ultimoActualizado?.updatedAt) != null) {
+    ultimaUpdatedAt = new Date(ultimoActualizado.updatedAt)
+    ultimaUpdatedAt.setHours(ultimaUpdatedAt.getHours() - 3)
   }
 
   return {
     ultimaCreatedAt,
     ultimaUpdatedAt
-  };
-};
-
+  }
+}
 
 export { getProduct, getProducts, insertProduct, updateProduct, getProductsSearch, findProducts, qtyProduct, getAllProducts, getAllProductsCategories, getUltimasFechasProductoService }

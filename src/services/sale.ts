@@ -22,7 +22,7 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Pr
     }
   }
 
-  console.log("query", query)
+  console.log('query', query)
 
   // Si el usuario es admin, no filtrar por usuario
   if (userRole && userRole.name === 'admin') {
@@ -67,7 +67,7 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Pr
 
   // Si no es admin, filtrar por usuario
   const response = await SaleModel.aggregate([{
-    $match: { ...query, user: user }
+    $match: { ...query, user }
   },
   {
     $sort: { createdAt: -1 }
@@ -157,7 +157,7 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
   // Si no es admin, filtrar por usuario
   const response = await SaleModel.aggregate([
     {
-      $match: { user: user }
+      $match: { user }
     },
     {
       $sort: { createdAt: -1 }

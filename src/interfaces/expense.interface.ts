@@ -49,7 +49,7 @@ export interface CreateExpenseDTO {
   type: string
   paymentMethod: string
   description?: string
-  relatedTo?: { kind: string; id?: string }
+  relatedTo?: { kind: string, id?: string }
 }
 
 export interface ListExpensesQuery {

@@ -5,13 +5,13 @@
 
 /**
  * Normaliza texto para matching de productos
- * 
+ *
  * Operaciones:
  * 1. Uppercase
  * 2. Remover tildes/diacríticos
  * 3. Trim + colapsar espacios múltiples
  * 4. Normalizar patrones comunes (cantidades, unidades)
- * 
+ *
  * @param input - Texto a normalizar
  * @returns Texto normalizado
  */
@@ -39,7 +39,7 @@ export const normalizeText = (input: string | null | undefined): string => {
 
 /**
  * Normaliza patrones comunes de cantidades y unidades
- * 
+ *
  * Ejemplos:
  * - "1kg" -> "1 KG"
  * - "x12" -> "X 12"
@@ -62,7 +62,7 @@ const normalizeQuantityPatterns = (text: string): string => {
     { pattern: /(\d+(?:[.,]\d+)?)\s*(UN|UNI|UNID|UNIDADES?)/gi, replacement: '$1 UN' },
     // Multiplicador X (ej: x12, X 12)
     { pattern: /\bX\s*(\d+)/gi, replacement: 'X $1' },
-    { pattern: /(\d+)\s*X\b/gi, replacement: '$1 X' },
+    { pattern: /(\d+)\s*X\b/gi, replacement: '$1 X' }
   ]
 
   let result = text

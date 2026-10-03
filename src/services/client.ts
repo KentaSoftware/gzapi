@@ -26,7 +26,7 @@ const getClients = async (skip: number, limit: number): Promise<Client[]> => {
 }
 
 const getClientSearch = async (input: string): Promise<Client[]> => {
-  let query: any = {
+  const query: any = {
   }
 
   if (input !== '') {

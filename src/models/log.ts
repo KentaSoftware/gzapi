@@ -3,27 +3,27 @@ import { Log } from '../interfaces/log.interface'
 
 const LogSchema = new Schema<Log>(
   {
-    accion : {
-        type: String,
-        require: true
+    accion: {
+      type: String,
+      require: true
     },
-    coleccion : {
-        type: String,
-        require: true
+    coleccion: {
+      type: String,
+      require: true
     },
-    idColeccion : {
-        type: Schema.ObjectId,
-        required: true
+    idColeccion: {
+      type: Schema.ObjectId,
+      required: true
     },
     userId: {
-        type: Schema.ObjectId,
-        ref: 'user'
+      type: Schema.ObjectId,
+      ref: 'user'
     },
     changedFields: {
-        type: Schema.Types.Mixed
+      type: Schema.Types.Mixed
     },
     metadata: {
-        type: Schema.Types.Mixed
+      type: Schema.Types.Mixed
     }
   },
   {

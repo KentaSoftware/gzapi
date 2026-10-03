@@ -2,7 +2,7 @@ import type { SaleStatsSummary, SaleStatsByUserItem } from './saleStats.interfac
 
 export type BuyStatsSummary = SaleStatsSummary
 export type BuyStatsByUserItem = SaleStatsByUserItem
-export type BuyStatsByUserResponse = { summary: BuyStatsSummary; items: BuyStatsByUserItem[] }
-export type BuyStatsOverviewResponse = { summary: BuyStatsSummary }
+export interface BuyStatsByUserResponse { summary: BuyStatsSummary, items: BuyStatsByUserItem[] }
+export interface BuyStatsOverviewResponse { summary: BuyStatsSummary }
 
 export { STATS_PERIOD, STATS_SCOPE } from './saleStats.interface'

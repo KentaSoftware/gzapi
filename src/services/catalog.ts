@@ -11,7 +11,19 @@ import {
   ProductSearchQuery,
   SnapshotProduct,
   SnapshotAlias
+  ,
+  BatchCatalogSearchRequest,
+  BatchCatalogSearchResponse,
+  CatalogQuery,
+  CatalogSearchResult,
+  CatalogSearchScope,
+  ProductSummary,
+  RetrievalMethod
 } from '../interfaces/catalog.interface'
+
+// ============================================
+// BATCH CATALOG SEARCH
+// ============================================
 
 /**
  * Obtener versión del catálogo de un proveedor
@@ -19,7 +31,7 @@ import {
 export const getCatalogVersionService = async (providerId: string): Promise<CatalogVersionResponse> => {
   // Validar que el proveedor existe
   const provider = await ProviderModel.findById(providerId).lean()
-  if (!provider) {
+  if (provider == null) {
     throw new Error('PROVIDER_NOT_FOUND')
   }
 
@@ -28,7 +40,7 @@ export const getCatalogVersionService = async (providerId: string): Promise<Cata
     providerId: new Types.ObjectId(providerId)
   }).lean()
 
-  if (storedVersion) {
+  if (storedVersion != null) {
     return {
       providerId,
       version: storedVersion.version,
@@ -81,7 +93,7 @@ export const getCatalogSnapshotService = async (
 
   // Validar que el proveedor existe
   const provider = await ProviderModel.findById(providerId).lean()
-  if (!provider) {
+  if (provider == null) {
     throw new Error('PROVIDER_NOT_FOUND')
   }
 
@@ -185,7 +197,7 @@ export const searchProductsService = async (
   // 1. Búsqueda por código de barras (exacta)
   if (barcode) {
     const normalizedBarcode = normalizeBarcode(barcode)
-    
+
     const matchQuery: any = { codigoBarra: normalizedBarcode }
     if (providerId) {
       matchQuery.proveedor = new Types.ObjectId(providerId)
@@ -262,7 +274,7 @@ export const searchProductsService = async (
   // 2. Búsqueda por texto (descripción)
   if (q) {
     const normalizedQuery = normalizeText(q)
-    
+
     // Primero buscar en aliases
     const aliasQuery: any = {
       aliasValueNormalized: normalizedQuery,
@@ -273,8 +285,8 @@ export const searchProductsService = async (
     }
 
     const aliasMatch = await ProductAliasModel.findOne(aliasQuery).lean()
-    
-    if (aliasMatch) {
+
+    if (aliasMatch != null) {
       // Encontramos alias exacto, buscar el producto
       const product = await ProductModel.aggregate([
         { $match: { _id: aliasMatch.productId } },
@@ -341,7 +353,7 @@ export const searchProductsService = async (
     // Búsqueda regex en descripción
     // Escapar caracteres especiales de regex
     const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    
+
     const descQuery: any = {
       descripcion: { $regex: escapedQ, $options: 'i' }
     }
@@ -433,7 +445,7 @@ export const getAllProvidersWithVersionService = async (): Promise<Array<{
   productCount: number
 }>> => {
   const providers = await ProviderModel.find({}).lean()
-  
+
   const results = await Promise.all(
     providers.map(async (provider) => {
       const [versionInfo, productCount] = await Promise.all([
@@ -454,24 +466,10 @@ export const getAllProvidersWithVersionService = async (): Promise<Array<{
   return results
 }
 
-// ============================================
-// BATCH CATALOG SEARCH
-// ============================================
-
-import {
-  BatchCatalogSearchRequest,
-  BatchCatalogSearchResponse,
-  CatalogQuery,
-  CatalogSearchResult,
-  CatalogSearchScope,
-  ProductSummary,
-  RetrievalMethod
-} from '../interfaces/catalog.interface'
-
 /**
  * Mapea Product de MongoDB a ProductSummary (payload liviano)
  */
-function mapToProductSummary(product: any): ProductSummary {
+function mapToProductSummary (product: any): ProductSummary {
   return {
     productId: product._id.toString(),
     description: product.descripcion || product.description || '',
@@ -487,26 +485,26 @@ function mapToProductSummary(product: any): ProductSummary {
 /**
  * Búsqueda de candidatos por barcode exacto
  */
-async function searchByBarcode(
+async function searchByBarcode (
   barcode: string,
   providerId?: string,
   limit: number = 20
 ): Promise<ProductSummary[]> {
   const normalizedBarcode = normalizeBarcode(barcode)
-  
+
   const filter: any = {
     codigoBarra: normalizedBarcode
   }
-  
+
   if (providerId) {
     filter.proveedor = new Types.ObjectId(providerId)
   }
-  
+
   const products = await ProductModel.find(filter)
     .select('_id descripcion description codigoBarra proveedor categoria marca unidad pack')
     .limit(limit)
     .lean()
-  
+
   return products.map(mapToProductSummary)
 }
 
@@ -514,57 +512,57 @@ async function searchByBarcode(
  * Búsqueda de candidatos por texto
  * Estrategia: Regex con tokens normalizados
  */
-async function searchByText(
+async function searchByText (
   q: string,
   providerId?: string,
   limit: number = 20
 ): Promise<ProductSummary[]> {
   const normalized = normalizeText(q)
-  
+
   // Tokenizar query (split por espacios)
   const tokens = normalized.split(/\s+/).filter(t => t.length >= 2)
-  
+
   if (tokens.length === 0) {
     return []
   }
-  
+
   // Crear regex: buscar todos los tokens (orden independiente)
   const regexPattern = tokens.map(t => `(?=.*${t})`).join('')
   const regex = new RegExp(regexPattern, 'i')
-  
+
   const filter: any = {
     $or: [
       { descripcion: regex },
       { description: regex }
     ]
   }
-  
+
   if (providerId) {
     filter.proveedor = new Types.ObjectId(providerId)
   }
-  
+
   const products = await ProductModel.find(filter)
     .select('_id descripcion description codigoBarra proveedor categoria marca unidad pack')
     .limit(limit)
     .lean()
-  
+
   return products.map(mapToProductSummary)
 }
 
 /**
  * Procesa una query individual con scope PROVIDER_FIRST
  */
-async function processQueryProviderFirst(
+async function processQueryProviderFirst (
   query: CatalogQuery,
   providerId: string,
   topK: number,
   minCandidates: number
 ): Promise<CatalogSearchResult> {
   const methods: RetrievalMethod[] = []
-  
+
   let providerCandidates: ProductSummary[] = []
   let globalCandidates: ProductSummary[] = []
-  
+
   // 1. Búsqueda por provider
   if (query.barcode) {
     providerCandidates = await searchByBarcode(query.barcode, providerId, topK)
@@ -573,9 +571,9 @@ async function processQueryProviderFirst(
     providerCandidates = await searchByText(query.q, providerId, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
-  
+
   const providerCount = providerCandidates.length
-  
+
   // 2. Si no hay suficientes, buscar global
   if (providerCount < minCandidates) {
     if (query.barcode) {
@@ -585,22 +583,22 @@ async function processQueryProviderFirst(
     }
     methods.push(RetrievalMethod.GLOBAL_FALLBACK)
   }
-  
+
   // 3. Merge y dedup (priorizar provider)
   const allCandidates = [...providerCandidates, ...globalCandidates]
   const seen = new Set<string>()
   const unique: ProductSummary[] = []
-  
+
   for (const candidate of allCandidates) {
     if (!seen.has(candidate.productId)) {
       seen.add(candidate.productId)
       unique.push(candidate)
     }
   }
-  
+
   // 4. Limitar a topK
   const finalCandidates = unique.slice(0, topK)
-  
+
   return {
     queryId: query.queryId,
     query: {
@@ -612,8 +610,8 @@ async function processQueryProviderFirst(
       providerCount,
       globalCount: globalCandidates.length,
       totalReturned: finalCandidates.length,
-      usedScope: providerCount >= minCandidates 
-        ? CatalogSearchScope.PROVIDER_ONLY 
+      usedScope: providerCount >= minCandidates
+        ? CatalogSearchScope.PROVIDER_ONLY
         : CatalogSearchScope.PROVIDER_FIRST,
       retrievalMethods: methods,
       noCandidates: finalCandidates.length === 0
@@ -624,14 +622,14 @@ async function processQueryProviderFirst(
 /**
  * Procesa una query individual con scope PROVIDER_ONLY
  */
-async function processQueryProviderOnly(
+async function processQueryProviderOnly (
   query: CatalogQuery,
   providerId: string,
   topK: number
 ): Promise<CatalogSearchResult> {
   const methods: RetrievalMethod[] = []
   let candidates: ProductSummary[] = []
-  
+
   if (query.barcode) {
     candidates = await searchByBarcode(query.barcode, providerId, topK)
     methods.push(RetrievalMethod.BARCODE_EXACT)
@@ -639,7 +637,7 @@ async function processQueryProviderOnly(
     candidates = await searchByText(query.q, providerId, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
-  
+
   return {
     queryId: query.queryId,
     query: {
@@ -661,13 +659,13 @@ async function processQueryProviderOnly(
 /**
  * Procesa una query individual con scope GLOBAL_ONLY
  */
-async function processQueryGlobalOnly(
+async function processQueryGlobalOnly (
   query: CatalogQuery,
   topK: number
 ): Promise<CatalogSearchResult> {
   const methods: RetrievalMethod[] = []
   let candidates: ProductSummary[] = []
-  
+
   if (query.barcode) {
     candidates = await searchByBarcode(query.barcode, undefined, topK)
     methods.push(RetrievalMethod.BARCODE_EXACT)
@@ -675,7 +673,7 @@ async function processQueryGlobalOnly(
     candidates = await searchByText(query.q, undefined, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
-  
+
   return {
     queryId: query.queryId,
     query: {
@@ -701,7 +699,7 @@ export const batchCatalogSearchService = async (
   request: BatchCatalogSearchRequest
 ): Promise<BatchCatalogSearchResponse> => {
   const startTime = Date.now()
-  
+
   const {
     queries,
     providerId,
@@ -709,13 +707,13 @@ export const batchCatalogSearchService = async (
     topK = 20,
     minCandidates = 10
   } = request
-  
+
   // Procesar cada query según el scope
   const results: CatalogSearchResult[] = []
-  
+
   for (const query of queries) {
     let result: CatalogSearchResult
-    
+
     switch (scope) {
       case CatalogSearchScope.PROVIDER_ONLY:
         if (!providerId) {
@@ -723,11 +721,11 @@ export const batchCatalogSearchService = async (
         }
         result = await processQueryProviderOnly(query, providerId, topK)
         break
-        
+
       case CatalogSearchScope.GLOBAL_ONLY:
         result = await processQueryGlobalOnly(query, topK)
         break
-        
+
       case CatalogSearchScope.PROVIDER_FIRST:
         if (!providerId) {
           // Si no hay providerId, actuar como GLOBAL_ONLY
@@ -736,17 +734,17 @@ export const batchCatalogSearchService = async (
           result = await processQueryProviderFirst(query, providerId, topK, minCandidates)
         }
         break
-        
+
       default:
         result = await processQueryGlobalOnly(query, topK)
     }
-    
+
     results.push(result)
   }
-  
+
   const executionTimeMs = Date.now() - startTime
   const avgCandidates = results.reduce((sum, r) => sum + r.candidates.length, 0) / results.length
-  
+
   return {
     success: true,
     results,

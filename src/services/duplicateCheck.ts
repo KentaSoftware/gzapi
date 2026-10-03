@@ -170,7 +170,7 @@ export const recordDecision = async (
     { new: true }
   )
 
-  if (!checkRecord) {
+  if (checkRecord == null) {
     throw new Error('CHECK_NOT_FOUND')
   }
 
@@ -193,7 +193,7 @@ export const recordDecision = async (
 /**
  * Busca compras por número de documento exacto
  */
-async function findByDocNumber(
+async function findByDocNumber (
   providerId: string,
   docNumber: string
 ): Promise<DuplicateCandidate[]> {
@@ -206,7 +206,7 @@ async function findByDocNumber(
     .lean()
 
   return buys.map((buy) => ({
-    existingBuyId: buy._id!.toString(),
+    existingBuyId: buy._id.toString(),
     existingDate: buy.fecha,
     existingTotal: buy.total as number,
     existingDocNumber: buy.docNumber,
@@ -224,7 +224,7 @@ async function findByDocNumber(
 /**
  * Busca compras por fingerprint exacto
  */
-async function findByFingerprint(
+async function findByFingerprint (
   providerId: string,
   fingerprint: string
 ): Promise<DuplicateCandidate[]> {
@@ -237,7 +237,7 @@ async function findByFingerprint(
     .lean()
 
   return buys.map((buy) => ({
-    existingBuyId: buy._id!.toString(),
+    existingBuyId: buy._id.toString(),
     existingDate: buy.fecha,
     existingTotal: buy.total as number,
     existingDocNumber: buy.docNumber,
@@ -255,7 +255,7 @@ async function findByFingerprint(
 /**
  * Busca compras por proveedor + fecha + total con tolerancias
  */
-async function findByProviderDateTotal(
+async function findByProviderDateTotal (
   providerId: string,
   date: Date,
   total: number,
@@ -295,7 +295,7 @@ async function findByProviderDateTotal(
     }
 
     return {
-      existingBuyId: buy._id!.toString(),
+      existingBuyId: buy._id.toString(),
       existingDate: buy.fecha,
       existingTotal: buy.total as number,
       existingDocNumber: buy.docNumber,
@@ -314,7 +314,7 @@ async function findByProviderDateTotal(
 /**
  * Deduplicar candidatos que aparecen por múltiples criterios
  */
-function deduplicateCandidates(
+function deduplicateCandidates (
   candidates: DuplicateCandidate[]
 ): DuplicateCandidate[] {
   const candidateMap = new Map<string, DuplicateCandidate>()
@@ -322,7 +322,7 @@ function deduplicateCandidates(
   for (const candidate of candidates) {
     const existing = candidateMap.get(candidate.existingBuyId)
 
-    if (existing) {
+    if (existing != null) {
       // Merge: combinar reasons y matchedOn
       existing.reasons = Array.from(
         new Set([...existing.reasons, ...candidate.reasons])
@@ -348,7 +348,7 @@ function deduplicateCandidates(
 /**
  * Calcular scores finales y aplicar boost por múltiples criterios
  */
-function calculateFinalScores(
+function calculateFinalScores (
   candidates: DuplicateCandidate[]
 ): DuplicateCandidate[] {
   return candidates.map((candidate) => {

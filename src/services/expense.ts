@@ -8,12 +8,12 @@ import { emitSocket } from '../socket'
 
 class ExpenseService {
   // Función auxiliar para calcular campos modificados
-  private calculateChangedFields(
+  private calculateChangedFields (
     before: any,
     after: any,
     fields: string[]
-  ): Record<string, { before: any; after: any }> {
-    const changes: Record<string, { before: any; after: any }> = {}
+  ): Record<string, { before: any, after: any }> {
+    const changes: Record<string, { before: any, after: any }> = {}
 
     fields.forEach(field => {
       const beforeValue = before[field]
@@ -51,7 +51,7 @@ class ExpenseService {
         throw new Error('Si relatedTo.kind es BUY, el id es obligatorio')
       }
       const buyExists = await BuyModel.findById(dto.relatedTo.id)
-      if (!buyExists) {
+      if (buyExists == null) {
         throw new Error('La compra referenciada no existe')
       }
     }
@@ -63,7 +63,7 @@ class ExpenseService {
       type: dto.type,
       paymentMethod: dto.paymentMethod,
       description: dto.description,
-      relatedTo: dto.relatedTo || { kind: RELATED_KIND.NONE },
+      relatedTo: (dto.relatedTo != null) || { kind: RELATED_KIND.NONE },
       createdBy: new Types.ObjectId(userId)
     })
 
@@ -110,40 +110,40 @@ class ExpenseService {
   }
 
   // Helpers para presets de fechas (timezone Argentina UTC-3)
-  private getTodayDateRange(): [string, string] {
+  private getTodayDateRange (): [string, string] {
     const now = new Date()
     const todayStr = now.toISOString().split('T')[0]
     return [todayStr, todayStr]
   }
 
-  private getCurrentWeekRange(): [string, string] {
+  private getCurrentWeekRange (): [string, string] {
     // Semana de lunes a domingo (ISO 8601)
     const now = new Date()
     const dayOfWeek = now.getDay() // 0=domingo, 1=lunes, ..., 6=sábado
     const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
-    
+
     const monday = new Date(now)
     monday.setDate(now.getDate() + mondayOffset)
     monday.setHours(0, 0, 0, 0)
-    
+
     const sunday = new Date(monday)
     sunday.setDate(monday.getDate() + 6)
     sunday.setHours(23, 59, 59, 999)
-    
+
     return [
       monday.toISOString().split('T')[0],
       sunday.toISOString().split('T')[0]
     ]
   }
 
-  private getCurrentMonthRange(): [string, string] {
+  private getCurrentMonthRange (): [string, string] {
     const now = new Date()
     const year = now.getFullYear()
     const month = now.getMonth()
-    
+
     const firstDay = new Date(year, month, 1)
     const lastDay = new Date(year, month + 1, 0)
-    
+
     return [
       firstDay.toISOString().split('T')[0],
       lastDay.toISOString().split('T')[0]
@@ -151,10 +151,10 @@ class ExpenseService {
   }
 
   // Validar formato YYYY-MM-DD y fecha real
-  private isValidDateFormat(dateStr: string): boolean {
+  private isValidDateFormat (dateStr: string): boolean {
     const regex = /^\d{4}-\d{2}-\d{2}$/
     if (!regex.test(dateStr)) return false
-    
+
     const date = new Date(dateStr + 'T00:00:00.000Z')
     return !isNaN(date.getTime())
   }
@@ -176,7 +176,7 @@ class ExpenseService {
     // Validar límite máximo
     const MAX_LIMIT = 100
     const effectiveLimit = Math.min(limit, MAX_LIMIT)
-    
+
     if (limit > MAX_LIMIT) {
       throw new Error(`Límite máximo permitido es ${MAX_LIMIT}`)
     }
@@ -217,7 +217,7 @@ class ExpenseService {
       if (!['today', 'week', 'month'].includes(preset)) {
         throw new Error("Preset inválido. Valores permitidos: 'today', 'week', 'month'")
       }
-      
+
       switch (preset) {
         case 'today':
           [effectiveFrom, effectiveTo] = this.getTodayDateRange()
@@ -229,24 +229,24 @@ class ExpenseService {
           [effectiveFrom, effectiveTo] = this.getCurrentMonthRange()
           break
       }
-      
+
       tipoFiltro = 'rápido'
       presetUsed = preset
     } else if (from || to) {
       // PRIORIDAD 2: Rango personalizado (from/to)
       // Validar formato
       if (from && !this.isValidDateFormat(from)) {
-        throw new Error(`Formato inválido para 'from'. Esperado: YYYY-MM-DD`)
+        throw new Error('Formato inválido para \'from\'. Esperado: YYYY-MM-DD')
       }
       if (to && !this.isValidDateFormat(to)) {
-        throw new Error(`Formato inválido para 'to'. Esperado: YYYY-MM-DD`)
+        throw new Error('Formato inválido para \'to\'. Esperado: YYYY-MM-DD')
       }
-      
+
       // Validar from <= to
       if (from && to && new Date(from) > new Date(to)) {
         throw new Error("La fecha 'from' no puede ser posterior a 'to'")
       }
-      
+
       effectiveFrom = from
       effectiveTo = to
       tipoFiltro = 'personalizado'
@@ -256,7 +256,7 @@ class ExpenseService {
       const now = new Date()
       const year = now.getFullYear()
       const month = now.getMonth() // 0-11
-      
+
       effectiveFrom = new Date(year, month, 1).toISOString().split('T')[0]
       effectiveTo = new Date(year, month + 1, 0).toISOString().split('T')[0]
       tipoFiltro = 'default'
@@ -266,12 +266,12 @@ class ExpenseService {
     // Filtro por rango de fechas (siempre aplicado)
     if (effectiveFrom || effectiveTo) {
       filter.date = {}
-      
+
       if (effectiveFrom) {
         const fromDate = new Date(effectiveFrom + 'T00:00:00.000Z')
         filter.date.$gte = fromDate
       }
-      
+
       if (effectiveTo) {
         // INCLUSIVIDAD CORREGIDA: incluir todo el día hasta 23:59:59.999
         const toDate = new Date(effectiveTo + 'T00:00:00.000Z')
@@ -289,7 +289,7 @@ class ExpenseService {
     let trimmedSearch: string | null = null
     if (search) {
       trimmedSearch = search.trim()
-      
+
       // Ignorar si vacío después de trim
       if (trimmedSearch.length === 0) {
         trimmedSearch = null
@@ -298,12 +298,12 @@ class ExpenseService {
         if (trimmedSearch.length < 2) {
           throw new Error('El término de búsqueda debe tener al menos 2 caracteres')
         }
-        
+
         // Validar longitud máxima
         if (trimmedSearch.length > 100) {
           throw new Error('El término de búsqueda no puede superar 100 caracteres')
         }
-        
+
         // Aplicar búsqueda
         filter.$text = { $search: trimmedSearch }
       }
@@ -314,11 +314,11 @@ class ExpenseService {
     // Sorting estable con fallback a createdAt
     const sortField = sort || '-date'
     const sortQuery: any = {}
-    
+
     if (sortField.startsWith('-')) {
       const field = sortField.substring(1)
       sortQuery[field] = -1
-      sortQuery.createdAt = -1  // Fallback para desempate
+      sortQuery.createdAt = -1 // Fallback para desempate
     } else {
       sortQuery[sortField] = 1
       sortQuery.createdAt = -1
@@ -353,7 +353,7 @@ class ExpenseService {
           type: normalizedType || null,
           category: category || null,
           paymentMethod: normalizedPaymentMethod || null,
-          search: trimmedSearch || null  // Usar término normalizado
+          search: trimmedSearch || null // Usar término normalizado
         }
       }
     }
@@ -375,8 +375,8 @@ class ExpenseService {
 
     // Buscar egreso
     const expense = await ExpenseModel.findById(id)
-    
-    if (!expense) {
+
+    if (expense == null) {
       const error: any = new Error('Egreso no encontrado')
       error.status = 404
       throw error
@@ -416,13 +416,13 @@ class ExpenseService {
     if (dto.description !== undefined) expense.description = dto.description
 
     // Validar y actualizar relatedTo
-    if (dto.relatedTo) {
+    if (dto.relatedTo != null) {
       if (dto.relatedTo.kind === RELATED_KIND.BUY) {
         if (!dto.relatedTo.id) {
           throw new Error('Si relatedTo.kind es BUY, el id es obligatorio')
         }
         const buyExists = await BuyModel.findById(dto.relatedTo.id)
-        if (!buyExists) {
+        if (buyExists == null) {
           throw new Error('La compra referenciada no existe')
         }
       }
@@ -448,7 +448,7 @@ class ExpenseService {
         coleccion: 'expense',
         idColeccion: expense._id,
         userId: new Types.ObjectId(userId),
-        changedFields: changedFields
+        changedFields
       })
 
       // Emitir evento BI
@@ -490,8 +490,8 @@ class ExpenseService {
 
     // Buscar egreso (sin filtro isDeleted para manejar idempotencia)
     const expense = await ExpenseModel.findById(id)
-    
-    if (!expense) {
+
+    if (expense == null) {
       const error: any = new Error('Egreso no encontrado')
       error.status = 404
       throw error
@@ -527,7 +527,7 @@ class ExpenseService {
       coleccion: 'expense',
       idColeccion: expense._id,
       userId: new Types.ObjectId(userId),
-      metadata: metadata
+      metadata
     })
 
     // Emitir evento BI
@@ -625,11 +625,11 @@ class ExpenseService {
     if (type) {
       const normalizedType = type.toLowerCase()
       const validTypes = Object.values(EXPENSE_TYPE)
-      
+
       if (!validTypes.includes(normalizedType as EXPENSE_TYPE)) {
         throw new Error('Tipo de egreso inválido. Valores permitidos: operativo, personal, otro_negocio')
       }
-      
+
       matchStage.type = normalizedType
     }
 
@@ -656,7 +656,7 @@ class ExpenseService {
   }
 
   // Helper para redondear a 2 decimales (consistencia entre float y cents)
-  private round2(value: number): number {
+  private round2 (value: number): number {
     return parseFloat(value.toFixed(2))
   }
 
@@ -666,7 +666,7 @@ class ExpenseService {
    * @param query - from, to (YYYY-MM-DD), onlyOperativeExpenses (opcional)
    * @returns SimpleResultKPIResponse con totales y breakdown
    */
-  async getSimpleResult(query: any): Promise<SimpleResultKPIResponse> {
+  async getSimpleResult (query: any): Promise<SimpleResultKPIResponse> {
     const { from, to, onlyOperativeExpenses } = query
 
     // Validar parámetros requeridos

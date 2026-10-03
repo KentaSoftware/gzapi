@@ -16,8 +16,8 @@ export interface Product {
   proveedor: ObjectId
   path?: string
   precioDescuento?: number
-  NameProveedor?: string,
-  NameMarca?: string,
+  NameProveedor?: string
+  NameMarca?: string
   NameCategoria?: string
   createdAt?: Date
   updatedAt?: Date

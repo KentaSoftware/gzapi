@@ -48,4 +48,4 @@ const deleteRole = async (id: Types.ObjectId): Promise<any> => {
   return response
 }
 
-export { getRole, getRoles, insertRole, updateRole, deleteRole, getRoleSearch, qtyRoles, getRolesAll } 
+export { getRole, getRoles, insertRole, updateRole, deleteRole, getRoleSearch, qtyRoles, getRolesAll }

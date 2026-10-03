@@ -22,7 +22,7 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
   try {
     const userId = user?.id
     const result = await ExpenseService.list(query)
-    
+
     // Emitir evento BI expense_list_viewed
     const { emitSocket } = require('../socket')
     emitSocket('expense', {
@@ -57,7 +57,7 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
         }
       }
     })
-    
+
     // Emitir evento BI expense_search_used SI search presente
     if (result._metadata.appliedFilters.search) {
       const searchTerm = result._metadata.appliedFilters.search
@@ -93,15 +93,15 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
         }
       })
     }
-    
+
     // Agregar flags de permisos a la respuesta
     const userPermissions = user?.permissions || []
     const canEdit = userPermissions.includes('update_expense')
     const canDelete = userPermissions.includes('delete_expense')
-    
+
     // Remover metadata interna antes de enviar response
     const { _metadata, ...responseData } = result
-    
+
     res.json({
       ...responseData,
       permissions: {
@@ -111,7 +111,7 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
     })
   } catch (error: any) {
     // Manejar errores de validación con código 400
-    if (error.message?.includes('formato inválido') || 
+    if (error.message?.includes('formato inválido') ||
         error.message?.includes('no puede ser posterior') ||
         error.message?.includes('Preset inválido') ||
         error.message?.includes('Límite máximo') ||
@@ -134,20 +134,20 @@ export const getExpense = async ({ params, user }: RequestExt, res: Response): P
     }
 
     const expense = await ExpenseService.getById(params.id)
-    
-    if (!expense) {
+
+    if (expense == null) {
       // GAP-02: Verificar si está eliminado (soft delete) para retornar 410
       const ExpenseModel = require('../models/expense').default
       const deleted = await ExpenseModel.findOne({ _id: params.id, isDeleted: true })
-      
+
       if (deleted) {
-        res.status(410).json({ 
+        res.status(410).json({
           error: 'Egreso eliminado',
-          deletedAt: deleted.deletedAt 
+          deletedAt: deleted.deletedAt
         })
         return
       }
-      
+
       res.status(404).json({ error: 'Egreso no encontrado' })
       return
     }
@@ -180,7 +180,7 @@ export const getExpense = async ({ params, user }: RequestExt, res: Response): P
     const canEdit = userPermissions.includes('update_expense')
     const canDelete = userPermissions.includes('delete_expense')
 
-    res.json({ 
+    res.json({
       expense,
       permissions: {
         canEdit,
@@ -219,9 +219,9 @@ export const deleteExpense = async ({ params, user }: RequestExt, res: Response)
   try {
     const userId = user?.id
     const expense = await ExpenseService.softDelete(params.id, userId)
-    res.json({ 
+    res.json({
       message: 'Egreso eliminado correctamente',
-      expense 
+      expense
     })
   } catch (error: any) {
     // Manejar status codes específicos
@@ -330,4 +330,3 @@ export const getSimpleResultKPI = async ({ query, user }: RequestExt, res: Respo
     handleHttp(res, 'ERROR_GET_SIMPLE_RESULT_KPI', error)
   }
 }
-

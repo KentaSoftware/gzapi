@@ -127,7 +127,7 @@ export const validateFileExists = (
   res: Response,
   next: NextFunction
 ): void => {
-  if (!req.file) {
+  if (req.file == null) {
     res.status(400).json({
       success: false,
       error: 'Archivo requerido',

@@ -56,7 +56,7 @@ export function buildMovements (
     buys: any[]
     expenses: any[]
   },
-  period: { startDate: Date; endDate: Date }
+  period: { startDate: Date, endDate: Date }
 ): CashflowMovement[] {
   const movements: CashflowMovement[] = []
 
@@ -176,7 +176,7 @@ class CashflowService {
       { $setOnInsert: { openingBalance: 0 } },
       { upsert: true, new: true }
     ).lean()
-    return { openingBalance: doc!.openingBalance }
+    return { openingBalance: doc.openingBalance }
   }
 
   /**
@@ -188,7 +188,7 @@ class CashflowService {
       { $set: { openingBalance } },
       { upsert: true, new: true }
     ).lean()
-    return { openingBalance: doc!.openingBalance }
+    return { openingBalance: doc.openingBalance }
   }
 }
 

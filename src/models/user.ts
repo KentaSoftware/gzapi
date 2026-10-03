@@ -34,7 +34,7 @@ const UserSchema = new Schema<User>(
       unique: true
     },
     email: {
-      type: String,
+      type: String
     },
     password: {
       type: String,
@@ -42,7 +42,7 @@ const UserSchema = new Schema<User>(
     },
     role: {
       type: Schema.Types.ObjectId,
-      ref: 'role',
+      ref: 'role'
     },
     isActive: {
       type: Boolean,
@@ -56,4 +56,4 @@ const UserSchema = new Schema<User>(
 )
 
 const UserModel = model('user', UserSchema)
-export default UserModel 
+export default UserModel

@@ -121,7 +121,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
       draftId
     }).sort({ createdAt: -1 })
 
-    if (!checkRecord) {
+    if (checkRecord == null) {
       return res.status(404).json({
         error: 'CHECK_NOT_FOUND',
         message: 'No duplicate check found for this draft'
@@ -130,7 +130,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
 
     // Registrar decisión
     await recordDecision(
-      checkRecord._id!.toString(),
+      checkRecord._id.toString(),
       dto.decision,
       userId,
       dto.selectedExistingBuyId
@@ -139,7 +139,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
     return res.status(200).json({
       success: true,
       message: 'Decision recorded successfully',
-      checkId: checkRecord._id!.toString()
+      checkId: checkRecord._id.toString()
     })
   } catch (error) {
     console.error('[DUPLICATE_DECISION] Error:', error)

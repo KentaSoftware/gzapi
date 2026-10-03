@@ -1,6 +1,6 @@
 import { Types } from 'mongoose'
-import { Brand } from '../interfaces/product.interface';
-import BrandModel from '../models/brand';
+import { Brand } from '../interfaces/product.interface'
+import BrandModel from '../models/brand'
 
 const insertBrand = async (item: Brand): Promise<Brand> => {
   const responseInsert = await BrandModel.create(item)

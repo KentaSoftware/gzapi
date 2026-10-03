@@ -175,7 +175,7 @@ export const searchProducts = async (req: RequestExt, res: Response): Promise<vo
 export const getAllProvidersWithVersion = async (_req: RequestExt, res: Response): Promise<void> => {
   try {
     const providers = await getAllProvidersWithVersionService()
-    
+
     res.json({
       providers,
       count: providers.length

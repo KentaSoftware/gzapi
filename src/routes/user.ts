@@ -13,4 +13,4 @@ router.post('/search', checkJwt, checkPermission('read_user'), getItems)
 router.patch('/:id', checkJwt, checkPermission('update_user'), updateItem)
 router.delete('/:id', checkJwt, checkPermission('delete_user'), deleteItem)
 
-export { router } 
+export { router }

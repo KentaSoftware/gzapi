@@ -63,7 +63,6 @@ const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Prom
   try {
     const created = await Promise.all(
       body.map(async (item: any) => {
-
         // Ejecutar insertSale y esperar a que termine antes de continuar con insertItemSale
         const response = await insertSale({ ...item, user: new Types.ObjectId(user.id) })
 
@@ -75,7 +74,8 @@ const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Prom
               total: item.total,
               cantidad: item.cantidad,
               idVenta: response._id,
-              estado: true, precioUnitario: item.precio
+              estado: true,
+              precioUnitario: item.precio
             })
           )
         )
@@ -106,7 +106,7 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const { id } = params
     const response = await getSale(new Types.ObjectId(id))
     const response2 = await getItemSale(new Types.ObjectId(id))
-    const response3 = response[0].idCliente ? await getClient(new Types.ObjectId(response[0].idCliente.toString())) : null
+    const response3 = (response[0].idCliente != null) ? await getClient(new Types.ObjectId(response[0].idCliente.toString())) : null
     res.send({ r: response[0], itemsSale: response2, cliente: response3 })
   } catch (e) {
     handleHttp(res, 'ERROR_GET_SALE_BY_ID', e)
@@ -123,7 +123,7 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
     } else {
       const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role, filterUser)
       const cantidad = await qtySale(filterUser)
-      console.log("cantidad", cantidad)
+      console.log('cantidad', cantidad)
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
@@ -183,7 +183,7 @@ const updateItem = async ({ params, body }: RequestExt, res: Response): Promise<
         }
       })
     )
-    console.log("response", response)
+    console.log('response', response)
     emitSocket('sale', {
       action: 'update',
       data: response
@@ -332,7 +332,6 @@ const printSales = async (req: Request, res: Response): Promise<void> => {
       // Calcular la posición de la factura
       let xPosition = (columna - 1) * invoiceWidth
       let yPosition = (fila - 1) * invoiceHeight
-
 
       // Encabezado de la factura
       const drawHeader = (): any => {

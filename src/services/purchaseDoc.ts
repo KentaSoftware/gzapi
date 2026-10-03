@@ -25,7 +25,7 @@ const DOCUMENT_AI_DEBUG = parseInt(process.env.DOCUMENT_AI_DEBUG || '1', 10) // 
 /**
  * Delay con exponential backoff
  */
-const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+const delay = async (ms: number): Promise<void> => await new Promise(resolve => setTimeout(resolve, ms))
 
 /**
  * Transforma el resultado de Document AI al formato esperado por DraftPurchaseDoc
@@ -52,8 +52,8 @@ const transformDocumentAIResult = (aiResult: any): AnalyzeResult => {
     },
     items: aiResult.items?.map((item: any, index: number) => {
       // Construir catalogMatch con sugerencias si existen
-      let catalogMatch: any = undefined
-      
+      let catalogMatch: any
+
       if (item.catalogLink) {
         // Si hay producto vinculado, crear match completo
         if (item.catalogLink.linkedProductId) {
@@ -69,7 +69,7 @@ const transformDocumentAIResult = (aiResult: any): AnalyzeResult => {
               score: sug.score
             })) || []
           }
-        } 
+        }
         // Si hay sugerencias pero no match, crear solo con candidates
         else if (item.catalogLink.suggestions && item.catalogLink.suggestions.length > 0) {
           const topSuggestion = item.catalogLink.suggestions[0]
@@ -143,8 +143,8 @@ export const updateDraft = async (
  */
 export const listUserDrafts = async (
   userId: Types.ObjectId,
-  options: { skip?: number; limit?: number; status?: DraftStatus } = {}
-): Promise<{ drafts: DraftPurchaseDoc[]; total: number }> => {
+  options: { skip?: number, limit?: number, status?: DraftStatus } = {}
+): Promise<{ drafts: DraftPurchaseDoc[], total: number }> => {
   const { skip = 0, limit = 50, status } = options
   const filter: any = { userId }
   if (status) {
@@ -176,25 +176,25 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
       // Construir ruta absoluta del archivo desde la raíz del proyecto
       // draft.file.path viene como "/uploads/purchase-docs/filename.jpg"
       const absolutePath = path.join(process.cwd(), 'public', draft.file.path)
-      
+
       console.log(`[Document AI] Verificando archivo: ${absolutePath}`)
-      
+
       if (!fs.existsSync(absolutePath)) {
         throw new Error(`Archivo no encontrado: ${absolutePath}`)
       }
-      
-      console.log(`[Document AI] Archivo encontrado, enviando a Document AI...`)
+
+      console.log('[Document AI] Archivo encontrado, enviando a Document AI...')
 
       // Preparar FormData para multipart/form-data
       const FormData = (await import('form-data')).default
       const formData = new FormData()
-      
+
       // Agregar archivo
       formData.append('file', fs.createReadStream(absolutePath), {
         filename: draft.file.filename,
         contentType: draft.file.mimeType
       })
-      
+
       // Agregar context como JSON string en Form
       const contextData = {
         draftId: draft._id?.toString(),
@@ -210,13 +210,13 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
 
       // Preparar headers
       const headers: any = formData.getHeaders() // Incluir headers con boundary
-      
+
       // Agregar Authorization header si está disponible
       if (authToken) {
-        headers['Authorization'] = authToken // Ya incluye "Bearer "
-        console.log(`[Document AI] Enviando con token de autenticación`)
+        headers.Authorization = authToken // Ya incluye "Bearer "
+        console.log('[Document AI] Enviando con token de autenticación')
       } else {
-        console.log(`[Document AI] Enviando sin token de autenticación`)
+        console.log('[Document AI] Enviando sin token de autenticación')
       }
 
       // Llamar a Document AI usando axios con FormData
@@ -229,7 +229,7 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
 
       // Document AI devuelve el resultado directamente (no tiene wrapper success/data)
       const aiResult = response.data
-      
+
       // Transformar resultado de Document AI al formato esperado por DraftPurchaseDoc
       const result: AnalyzeResult = transformDocumentAIResult(aiResult)
 
@@ -241,13 +241,13 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
         const status = error.response?.status || 'Unknown'
         const statusText = error.response?.statusText || ''
         const errorData = error.response?.data ? JSON.stringify(error.response.data) : error.message
-        
+
         console.error(`[Document AI] Error ${status}:`, errorData)
         lastError = new Error(`Document AI error: ${status} ${statusText} - ${errorData}`)
       } else {
         lastError = error as Error
       }
-      
+
       console.error(`[Document AI] Error en intento ${attempt}:`, lastError)
 
       // Si es un error de timeout o red, reintentar con backoff
@@ -260,7 +260,7 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
   }
 
   // Si llegamos aquí, todos los intentos fallaron
-  const errorMessage = lastError
+  const errorMessage = (lastError != null)
     ? `Document AI no responde: ${lastError.message}`
     : 'Error desconocido en Document AI'
 
@@ -345,7 +345,7 @@ export const runDuplicateCheck = async (
  */
 export const processDraft = async (draftId: Types.ObjectId, authToken?: string): Promise<DraftPurchaseDoc> => {
   const draft = await getDraftById(draftId)
-  if (!draft) {
+  if (draft == null) {
     throw new Error('Draft no encontrado')
   }
 
@@ -362,11 +362,11 @@ export const processDraft = async (draftId: Types.ObjectId, authToken?: string):
     const updatedDraft = await updateDraft(draftId, {
       status: DraftStatus.READY,
       analysisResult,
-      possibleDuplicate: possibleDuplicate || undefined,
+      possibleDuplicate: possibleDuplicate ?? undefined,
       error: undefined
     })
 
-    if (!updatedDraft) {
+    if (updatedDraft == null) {
       throw new Error('Error actualizando draft')
     }
 
@@ -410,7 +410,7 @@ const createProduct = async (productData: NewProductData, userId: Types.ObjectId
   })
 
   console.log(`[Create Product] Producto creado: ${product._id} - ${productData.descripcion}`)
-  return product._id as Types.ObjectId
+  return product._id
 }
 
 /**
@@ -421,11 +421,11 @@ export const confirmDraft = async (
   userId: Types.ObjectId,
   headerEdits?: HeaderEdits,
   items?: ConfirmItem[],
-  duplicateDecision?: { checkId?: string; decision?: 'CANCEL' | 'PROCEED'; reason?: string }
-): Promise<{ buyId: Types.ObjectId; draftId: Types.ObjectId }> => {
+  duplicateDecision?: { checkId?: string, decision?: 'CANCEL' | 'PROCEED', reason?: string }
+): Promise<{ buyId: Types.ObjectId, draftId: Types.ObjectId }> => {
   // 1. Validar que draft existe y está READY
   const draft = await getDraftById(draftId)
-  if (!draft) {
+  if (draft == null) {
     throw new Error('Draft no encontrado')
   }
 
@@ -433,7 +433,7 @@ export const confirmDraft = async (
     throw new Error(`Draft no está listo para confirmar. Estado actual: ${draft.status}`)
   }
 
-  if (!draft.analysisResult) {
+  if (draft.analysisResult == null) {
     throw new Error('Draft no tiene resultado de análisis')
   }
 
@@ -460,16 +460,18 @@ export const confirmDraft = async (
   }
 
   // 4. Procesar items
-  const processedItems: Array<{ productId: Types.ObjectId; quantity: number; unitPrice: number; subtotal: number }> = []
+  const processedItems: Array<{ productId: Types.ObjectId, quantity: number, unitPrice: number, subtotal: number }> = []
 
   // Si no se envían items, usar los del análisis
-  const itemsToProcess: ConfirmItem[] = items && items.length > 0 ? items : draft.analysisResult.items.map(item => ({
-    lineId: item.itemId,
-    chosenProductId: item.catalogMatch?.productId,
-    quantity: item.quantity,
-    unitPrice: item.unitPrice,
-    subtotal: item.subtotal
-  }))
+  const itemsToProcess: ConfirmItem[] = (items != null) && items.length > 0
+    ? items
+    : draft.analysisResult.items.map(item => ({
+      lineId: item.itemId,
+      chosenProductId: item.catalogMatch?.productId,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      subtotal: item.subtotal
+    }))
 
   for (const item of itemsToProcess) {
     let productId: Types.ObjectId
@@ -477,7 +479,7 @@ export const confirmDraft = async (
     if (item.chosenProductId) {
       // Usar producto existente
       productId = new Types.ObjectId(item.chosenProductId)
-    } else if (item.newProduct) {
+    } else if (item.newProduct != null) {
       // Crear producto nuevo
       productId = await createProduct(item.newProduct, userId)
     } else {
@@ -515,13 +517,13 @@ export const confirmDraft = async (
 
   // 6. Crear items de compra (ItemBuy)
   await Promise.all(
-    processedItems.map(item =>
-      insertItemBuy({
+    processedItems.map(async item =>
+      await insertItemBuy({
         idProducto: item.productId,
         total: item.subtotal,
         cantidad: item.quantity,
         precio: item.unitPrice,
-        idBuy: buy._id as Types.ObjectId,
+        idBuy: buy._id,
         estado: true
       })
     )
@@ -541,14 +543,14 @@ export const confirmDraft = async (
   // 8. Actualizar draft como confirmado
   await updateDraft(draftId, {
     status: DraftStatus.CONFIRMED,
-    confirmedBuyId: buy._id as Types.ObjectId,
+    confirmedBuyId: buy._id,
     confirmedAt: new Date()
   })
 
   console.log(`[Confirm Draft] Draft ${draftId} confirmado exitosamente`)
 
   return {
-    buyId: buy._id as Types.ObjectId,
+    buyId: buy._id,
     draftId
   }
 }

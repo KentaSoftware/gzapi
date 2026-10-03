@@ -6,7 +6,7 @@ const mongoose = require('mongoose')
 const BOOT_PORT = 3199
 const BOOT_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_boot_test'
 
-const waitForPing = (port, timeoutMs) => new Promise((resolve, reject) => {
+const waitForPing = async (port, timeoutMs) => await new Promise((resolve, reject) => {
   const startedAt = Date.now()
   const attempt = () => {
     const request = http.get({ host: '127.0.0.1', port, path: '/ping', timeout: 1000 }, (response) => {

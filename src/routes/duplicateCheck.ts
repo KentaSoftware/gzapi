@@ -12,7 +12,7 @@ const router = Router()
 /**
  * NOTA: Este router se monta en /duplicateCheck por el sistema de auto-carga
  * Para acceder: POST /duplicateCheck/drafts/:draftId/check
- * 
+ *
  * Si se requiere el path /purchase-docs/*, registrar manualmente en routes/index.ts
  */
 

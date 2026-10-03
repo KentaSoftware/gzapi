@@ -11,13 +11,13 @@ const generateToken = async (user: User): Promise<string> => {
     }
 
     const userData = await UserModel.findById(user._id).populate('role')
-    if (!userData) {
+    if (userData == null) {
       throw new Error('User not found in database')
     }
 
     const tokenData = {
       id: user._id.toString(),
-      role: userData.role || [],
+      role: userData.role || []
     }
 
     const jwt = await sign(tokenData, JWT_SECRET)

@@ -31,7 +31,7 @@ interface RequestExt extends Request {
 export const uploadPurchaseDoc = async (req: RequestExt, res: Response): Promise<void> => {
   try {
     // Validar que existe archivo (ya validado por middleware validateFileExists)
-    if (!req.file) {
+    if (req.file == null) {
       res.status(400).json({
         success: false,
         error: 'Archivo requerido'
@@ -144,7 +144,7 @@ export const getDraftStatus = async (req: RequestExt, res: Response): Promise<vo
 
     const draft = await getDraftById(new Types.ObjectId(draftId))
 
-    if (!draft) {
+    if (draft == null) {
       res.status(404).json({
         success: false,
         error: 'Draft no encontrado'
@@ -247,7 +247,7 @@ export const confirmPurchaseDoc = async (req: RequestExt, res: Response): Promis
 
     // Validar que draft existe
     const draft = await getDraftById(new Types.ObjectId(draftId))
-    if (!draft) {
+    if (draft == null) {
       res.status(404).json({
         success: false,
         error: 'Draft no encontrado'
@@ -280,7 +280,7 @@ export const confirmPurchaseDoc = async (req: RequestExt, res: Response): Promis
     // Validar items
     if (!body.items || body.items.length === 0) {
       // Si no se envían items, intentar usar los del análisis
-      if (!draft.analysisResult?.items || draft.analysisResult.items.length === 0) {
+      if (((draft.analysisResult?.items) == null) || draft.analysisResult.items.length === 0) {
         res.status(400).json({
           success: false,
           error: 'No hay items para confirmar'
@@ -292,7 +292,7 @@ export const confirmPurchaseDoc = async (req: RequestExt, res: Response): Promis
     // Validar que cada item tiene productId o newProduct
     if (body.items && body.items.length > 0) {
       for (const item of body.items) {
-        if (!item.chosenProductId && !item.newProduct) {
+        if (!item.chosenProductId && (item.newProduct == null)) {
           res.status(400).json({
             success: false,
             error: 'Cada item debe tener chosenProductId o newProduct',
@@ -305,7 +305,7 @@ export const confirmPurchaseDoc = async (req: RequestExt, res: Response): Promis
         }
 
         // Validar estructura de newProduct si existe
-        if (item.newProduct) {
+        if (item.newProduct != null) {
           const required = ['descripcion', 'categoria', 'marca', 'proveedor']
           for (const field of required) {
             if (!item.newProduct[field as keyof typeof item.newProduct]) {

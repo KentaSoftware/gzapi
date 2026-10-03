@@ -77,4 +77,3 @@ describe('TICKET-002: cashflow.interface types', () => {
     expect(iface).to.be.an('object')
   })
 })
-

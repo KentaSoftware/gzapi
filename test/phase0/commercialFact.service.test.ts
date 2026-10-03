@@ -764,7 +764,7 @@ describe('Phase 0 — commercial fact service', () => {
       let missNextIdempotencyLookup = true
       const originalFindOne = CommercialFactModel.findOne.bind(CommercialFactModel)
       const missIdempotencyLookup = sinon.stub(CommercialFactModel, 'findOne').callsFake((query) => {
-        if (missNextIdempotencyLookup === true && query.idempotencyKey === 'deliver-race') {
+        if (missNextIdempotencyLookup && query.idempotencyKey === 'deliver-race') {
           missNextIdempotencyLookup = false
           return originalFindOne({ ...query, idempotencyKey: `${query.idempotencyKey}-missed` })
         }
