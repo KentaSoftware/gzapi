@@ -32,4 +32,15 @@ const startServer = async (): Promise<Server> => {
   return server
 }
 
+// Invoke the server only when this module runs as the process entry point
+// (nodemon dev script or the compiled dist/server.js start script); importing
+// the module from tests or other code must not open any listener.
+if (typeof require !== 'undefined' && require.main === module) {
+  void startServer().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('Server startup failed:', message)
+    process.exit(1)
+  })
+}
+
 export { startServer }
