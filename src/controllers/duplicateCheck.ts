@@ -23,14 +23,14 @@ export const checkDuplicate = async (req: RequestExt, res: Response) => {
     const userId = req.user?.id
 
     // Validaciones
-    if (!dto.providerId) {
+    if (dto.providerId == null || dto.providerId === '') {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'providerId is required'
       })
     }
 
-    if (!dto.date) {
+    if (dto.date == null || dto.date === '') {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'date is required (format: YYYY-MM-DD)'
@@ -73,7 +73,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
     const dto: DuplicateDecisionRequestDTO = req.body
     const userId = req.user?.id
 
-    if (!userId) {
+    if (userId == null || userId === '') {
       return res.status(401).json({
         error: 'UNAUTHORIZED',
         message: 'User not authenticated'
@@ -81,7 +81,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
     }
 
     // Validaciones
-    if (!dto.decision) {
+    if (dto.decision == null || String(dto.decision) === '') {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'decision is required'
@@ -98,14 +98,14 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
       })
     }
 
-    if (!dto.criteriaTriggered || dto.criteriaTriggered.length === 0) {
+    if (dto.criteriaTriggered == null || dto.criteriaTriggered.length === 0) {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'criteriaTriggered is required'
       })
     }
 
-    if (!dto.candidates || dto.candidates.length === 0) {
+    if (dto.candidates == null || dto.candidates.length === 0) {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'candidates is required'

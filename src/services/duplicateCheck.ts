@@ -48,7 +48,7 @@ export const checkForDuplicates = async (
   const criteriaTriggered: DuplicateCriteria[] = []
 
   // 1. Búsqueda por docNumber exacto
-  if (dto.docNumber) {
+  if (dto.docNumber != null && dto.docNumber !== '') {
     const docNumberCandidates = await findByDocNumber(
       dto.providerId,
       dto.docNumber
@@ -60,7 +60,7 @@ export const checkForDuplicates = async (
   }
 
   // 2. Búsqueda por fingerprint exacto
-  if (dto.fingerprint) {
+  if (dto.fingerprint != null && dto.fingerprint !== '') {
     const fingerprintCandidates = await findByFingerprint(
       dto.providerId,
       dto.fingerprint
@@ -100,7 +100,7 @@ export const checkForDuplicates = async (
 
   // 7. Persistir el check en la BD
   const checkRecord = await PurchaseDocDuplicateCheckModel.create({
-    draftId: draftId ? new Types.ObjectId(draftId) : undefined,
+    draftId: draftId != null && draftId !== '' ? new Types.ObjectId(draftId) : undefined,
     providerId: new Types.ObjectId(dto.providerId),
     date: new Date(dto.date),
     total: dto.total,
@@ -124,7 +124,7 @@ export const checkForDuplicates = async (
 
   // 8. Registrar en logs de auditoría
   await insertLog({
-    userId: userId ? new Types.ObjectId(userId) : undefined,
+    userId: userId != null && userId !== '' ? new Types.ObjectId(userId) : undefined,
     accion: 'DUPLICATE_CHECK_RUN',
     coleccion: 'purchase_doc_duplicate_check',
     idColeccion: checkRecord._id,
@@ -328,12 +328,18 @@ function deduplicateCandidates (
         new Set([...existing.reasons, ...candidate.reasons])
       )
       existing.matchedOn = {
-        docNumber: existing.matchedOn.docNumber || candidate.matchedOn.docNumber,
+        docNumber:
+          existing.matchedOn.docNumber === true
+            ? true
+            : candidate.matchedOn.docNumber,
         providerDateTotal:
-          existing.matchedOn.providerDateTotal ||
-          candidate.matchedOn.providerDateTotal,
+          existing.matchedOn.providerDateTotal === true
+            ? true
+            : candidate.matchedOn.providerDateTotal,
         fingerprint:
-          existing.matchedOn.fingerprint || candidate.matchedOn.fingerprint
+          existing.matchedOn.fingerprint === true
+            ? true
+            : candidate.matchedOn.fingerprint
       }
       // Tomar el score más alto
       existing.score = Math.max(existing.score, candidate.score)
@@ -356,9 +362,9 @@ function calculateFinalScores (
 
     // Boost si coinciden 2 o más criterios
     const matchCount =
-      (candidate.matchedOn.docNumber ? 1 : 0) +
-      (candidate.matchedOn.providerDateTotal ? 1 : 0) +
-      (candidate.matchedOn.fingerprint ? 1 : 0)
+      (candidate.matchedOn.docNumber === true ? 1 : 0) +
+      (candidate.matchedOn.providerDateTotal === true ? 1 : 0) +
+      (candidate.matchedOn.fingerprint === true ? 1 : 0)
 
     if (matchCount >= 2) {
       finalScore += 0.1

@@ -95,7 +95,7 @@ export function buildMovements (
 
   // ── Expenses → outflows (exclude soft-deleted) ──
   for (const expense of docs.expenses) {
-    if (expense.isDeleted) continue
+    if (expense.isDeleted === true) continue
     const date = resolveCashDate(expense)
     if (date < period.startDate || date > period.endDate) continue
     movements.push({

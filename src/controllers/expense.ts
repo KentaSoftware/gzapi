@@ -59,7 +59,7 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
     })
 
     // Emitir evento BI expense_search_used SI search presente
-    if (result._metadata.appliedFilters.search) {
+    if (result._metadata.appliedFilters.search != null && result._metadata.appliedFilters.search !== '') {
       const searchTerm = result._metadata.appliedFilters.search
       emitSocket('expense', {
         action: 'search_used',
@@ -95,7 +95,7 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
     }
 
     // Agregar flags de permisos a la respuesta
-    const userPermissions = user?.permissions || []
+    const userPermissions = user?.permissions ?? []
     const canEdit = userPermissions.includes('update_expense')
     const canDelete = userPermissions.includes('delete_expense')
 
@@ -111,12 +111,12 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
     })
   } catch (error: any) {
     // Manejar errores de validación con código 400
-    if (error.message?.includes('formato inválido') ||
-        error.message?.includes('no puede ser posterior') ||
-        error.message?.includes('Preset inválido') ||
-        error.message?.includes('Límite máximo') ||
-        error.message?.includes('término de búsqueda') ||
-        error.message?.includes('inválido')) {
+    if (error.message?.includes('formato inválido') === true ||
+        error.message?.includes('no puede ser posterior') === true ||
+        error.message?.includes('Preset inválido') === true ||
+        error.message?.includes('Límite máximo') === true ||
+        error.message?.includes('término de búsqueda') === true ||
+        error.message?.includes('inválido') === true) {
       res.status(400).json({ error: error.message })
       return
     }
@@ -128,7 +128,7 @@ export const getExpense = async ({ params, user }: RequestExt, res: Response): P
   try {
     // GAP-01: Validar ObjectId antes de query
     const { Types } = require('mongoose')
-    if (!Types.ObjectId.isValid(params.id)) {
+    if (Types.ObjectId.isValid(params.id) === false) {
       res.status(400).json({ error: 'ID de egreso inválido' })
       return
     }
@@ -140,7 +140,7 @@ export const getExpense = async ({ params, user }: RequestExt, res: Response): P
       const ExpenseModel = require('../models/expense').default
       const deleted = await ExpenseModel.findOne({ _id: params.id, isDeleted: true })
 
-      if (deleted) {
+      if (deleted != null) {
         res.status(410).json({
           error: 'Egreso eliminado',
           deletedAt: deleted.deletedAt
@@ -176,7 +176,7 @@ export const getExpense = async ({ params, user }: RequestExt, res: Response): P
     })
 
     // GAP-04: Calcular flags de permisos
-    const userPermissions = user?.permissions || []
+    const userPermissions = user?.permissions ?? []
     const canEdit = userPermissions.includes('update_expense')
     const canDelete = userPermissions.includes('delete_expense')
 
@@ -257,7 +257,7 @@ export const getExpensesKPI = async ({ query, user }: RequestExt, res: Response)
           to: query.to
         },
         filter: {
-          tipo_egreso: query.type || null
+          tipo_egreso: query.type != null && query.type !== '' ? query.type : null
         },
         result: {
           totalAmount: result.totalAmount,
@@ -271,10 +271,10 @@ export const getExpensesKPI = async ({ query, user }: RequestExt, res: Response)
   } catch (error: any) {
     // Validaciones retornan 400
     if (
-      error.message.includes('requeridos') ||
-      error.message.includes('Formato inválido') ||
-      error.message.includes('no puede ser posterior') ||
-      error.message.includes('inválido')
+      error.message.includes('requeridos') === true ||
+      error.message.includes('Formato inválido') === true ||
+      error.message.includes('no puede ser posterior') === true ||
+      error.message.includes('inválido') === true
     ) {
       res.status(400).json({ error: error.message })
       return
@@ -320,9 +320,9 @@ export const getSimpleResultKPI = async ({ query, user }: RequestExt, res: Respo
   } catch (error: any) {
     // Validaciones retornan 400
     if (
-      error.message.includes('requeridos') ||
-      error.message.includes('Formato inválido') ||
-      error.message.includes('no puede ser posterior')
+      error.message.includes('requeridos') === true ||
+      error.message.includes('Formato inválido') === true ||
+      error.message.includes('no puede ser posterior') === true
     ) {
       res.status(400).json({ error: error.message })
       return

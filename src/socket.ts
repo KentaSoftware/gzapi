@@ -7,7 +7,7 @@ import {
   SocketData
 } from '../src/interfaces/Socket.types'
 
-let io: ServerType
+let io: ServerType | undefined
 
 export function init (httpServer: any) {
   io = new Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>(httpServer, {
@@ -21,7 +21,7 @@ export function init (httpServer: any) {
 }
 
 export function getIO (): ServerType {
-  if (!io) {
+  if (io === undefined) {
     throw new Error('Socket IO not defined!')
   }
   return io

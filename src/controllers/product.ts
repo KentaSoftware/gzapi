@@ -135,11 +135,11 @@ const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => 
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   try {
     // Eliminar _id si existe y está vacío o es inválido
-    if (body._id && (body._id === '' || body._id === null || body._id === undefined)) {
+    if (body._id != null && body._id !== '' && (body._id === '' || body._id === null || body._id === undefined)) {
       delete body._id
     }
     // También eliminar _id si existe pero no es válido para ObjectId
-    if (body._id && typeof body._id === 'string' && body._id.trim() === '') {
+    if (body._id != null && body._id !== '' && typeof body._id === 'string' && body._id.trim() === '') {
       delete body._id
     }
     const response = await insertProduct({ ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) })
@@ -227,7 +227,8 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
 
       // Escribir el precio del producto en la misma posición Y
       if (itemProduct.precioDescuento !== undefined && itemProduct.precioDescuento > 1) {
-        if (isPrecioUnitario || isPrecioUnitario === undefined) {
+        const showUnitPrice = isPrecioUnitario === undefined ? true : Boolean(isPrecioUnitario)
+        if (showUnitPrice) {
           doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
             .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition)
         } else {

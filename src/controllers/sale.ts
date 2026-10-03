@@ -106,7 +106,7 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const { id } = params
     const response = await getSale(new Types.ObjectId(id))
     const response2 = await getItemSale(new Types.ObjectId(id))
-    const response3 = (response[0].idCliente != null) ? await getClient(new Types.ObjectId(response[0].idCliente.toString())) : null
+    const response3 = (response[0].idCliente != null) ? await getClient(new Types.ObjectId(String(response[0].idCliente))) : null
     res.send({ r: response[0], itemsSale: response2, cliente: response3 })
   } catch (e) {
     handleHttp(res, 'ERROR_GET_SALE_BY_ID', e)
@@ -266,7 +266,7 @@ const printSale = async (req: Request, res: Response): Promise<void> => {
       }
 
       const descripcion = item.descripcion ?? 'Sin descripción'
-      const precioUnitario = (item.precio ? item.precio : item.precioUnitario) ?? 0
+      const precioUnitario = (item.precio != null && item.precio !== 0 ? item.precio : item.precioUnitario) ?? 0
 
       // Agregar texto en las celdas
       doc.fillColor('black')
@@ -382,7 +382,7 @@ const printSales = async (req: Request, res: Response): Promise<void> => {
       itemsSale.forEach((item: ItemSale, indexItemSale: number) => {
         const descripcion = item.descripcion ?? 'Sin descripción'
 
-        const precioUnitario = (item.precio ? item.precio : item.precioUnitario) ?? 0
+        const precioUnitario = (item.precio != null && item.precio !== 0 ? item.precio : item.precioUnitario) ?? 0
 
         if (itemsCount === 18) {
           currentPage++

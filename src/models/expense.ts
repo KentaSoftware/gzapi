@@ -58,11 +58,12 @@ const ExpenseSchema = new Schema<IExpense>(
           validator: function (this: IExpense, value: any) {
             // Si kind es BUY, id debe estar presente
             if (this.relatedTo.kind === RELATED_KIND.BUY) {
-              return !!value
+              return Boolean(value)
             }
             // Si kind es NONE, id debe ser null/undefined
             if (this.relatedTo.kind === RELATED_KIND.NONE) {
-              return !value
+              const hasValue = Boolean(value)
+              return !hasValue
             }
             return true
           },

@@ -9,9 +9,9 @@ const insertProduct = async (item: Product): Promise<Product> => {
 
   // Bump catalog version de forma asíncrona (fire and forget)
   // No bloqueará ni fallará la creación del producto
-  if (responseInsert.proveedor) {
+  if (responseInsert.proveedor != null) {
     bumpCatalogVersion(
-      responseInsert.proveedor.toString(),
+      String(responseInsert.proveedor),
       CatalogVersionReason.PRODUCT_CREATED
     ).catch(error => {
       console.error('[PRODUCT] Error bumping catalog version on create:', error)
@@ -204,7 +204,7 @@ const getAllProductsCategories = async (categories: string[] | undefined): Promi
 }
 
 const getProducts = async (skip: number, limit: number, userRole?: any): Promise<Product[]> => {
-  if (userRole && userRole.name === 'admin') {
+  if (userRole != null && userRole.name === 'admin') {
     // Agregamos un $match para filtrar productos con precioUnitario > 1
     return await ProductModel.aggregate(
       [
@@ -373,7 +373,7 @@ const getProductsSearch = async (input: string, filter: Filter, userRole?: any):
     query = Object.assign({}, query, filter)
   }
 
-  if (userRole && userRole.name === 'admin') {
+  if (userRole != null && userRole.name === 'admin') {
     return await ProductModel.aggregate(
       [
         {
@@ -610,7 +610,7 @@ const updateProduct = async (id: Types.ObjectId, item: Partial<Product>): Promis
   // No bloqueará ni fallará la actualización del producto
   if ((product?.proveedor) != null) {
     bumpCatalogVersion(
-      product.proveedor.toString(),
+      String(product.proveedor),
       CatalogVersionReason.PRODUCT_UPDATED
     ).catch(error => {
       console.error('[PRODUCT] Error bumping catalog version on update:', error)

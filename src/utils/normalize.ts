@@ -16,7 +16,7 @@
  * @returns Texto normalizado
  */
 export const normalizeText = (input: string | null | undefined): string => {
-  if (!input) return ''
+  if (input == null || input === '') return ''
 
   let normalized = input
     // 1. Trim inicial
@@ -80,7 +80,7 @@ const normalizeQuantityPatterns = (text: string): string => {
  * - Solo deja dígitos
  */
 export const normalizeBarcode = (barcode: string | null | undefined): string => {
-  if (!barcode) return ''
+  if (barcode == null || barcode === '') return ''
   return barcode.replace(/[\s\-]/g, '').replace(/\D/g, '')
 }
 
@@ -100,6 +100,6 @@ export const generateVersion = (): string => {
  * Valida si un string es un ObjectId válido de MongoDB
  */
 export const isValidObjectId = (id: string | null | undefined): boolean => {
-  if (!id) return false
+  if (id == null || id === '') return false
   return /^[a-fA-F0-9]{24}$/.test(id)
 }

@@ -107,24 +107,24 @@ const getDailyData = async (): Promise<Response[]> => {
   ])
 
   return [
-    responseSale[0]
+    responseSale[0] != null
       ? {
           ...responseSale[0],
           label: 'sale',
           id: 0,
           date: formattedDate,
-          totalSalesDifference: responseSaleBefore[0] ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseSaleBefore[0] ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'sale', id: 0, date: formattedDate, totalSalesDifference: 0, salesCountDifference: 0 },
-    responseBuy[0]
+    responseBuy[0] != null
       ? {
           ...responseBuy[0],
           label: 'buy',
           id: 1,
           date: formattedDate,
-          totalSalesDifference: responseBuyBefore[0] ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseBuyBefore[0] ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'buy', id: 1, date: formattedDate, totalSalesDifference: 0, salesCountDifference: 0 }
   ]
@@ -226,24 +226,24 @@ const getWeeklyData = async (): Promise<Response[]> => {
   ])
 
   return [
-    responseSale[0]
+    responseSale[0] != null
       ? {
           ...responseSale[0],
           label: 'sale',
           id: 0,
           date: interval,
-          totalSalesDifference: responseSaleBefore[0] ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseSaleBefore[0] ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'sale', id: 0, date: interval, totalSalesDifference: 0, salesCountDifference: 0 },
-    responseBuy[0]
+    responseBuy[0] != null
       ? {
           ...responseBuy[0],
           label: 'buy',
           id: 1,
           date: interval,
-          totalSalesDifference: responseBuyBefore[0] ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseBuyBefore[0] ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'buy', id: 1, date: interval, totalSalesDifference: 0, salesCountDifference: 0 }
   ]
@@ -342,24 +342,24 @@ const getMonthlyData = async (): Promise<Response[]> => {
   ])
 
   return [
-    responseSale[0]
+    responseSale[0] != null
       ? {
           ...responseSale[0],
           label: 'sale',
           id: 0,
           date: interval,
-          totalSalesDifference: responseSaleBefore[0] ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseSaleBefore[0] ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'sale', id: 0, date: interval, totalSalesDifference: 0, salesCountDifference: 0 },
-    responseBuy[0]
+    responseBuy[0] != null
       ? {
           ...responseBuy[0],
           label: 'buy',
           id: 1,
           date: interval,
-          totalSalesDifference: responseBuyBefore[0] ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseBuyBefore[0] ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'buy', id: 1, date: interval, totalSalesDifference: 0, salesCountDifference: 0 }
   ]
@@ -463,24 +463,24 @@ const getAnnuallyData = async (): Promise<Response[]> => {
   ])
 
   return [
-    responseSale[0]
+    responseSale[0] != null
       ? {
           ...responseSale[0],
           label: 'sale',
           id: 0,
           date: year,
-          totalSalesDifference: responseSaleBefore[0] ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseSaleBefore[0] ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'sale', id: 0, date: year, totalSalesDifference: 0, salesCountDifference: 0 },
-    responseBuy[0]
+    responseBuy[0] != null
       ? {
           ...responseBuy[0],
           label: 'buy',
           id: 1,
           date: year,
-          totalSalesDifference: responseBuyBefore[0] ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseBuyBefore[0] ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'buy', id: 1, date: year, totalSalesDifference: 0, salesCountDifference: 0 }
   ]
@@ -587,24 +587,24 @@ const getCustomData = async (start: string, end: string): Promise<Response[]> =>
   ])
 
   return [
-    responseSale[0]
+    responseSale[0] != null
       ? {
           ...responseSale[0],
           label: 'sale',
           id: 0,
           date: interval,
-          totalSalesDifference: responseSaleBefore[0] ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseSaleBefore[0] ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].totalSales - responseSaleBefore[0].totalSales) / responseSaleBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseSaleBefore[0] != null ? `${(((responseSale[0].salesCount - responseSaleBefore[0].salesCount) / responseSaleBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'sale', id: 0, date: interval, totalSalesDifference: 0, salesCountDifference: 0 },
-    responseBuy[0]
+    responseBuy[0] != null
       ? {
           ...responseBuy[0],
           label: 'buy',
           id: 1,
           date: interval,
-          totalSalesDifference: responseBuyBefore[0] ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
-          salesCountDifference: responseBuyBefore[0] ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
+          totalSalesDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].totalSales - responseBuyBefore[0].totalSales) / responseBuyBefore[0].totalSales) * 100).toFixed(2)}` : 0,
+          salesCountDifference: responseBuyBefore[0] != null ? `${(((responseBuy[0].salesCount - responseBuyBefore[0].salesCount) / responseBuyBefore[0].salesCount) * 100).toFixed(2)}` : 0
         }
       : { totalSales: 0, salesCount: 0, label: 'buy', id: 1, date: interval, totalSalesDifference: 0, salesCountDifference: 0 }
   ]
@@ -655,8 +655,8 @@ const getDailyDataGraph = async (): Promise<any> => {
     data.push({
       id: i,
       label: days[dayIndex],
-      compras: responseBuy[0]?.totalSales || 0,
-      ventas: responseSale[0]?.totalSales || 0
+      compras: responseBuy[0]?.totalSales ?? 0,
+      ventas: responseSale[0]?.totalSales ?? 0
     })
   }
 
@@ -703,8 +703,8 @@ const getWeeklyDataGraph = async (): Promise<any> => {
     data.push({
       id: i,
       label: interval,
-      compras: responseBuy[0]?.totalSales || 0,
-      ventas: responseSale[0]?.totalSales || 0
+      compras: responseBuy[0]?.totalSales ?? 0,
+      ventas: responseSale[0]?.totalSales ?? 0
     })
 
     /* sales.push({
@@ -758,8 +758,8 @@ const getMonthlyDataGraph = async (): Promise<any> => {
     data.push({
       id: i,
       label: months[start.getMonth()],
-      compras: responseBuy[0]?.totalSales || 0,
-      ventas: responseSale[0]?.totalSales || 0
+      compras: responseBuy[0]?.totalSales ?? 0,
+      ventas: responseSale[0]?.totalSales ?? 0
     })
 
     data.sort((a, b) => {
@@ -824,8 +824,8 @@ const getAnnuallyDataGraph = async (): Promise<any> => {
     data.push({
       id: i,
       label: `${start.getFullYear()}`,
-      compras: responseBuy[0]?.totalSales || 0,
-      ventas: responseSale[0]?.totalSales || 0
+      compras: responseBuy[0]?.totalSales ?? 0,
+      ventas: responseSale[0]?.totalSales ?? 0
     })
 
     data.sort((a, b) => parseInt(a.label) - parseInt(b.label))
@@ -866,10 +866,10 @@ const getCustomDataGraph = async (start: string, end: string): Promise<any> => {
   const data = []
 
   // Obtener los días en el rango de fechas
-  const currentDate = clearStartDate
+  let currentDate = clearStartDate
   const endLoopDate = clearEndDate
 
-  while (currentDate <= endLoopDate) {
+  while (currentDate.getTime() <= endLoopDate.getTime()) {
     const dayLabel = currentDate.toLocaleDateString('es-ES', { weekday: 'long' }) // Obtener el nombre del día en español
     const day = String(currentDate.getDate()).padStart(2, '0') // Asegura que el día tenga 2 dígitos
     const month = String(currentDate.getMonth() + 1).padStart(2, '0') // Los meses en JavaScript van de 0 a 11
@@ -892,8 +892,8 @@ const getCustomDataGraph = async (start: string, end: string): Promise<any> => {
 
     data.push({
       label: formattedDate,
-      compras: responseBuy[0]?.totalSales || 0,
-      ventas: responseSale[0]?.totalSales || 0
+      compras: responseBuy[0]?.totalSales ?? 0,
+      ventas: responseSale[0]?.totalSales ?? 0
     })
 
     data.sort((a, b) => parseInt(a.label) - parseInt(b.label))
@@ -915,7 +915,7 @@ const getCustomDataGraph = async (start: string, end: string): Promise<any> => {
     });
  */
     // Avanzar al siguiente día
-    currentDate.setDate(currentDate.getDate() + 1)
+    currentDate = addDays(currentDate, 1)
   }
 
   return { data }

@@ -32,7 +32,7 @@ function parseDateRange (
   res: Response
 ): { startDate: Date, endDate: Date } | null {
   const { startDate: s, endDate: e } = query
-  if (!s || !e) {
+  if (s == null || s === '' || e == null || e === '') {
     res.status(400).json({ error: 'startDate and endDate query params are required' })
     return null
   }

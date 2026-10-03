@@ -215,7 +215,7 @@ const getUser = async (id: Types.ObjectId): Promise<UserResponse | null> => {
 const updateUser = async (id: Types.ObjectId, item: Partial<User>): Promise<any> => {
   let updateData = { ...item }
 
-  if (item.password && item.password !== '') {
+  if (item.password != null && item.password !== '') {
     updateData.password = await encrypt(item.password)
   } else {
     const { password, ...updateDataWithoutPassword } = updateData
@@ -227,7 +227,7 @@ const updateUser = async (id: Types.ObjectId, item: Partial<User>): Promise<any>
     { new: true }
   )
 
-  if (!response) return null
+  if (response == null) return null
 
   const user = {
     ...response._doc,

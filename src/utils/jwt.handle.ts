@@ -6,7 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET ?? 'NOT_TOKEN_ENV'
 
 const generateToken = async (user: User): Promise<string> => {
   try {
-    if (!user._id) {
+    if (user._id === '') {
       throw new Error('User ID is required for token generation')
     }
 
@@ -17,7 +17,7 @@ const generateToken = async (user: User): Promise<string> => {
 
     const tokenData = {
       id: user._id.toString(),
-      role: userData.role || []
+      role: userData.role ?? []
     }
 
     const jwt = await sign(tokenData, JWT_SECRET)

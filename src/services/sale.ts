@@ -25,7 +25,7 @@ const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Pr
   console.log('query', query)
 
   // Si el usuario es admin, no filtrar por usuario
-  if (userRole && userRole.name === 'admin') {
+  if (userRole != null && userRole.name === 'admin') {
     const response = await SaleModel.aggregate([
       {
         $match: { ...query }
@@ -99,13 +99,13 @@ const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, 
   const query: any = {}
 
   // Si el usuario es admin, no filtrar por usuario
-  if (filterUser) {
+  if (filterUser != null && filterUser !== '') {
     query.user = new Types.ObjectId(filterUser)
   }
 
   console.log(query)
 
-  if (userRole && userRole.name === 'admin') {
+  if (userRole != null && userRole.name === 'admin') {
     const response = await SaleModel.aggregate([
       {
         $sort: { createdAt: -1 }
@@ -201,7 +201,7 @@ const updateSale = async (id: Types.ObjectId, sale: Sale): Promise<any> => {
 }
 
 const qtySale = async (filterUser: any): Promise<any> => {
-  if (filterUser) {
+  if (filterUser != null && filterUser !== '') {
     const response = await SaleModel.countDocuments({ user: filterUser })
     return response
   }

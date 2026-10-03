@@ -106,7 +106,7 @@ export const getCatalogSnapshotService = async (
   }
 
   // Si hay cursor, usarlo para paginación (cursor = último _id)
-  if (cursor) {
+  if (cursor != null && cursor !== '') {
     productQuery._id = { $gt: new Types.ObjectId(cursor) }
   }
 
@@ -131,14 +131,14 @@ export const getCatalogSnapshotService = async (
     brandId: p.marca.toString(),
     categoryId: p.categoria.toString(),
     active: true, // No existe isActive en schema actual
-    barcodes: p.codigoBarra ? [p.codigoBarra] : [],
+    barcodes: p.codigoBarra != null && p.codigoBarra !== '' ? [p.codigoBarra] : [],
     skus: [], // No existe SKU en schema actual
     updatedAt: p.updatedAt
   }))
 
   // Obtener aliases del proveedor (solo si es primera página)
   let snapshotAliases: SnapshotAlias[] = []
-  if (!cursor) {
+  if (cursor == null || cursor === '') {
     const aliases = await ProductAliasModel.find({
       providerId: new Types.ObjectId(providerId),
       isActive: true
@@ -156,14 +156,14 @@ export const getCatalogSnapshotService = async (
 
   // Contar total de productos (solo si es primera página)
   let totalProducts = 0
-  if (!cursor) {
+  if (cursor == null || cursor === '') {
     totalProducts = await ProductModel.countDocuments({
       proveedor: new Types.ObjectId(providerId)
     })
   }
 
   const lastProduct = products[products.length - 1]
-  const nextCursor = hasMore && lastProduct ? lastProduct._id.toString() : null
+  const nextCursor = hasMore && lastProduct != null ? lastProduct._id.toString() : null
 
   return {
     providerId,
@@ -188,18 +188,18 @@ export const searchProductsService = async (
   const { q, providerId, barcode, sku, limit = 20 } = query
 
   // Validar que hay al menos un criterio de búsqueda
-  if (!q && !barcode && !sku) {
+  if ((q == null || q === '') && (barcode == null || barcode === '') && (sku == null || sku === '')) {
     throw new Error('SEARCH_CRITERIA_REQUIRED')
   }
 
   const results: ProductSearchResult[] = []
 
   // 1. Búsqueda por código de barras (exacta)
-  if (barcode) {
+  if (barcode != null && barcode !== '') {
     const normalizedBarcode = normalizeBarcode(barcode)
 
     const matchQuery: any = { codigoBarra: normalizedBarcode }
-    if (providerId) {
+    if (providerId != null && providerId !== '') {
       matchQuery.proveedor = new Types.ObjectId(providerId)
     }
 
@@ -253,13 +253,13 @@ export const searchProductsService = async (
         productId: match.productId.toString(),
         name: match.name,
         normalizedName: normalizeText(match.name),
-        barcode: match.barcode || null,
+        barcode: match.barcode != null && match.barcode !== '' ? match.barcode : null,
         providerId: match.providerId.toString(),
-        providerName: match.providerName || '',
+        providerName: match.providerName != null && match.providerName !== '' ? match.providerName : '',
         brandId: match.brandId.toString(),
-        brandName: match.brandName || '',
+        brandName: match.brandName != null && match.brandName !== '' ? match.brandName : '',
         categoryId: match.categoryId.toString(),
-        categoryName: match.categoryName || '',
+        categoryName: match.categoryName != null && match.categoryName !== '' ? match.categoryName : '',
         matchScore: 1.0,
         matchSource: 'BARCODE'
       })
@@ -272,7 +272,7 @@ export const searchProductsService = async (
   }
 
   // 2. Búsqueda por texto (descripción)
-  if (q) {
+  if (q != null && q !== '') {
     const normalizedQuery = normalizeText(q)
 
     // Primero buscar en aliases
@@ -280,7 +280,7 @@ export const searchProductsService = async (
       aliasValueNormalized: normalizedQuery,
       isActive: true
     }
-    if (providerId) {
+    if (providerId != null && providerId !== '') {
       aliasQuery.providerId = new Types.ObjectId(providerId)
     }
 
@@ -332,18 +332,18 @@ export const searchProductsService = async (
         }
       ])
 
-      if (product[0]) {
+      if (product[0] != null) {
         results.push({
           productId: product[0].productId.toString(),
           name: product[0].name,
           normalizedName: normalizeText(product[0].name),
-          barcode: product[0].barcode || null,
+          barcode: product[0].barcode != null && product[0].barcode !== '' ? product[0].barcode : null,
           providerId: product[0].providerId.toString(),
-          providerName: product[0].providerName || '',
+          providerName: product[0].providerName != null && product[0].providerName !== '' ? product[0].providerName : '',
           brandId: product[0].brandId.toString(),
-          brandName: product[0].brandName || '',
+          brandName: product[0].brandName != null && product[0].brandName !== '' ? product[0].brandName : '',
           categoryId: product[0].categoryId.toString(),
-          categoryName: product[0].categoryName || '',
+          categoryName: product[0].categoryName != null && product[0].categoryName !== '' ? product[0].categoryName : '',
           matchScore: aliasMatch.confidence,
           matchSource: 'ALIAS'
         })
@@ -357,7 +357,7 @@ export const searchProductsService = async (
     const descQuery: any = {
       descripcion: { $regex: escapedQ, $options: 'i' }
     }
-    if (providerId) {
+    if (providerId != null && providerId !== '') {
       descQuery.proveedor = new Types.ObjectId(providerId)
     }
 
@@ -414,13 +414,13 @@ export const searchProductsService = async (
           productId: match.productId.toString(),
           name: match.name,
           normalizedName: normalizeText(match.name),
-          barcode: match.barcode || null,
+          barcode: match.barcode != null && match.barcode !== '' ? match.barcode : null,
           providerId: match.providerId.toString(),
-          providerName: match.providerName || '',
+          providerName: match.providerName != null && match.providerName !== '' ? match.providerName : '',
           brandId: match.brandId.toString(),
-          brandName: match.brandName || '',
+          brandName: match.brandName != null && match.brandName !== '' ? match.brandName : '',
           categoryId: match.categoryId.toString(),
-          categoryName: match.categoryName || '',
+          categoryName: match.categoryName != null && match.categoryName !== '' ? match.categoryName : '',
           matchScore: 0.5, // Score menor para regex
           matchSource: 'DESCRIPTION'
         })
@@ -470,15 +470,20 @@ export const getAllProvidersWithVersionService = async (): Promise<Array<{
  * Mapea Product de MongoDB a ProductSummary (payload liviano)
  */
 function mapToProductSummary (product: any): ProductSummary {
+  const proveedor = product.proveedor?.toString()
+  const categoria = product.categoria?.toString()
+  const marca = product.marca?.toString()
   return {
     productId: product._id.toString(),
-    description: product.descripcion || product.description || '',
-    codigoBarra: product.codigoBarra || undefined,
-    proveedor: product.proveedor?.toString() || undefined,
-    categoria: product.categoria?.toString() || undefined,
-    marca: product.marca?.toString() || undefined,
-    unidad: product.unidad || undefined,
-    pack: product.pack || 1
+    description: product.descripcion != null && product.descripcion !== ''
+      ? product.descripcion
+      : (product.description != null && product.description !== '' ? product.description : ''),
+    codigoBarra: product.codigoBarra != null && product.codigoBarra !== '' ? product.codigoBarra : undefined,
+    proveedor: proveedor != null && proveedor !== '' ? proveedor : undefined,
+    categoria: categoria != null && categoria !== '' ? categoria : undefined,
+    marca: marca != null && marca !== '' ? marca : undefined,
+    unidad: product.unidad != null && product.unidad !== '' ? product.unidad : undefined,
+    pack: product.pack != null && product.pack !== 0 ? product.pack : 1
   }
 }
 
@@ -496,7 +501,7 @@ async function searchByBarcode (
     codigoBarra: normalizedBarcode
   }
 
-  if (providerId) {
+  if (providerId != null && providerId !== '') {
     filter.proveedor = new Types.ObjectId(providerId)
   }
 
@@ -537,7 +542,7 @@ async function searchByText (
     ]
   }
 
-  if (providerId) {
+  if (providerId != null && providerId !== '') {
     filter.proveedor = new Types.ObjectId(providerId)
   }
 
@@ -564,10 +569,10 @@ async function processQueryProviderFirst (
   let globalCandidates: ProductSummary[] = []
 
   // 1. Búsqueda por provider
-  if (query.barcode) {
+  if (query.barcode != null && query.barcode !== '') {
     providerCandidates = await searchByBarcode(query.barcode, providerId, topK)
     methods.push(RetrievalMethod.BARCODE_EXACT)
-  } else if (query.q && query.q.length >= 2) {
+  } else if (query.q != null && query.q.length >= 2) {
     providerCandidates = await searchByText(query.q, providerId, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
@@ -576,9 +581,9 @@ async function processQueryProviderFirst (
 
   // 2. Si no hay suficientes, buscar global
   if (providerCount < minCandidates) {
-    if (query.barcode) {
+    if (query.barcode != null && query.barcode !== '') {
       globalCandidates = await searchByBarcode(query.barcode, undefined, topK)
-    } else if (query.q && query.q.length >= 2) {
+    } else if (query.q != null && query.q.length >= 2) {
       globalCandidates = await searchByText(query.q, undefined, topK)
     }
     methods.push(RetrievalMethod.GLOBAL_FALLBACK)
@@ -602,8 +607,8 @@ async function processQueryProviderFirst (
   return {
     queryId: query.queryId,
     query: {
-      q: query.q || null,
-      barcode: query.barcode || null
+      q: query.q != null && query.q !== '' ? query.q : null,
+      barcode: query.barcode != null && query.barcode !== '' ? query.barcode : null
     },
     candidates: finalCandidates,
     meta: {
@@ -630,10 +635,10 @@ async function processQueryProviderOnly (
   const methods: RetrievalMethod[] = []
   let candidates: ProductSummary[] = []
 
-  if (query.barcode) {
+  if (query.barcode != null && query.barcode !== '') {
     candidates = await searchByBarcode(query.barcode, providerId, topK)
     methods.push(RetrievalMethod.BARCODE_EXACT)
-  } else if (query.q && query.q.length >= 2) {
+  } else if (query.q != null && query.q.length >= 2) {
     candidates = await searchByText(query.q, providerId, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
@@ -641,8 +646,8 @@ async function processQueryProviderOnly (
   return {
     queryId: query.queryId,
     query: {
-      q: query.q || null,
-      barcode: query.barcode || null
+      q: query.q != null && query.q !== '' ? query.q : null,
+      barcode: query.barcode != null && query.barcode !== '' ? query.barcode : null
     },
     candidates,
     meta: {
@@ -666,10 +671,10 @@ async function processQueryGlobalOnly (
   const methods: RetrievalMethod[] = []
   let candidates: ProductSummary[] = []
 
-  if (query.barcode) {
+  if (query.barcode != null && query.barcode !== '') {
     candidates = await searchByBarcode(query.barcode, undefined, topK)
     methods.push(RetrievalMethod.BARCODE_EXACT)
-  } else if (query.q && query.q.length >= 2) {
+  } else if (query.q != null && query.q.length >= 2) {
     candidates = await searchByText(query.q, undefined, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
@@ -677,8 +682,8 @@ async function processQueryGlobalOnly (
   return {
     queryId: query.queryId,
     query: {
-      q: query.q || null,
-      barcode: query.barcode || null
+      q: query.q != null && query.q !== '' ? query.q : null,
+      barcode: query.barcode != null && query.barcode !== '' ? query.barcode : null
     },
     candidates,
     meta: {
@@ -716,7 +721,7 @@ export const batchCatalogSearchService = async (
 
     switch (scope) {
       case CatalogSearchScope.PROVIDER_ONLY:
-        if (!providerId) {
+        if (providerId == null || providerId === '') {
           throw new Error('providerId is required for PROVIDER_ONLY scope')
         }
         result = await processQueryProviderOnly(query, providerId, topK)
@@ -727,7 +732,7 @@ export const batchCatalogSearchService = async (
         break
 
       case CatalogSearchScope.PROVIDER_FIRST:
-        if (!providerId) {
+        if (providerId == null || providerId === '') {
           // Si no hay providerId, actuar como GLOBAL_ONLY
           result = await processQueryGlobalOnly(query, topK)
         } else {

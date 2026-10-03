@@ -23,7 +23,7 @@ export const upsertProductAlias = async (dto: UpsertAliasDTO): Promise<IProductA
     ? normalizeBarcode(dto.aliasValueRaw)
     : normalizeText(dto.aliasValueRaw)
 
-  if (!normalizedValue) {
+  if (normalizedValue === '') {
     throw new Error('El valor del alias no puede estar vacío después de normalizar')
   }
 
@@ -220,8 +220,8 @@ export const createConfirmedMatch = async (dto: CreateConfirmedMatchDTO): Promis
     },
     doc: (dto.doc != null)
       ? {
-          draftId: dto.doc.draftId ? new Types.ObjectId(dto.doc.draftId) : undefined,
-          buyId: dto.doc.buyId ? new Types.ObjectId(dto.doc.buyId) : undefined,
+          draftId: dto.doc.draftId != null && dto.doc.draftId !== '' ? new Types.ObjectId(dto.doc.draftId) : undefined,
+          buyId: dto.doc.buyId != null && dto.doc.buyId !== '' ? new Types.ObjectId(dto.doc.buyId) : undefined,
           date: dto.doc.date,
           total: dto.doc.total
         }
@@ -297,7 +297,7 @@ export const bumpCatalogVersion = async (
       $set: {
         version: newVersion,
         reason,
-        triggeredBy: userId ? new Types.ObjectId(userId) : null,
+        triggeredBy: userId != null && userId !== '' ? new Types.ObjectId(userId) : null,
         updatedAt: new Date()
       },
       $setOnInsert: {
