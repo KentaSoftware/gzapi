@@ -12,6 +12,8 @@ import { getClient } from '../services/client'
 import { getSaleStatsByUser, getSaleStatsOverview } from '../services/saleStats'
 import { parseSaleStatsRequest } from '../utils/statsDateRange'
 import { STATS_SCOPE, type StatsValidationFailure } from '../interfaces/saleStats.interface'
+import { commitSaleReference } from '../services/commercialPorts'
+import { isPhase0ContractsEnabled } from '../config/phase0'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
@@ -40,6 +42,13 @@ const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void
     await Promise.all(
       body.itemsSale.map(async (item: any) => await insertItemSale({ idProducto: item._id, total: item.total, cantidad: item.cantidad, idVenta: response._id, estado: true, precioUnitario: item.precio }))
     )
+    if (isPhase0ContractsEnabled()) {
+      await commitSaleReference({
+        saleId: String(response._id),
+        lines: body.itemsSale,
+        actorId: String(user.id)
+      })
+    }
     emitSocket('sale', {
       action: 'create',
       data: response
@@ -52,7 +61,7 @@ const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void
 
 const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
-    await Promise.all(
+    const created = await Promise.all(
       body.map(async (item: any) => {
 
         // Ejecutar insertSale y esperar a que termine antes de continuar con insertItemSale
@@ -70,8 +79,17 @@ const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Prom
             })
           )
         )
+
+        return { saleId: String(response._id), lines: item.itemsSale }
       })
     )
+    if (isPhase0ContractsEnabled()) {
+      await Promise.all(
+        created.map(async ({ saleId, lines }: { saleId: string, lines: any[] }) =>
+          await commitSaleReference({ saleId, lines, actorId: String(user.id) })
+        )
+      )
+    }
     /*   */
     emitSocket('sale', {
       action: 'create',

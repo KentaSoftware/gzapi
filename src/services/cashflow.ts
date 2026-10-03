@@ -7,7 +7,7 @@
  * Design constraints (design.md):
  *  - Amount unit: plain decimal. Expense.amountCents ÷ 100 here; never reuse getSimpleResult().
  *  - Cash-date priority chain: paidAt > fecha > createdAt
- *  - Inflow filter: Sale.estado !== 'Cancelado'
+ *  - Inflow filter: Sale has paidAt (a confirmed SALE_PAYMENT projection) AND estado !== 'Cancelado'
  *  - Outflow filter Buy: Buy.estado === 'paid'
  *  - Outflow filter Expense: isDeleted is falsy
  *  - CashflowConfig singleton: upserted with openingBalance = 0 if missing
@@ -60,9 +60,12 @@ export function buildMovements (
 ): CashflowMovement[] {
   const movements: CashflowMovement[] = []
 
-  // ── Sales → inflows (exclude Cancelado) ──
+  // ── Sales → inflows (only paid sales, exclude Cancelado) ──
+  // TD-01: a registered-but-unpaid sale is not cash; only a confirmed payment
+  // writes `paidAt`, which is the single signal that a sale becomes an inflow.
   for (const sale of docs.sales) {
     if (sale.estado === 'Cancelado') continue
+    if (sale.paidAt === undefined || sale.paidAt === null) continue
     const date = resolveCashDate(sale)
     if (date < period.startDate || date > period.endDate) continue
     movements.push({

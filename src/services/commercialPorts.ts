@@ -43,6 +43,22 @@ export const stockPortAdapter: StockPort = {
   async applyPhysicalReturn (): Promise<void> {}
 }
 
+// Commitment reference handed from the sale-creation path to Stock. It carries
+// only the sale identity, its line info and the acting user; it is a plain
+// object, not a persisted CommercialFact, and the adapter must not write any
+// business collection from it.
+export interface SaleCommitmentReference {
+  saleId: string
+  lines: Array<Record<string, unknown>>
+  actorId: string
+}
+
+// Centralizes the sale-creation wiring's commitment call so the caller never
+// fabricates a full CommercialFact for a reservation that is not a fact.
+export const commitSaleReference = async (commitment: SaleCommitmentReference): Promise<void> => {
+  await stockPortAdapter.commitSale(commitment as unknown as CommercialFact)
+}
+
 // Phase 0 contract double for the Rutas saved-plan reader. It reads only from an
 // explicitly provided, frozen registry and returns plans read-only. It never
 // writes business collections and does not implement the Rutas planner.
