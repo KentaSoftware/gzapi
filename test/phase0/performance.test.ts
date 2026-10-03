@@ -1,45 +1,45 @@
-const { expect } = require('chai')
-const mongoose = require('mongoose')
-const request = require('supertest')
+import { expect } from 'chai'
+import mongoose from 'mongoose'
+import request from 'supertest'
 
-const UserModel = require('../../src/models/user').default
-const { generateToken } = require('../../src/utils/jwt.handle')
-const {
+import UserModel from '../../src/models/user'
+import { generateToken } from '../../src/utils/jwt.handle'
+import {
   PHASE0_CONTRACT_V1,
   resetPhase0ContractV1,
   seedPhase0ContractV1
-} = require('../fixtures/phase-0-contract-v1')
+} from '../fixtures/phase-0-contract-v1'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_performance_test'
 const WARM_UPS = 5
 const SAMPLES = 50
 const P95_LIMIT_MS = 5000
 
-const percentile95 = (samples) => {
+const percentile95 = (samples: number[]): number => {
   const ordered = [...samples].sort((left, right) => left - right)
   return ordered[Math.ceil(ordered.length * 0.95) - 1]
 }
 
 describe('Phase 0 — local performance measurement', () => {
-  let app
-  let tokens
+  let app: Awaited<ReturnType<typeof import('../../src/app').createApp>>
+  let tokens: Record<string, string>
 
   before(async () => {
     process.env.PHASE_0_CONTRACTS_ENABLED = 'true'
     await mongoose.connect(TEST_DB_URI)
-    const { createApp } = require('../../src/app')
+    const { createApp } = await import('../../src/app')
     app = await createApp()
   })
 
   after(async () => {
     await resetPhase0ContractV1()
-    const dbName = mongoose.connection.db && mongoose.connection.db.databaseName
-    if (dbName && dbName.endsWith('_test')) await mongoose.connection.dropDatabase()
+    const dbName = mongoose.connection.db?.databaseName
+    if (dbName?.endsWith('_test') === true) await mongoose.connection.dropDatabase()
     await mongoose.disconnect()
     delete process.env.PHASE_0_CONTRACTS_ENABLED
   })
 
-  const prepareFixture = async () => {
+  const prepareFixture = async (): Promise<any> => {
     const fixture = await seedPhase0ContractV1()
     const users = await UserModel.find({ _id: { $in: Object.values(fixture.ids).slice(4, 8) } })
     tokens = {}
@@ -47,19 +47,30 @@ describe('Phase 0 — local performance measurement', () => {
     return fixture
   }
 
-  const post = (token, path, body) => request(app)
-    .post(path)
-    .set('Authorization', `Bearer ${token}`)
-    .send(body)
+  const post = async (token: string, path: string, body: object): Promise<request.Response> =>
+    await new Promise((resolve, reject) => {
+      void request(app)
+        .post(path)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body)
+        .end((error, response) => {
+          if (error != null) reject(error)
+          else resolve(response)
+        })
+    })
 
-  const measure = async (operation, prepare, execute) => {
+  const measure = async (
+    operation: string,
+    prepare: () => Promise<unknown>,
+    execute: () => Promise<request.Response>
+  ): Promise<number> => {
     for (let index = 0; index < WARM_UPS; index += 1) {
       await prepare()
       const warmUp = await execute()
       expect(warmUp.status).to.be.oneOf([201, 403])
     }
 
-    const samples = []
+    const samples: number[] = []
     for (let index = 0; index < SAMPLES; index += 1) {
       await prepare()
       const startedAt = process.hrtime.bigint()

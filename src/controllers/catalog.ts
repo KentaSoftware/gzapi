@@ -430,7 +430,7 @@ export const batchSearch = async (req: RequestExt, res: Response): Promise<void>
       if ((query.q == null || query.q === '') && (query.barcode == null || query.barcode === '')) {
         res.status(400).json({
           error: 'MISSING_SEARCH_TERM',
-          message: `La query ${query.queryId} debe tener al menos 'q' o 'barcode'`
+          message: `La query ${String(query.queryId)} debe tener al menos 'q' o 'barcode'`
         })
         return
       }
@@ -438,7 +438,7 @@ export const batchSearch = async (req: RequestExt, res: Response): Promise<void>
       if (query.q != null && query.q !== '' && query.q.length < 2) {
         res.status(400).json({
           error: 'QUERY_TOO_SHORT',
-          message: `La query ${query.queryId} tiene un término de búsqueda demasiado corto (mínimo 2 caracteres)`
+          message: `La query ${String(query.queryId)} tiene un término de búsqueda demasiado corto (mínimo 2 caracteres)`
         })
         return
       }

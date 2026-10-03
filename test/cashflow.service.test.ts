@@ -80,7 +80,7 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     ]
     const result = buildMovements({ sales: [], buys: [], expenses }, period)
     const exp = result.find((m: any) => m.source === 'expense')
-    expect(exp).to.exist
+    expect(exp).to.not.equal(undefined)
     expect(exp.amount).to.equal(1500.00)
   })
 
@@ -97,7 +97,7 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     ]
     const result = buildMovements({ sales, buys: [], expenses: [] }, period)
     const sale = result.find((m: any) => m.source === 'sale')
-    expect(sale).to.exist
+    expect(sale).to.not.equal(undefined)
     expect(sale.amount).to.equal(2000.50)
   })
 
@@ -113,7 +113,7 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     ]
     const result = buildMovements({ sales: [], buys, expenses: [] }, period)
     const buy = result.find((m: any) => m.source === 'buy')
-    expect(buy).to.exist
+    expect(buy).to.not.equal(undefined)
     expect(buy.amount).to.equal(800.00)
   })
 

@@ -1,17 +1,22 @@
-const { expect } = require('chai')
-const { spawn } = require('child_process')
-const http = require('http')
-const mongoose = require('mongoose')
+import { expect } from 'chai'
+import { spawn } from 'child_process'
+import http from 'http'
+import mongoose from 'mongoose'
 
 const BOOT_PORT = 3199
 const BOOT_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_boot_test'
 
-const waitForPing = async (port, timeoutMs) => await new Promise((resolve, reject) => {
+interface PingResult {
+  status: number | undefined
+  body: string
+}
+
+const waitForPing = async (port: number, timeoutMs: number): Promise<PingResult> => await new Promise((resolve, reject) => {
   const startedAt = Date.now()
-  const attempt = () => {
+  const attempt = (): void => {
     const request = http.get({ host: '127.0.0.1', port, path: '/ping', timeout: 1000 }, (response) => {
       let body = ''
-      response.on('data', (chunk) => { body += chunk.toString('utf8') })
+      response.on('data', (chunk: Buffer) => { body += chunk.toString('utf8') })
       response.on('end', () => resolve({ status: response.statusCode, body }))
     })
     request.on('timeout', () => {
@@ -50,8 +55,8 @@ describe('Phase 0 — server boot', () => {
     })
 
     let childOutput = ''
-    child.stdout.on('data', (chunk) => { childOutput += chunk.toString('utf8') })
-    child.stderr.on('data', (chunk) => { childOutput += chunk.toString('utf8') })
+    child.stdout.on('data', (chunk: Buffer) => { childOutput += chunk.toString('utf8') })
+    child.stderr.on('data', (chunk: Buffer) => { childOutput += chunk.toString('utf8') })
 
     try {
       const response = await waitForPing(BOOT_PORT, 20000)
@@ -77,8 +82,8 @@ describe('Phase 0 — server boot', () => {
 
   after(async () => {
     await mongoose.connect(BOOT_DB_URI)
-    const dbName = mongoose.connection.db && mongoose.connection.db.databaseName
-    if (dbName && dbName.endsWith('_test')) {
+    const dbName = mongoose.connection.db?.databaseName
+    if (dbName?.endsWith('_test') === true) {
       await mongoose.connection.dropDatabase()
     }
     await mongoose.disconnect()

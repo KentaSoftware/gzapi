@@ -1,36 +1,36 @@
-const { expect } = require('chai')
-const mongoose = require('mongoose')
-const request = require('supertest')
+import { expect } from 'chai'
+import mongoose from 'mongoose'
+import request from 'supertest'
 
-const CommercialFactModel = require('../../src/models/commercialFact').default
-const SaleModel = require('../../src/models/sale').default
-const UserModel = require('../../src/models/user').default
-const { RoutePlanReaderDouble } = require('../../src/services/commercialPorts')
-const { buildMovements } = require('../../src/services/cashflow')
-const { generateToken } = require('../../src/utils/jwt.handle')
-const {
+import CommercialFactModel from '../../src/models/commercialFact'
+import SaleModel from '../../src/models/sale'
+import UserModel from '../../src/models/user'
+import { RoutePlanReaderDouble } from '../../src/services/commercialPorts'
+import { buildMovements } from '../../src/services/cashflow'
+import { generateToken } from '../../src/utils/jwt.handle'
+import {
   PHASE0_CONTRACT_V1,
   resetPhase0ContractV1,
   seedPhase0ContractV1
-} = require('../fixtures/phase-0-contract-v1')
+} from '../fixtures/phase-0-contract-v1'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_baseline_test'
 
 describe('Phase 0 — baseline regression', () => {
-  let app
-  let tokens
+  let app: Awaited<ReturnType<typeof import('../../src/app').createApp>>
+  let tokens: Record<string, string>
 
   before(async () => {
     process.env.PHASE_0_CONTRACTS_ENABLED = 'true'
     await mongoose.connect(TEST_DB_URI)
-    const { createApp } = require('../../src/app')
+    const { createApp } = await import('../../src/app')
     app = await createApp()
   })
 
   after(async () => {
     await resetPhase0ContractV1()
-    const dbName = mongoose.connection.db && mongoose.connection.db.databaseName
-    if (dbName && dbName.endsWith('_test')) await mongoose.connection.dropDatabase()
+    const dbName = mongoose.connection.db?.databaseName
+    if (dbName?.endsWith('_test') === true) await mongoose.connection.dropDatabase()
     await mongoose.disconnect()
     delete process.env.PHASE_0_CONTRACTS_ENABLED
   })
@@ -42,7 +42,7 @@ describe('Phase 0 — baseline regression', () => {
     for (const user of users) tokens[user.nickname] = await generateToken(user)
   })
 
-  const post = (token, path, body) => request(app)
+  const post = (token: string, path: string, body: object): request.Test => request(app)
     .post(path)
     .set('Authorization', `Bearer ${token}`)
     .send(body)

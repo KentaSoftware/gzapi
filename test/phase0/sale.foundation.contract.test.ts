@@ -1,24 +1,23 @@
-const { expect } = require('chai')
-const sinon = require('sinon')
-const mongoose = require('mongoose')
+import { expect } from 'chai'
+import sinon from 'sinon'
+import mongoose from 'mongoose'
+import request from 'supertest'
 
-const SaleModel = require('../../src/models/sale').default
-const CommercialFactModel = require('../../src/models/commercialFact').default
-const RoleModel = require('../../src/models/role').default
-const UserModel = require('../../src/models/user').default
-const { stockPortAdapter } = require('../../src/services/commercialPorts')
-const { generateToken } = require('../../src/utils/jwt.handle')
-
-const request = require('supertest')
+import SaleModel from '../../src/models/sale'
+import CommercialFactModel from '../../src/models/commercialFact'
+import RoleModel from '../../src/models/role'
+import UserModel from '../../src/models/user'
+import { stockPortAdapter } from '../../src/services/commercialPorts'
+import { generateToken } from '../../src/utils/jwt.handle'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_sale_foundation_test'
 
 describe('Phase 0 — sale foundation contract', () => {
-  let app
-  let user
-  let token
+  let app: Awaited<ReturnType<typeof import('../../src/app').createApp>>
+  let user: any
+  let token: string
 
-  const saleBody = () => ({
+  const saleBody = (): Record<string, unknown> => ({
     estado: 'Pendiente',
     total: 100,
     cliente: 'Test Client',
@@ -30,13 +29,13 @@ describe('Phase 0 — sale foundation contract', () => {
   before(async () => {
     process.env.PHASE_0_CONTRACTS_ENABLED = 'true'
     await mongoose.connect(TEST_DB_URI)
-    const { createApp } = require('../../src/app')
+    const { createApp } = await import('../../src/app')
     app = await createApp()
   })
 
   after(async () => {
-    const dbName = mongoose.connection.db && mongoose.connection.db.databaseName
-    if (dbName && dbName.endsWith('_test')) {
+    const dbName = mongoose.connection.db?.databaseName
+    if (dbName?.endsWith('_test') === true) {
       await mongoose.connection.dropDatabase()
     }
     await mongoose.disconnect()

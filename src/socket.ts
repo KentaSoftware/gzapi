@@ -9,7 +9,7 @@ import {
 
 let io: ServerType | undefined
 
-export function init (httpServer: any) {
+export function init (httpServer: any): ServerType {
   io = new Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>(httpServer, {
     // @ts-expect-error
     method: 'GET',
@@ -27,7 +27,7 @@ export function getIO (): ServerType {
   return io
 }
 
-export function emitSocket (type: string, params: Object) {
+export function emitSocket (type: string, params: Object): void {
   try {
     /* if (params.res._id) {
       controller.addReg({

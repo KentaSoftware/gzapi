@@ -2,7 +2,6 @@ import { Auth, AuthWithToken, User } from '../interfaces/auth.interface'
 import UserModel from '../models/user'
 import { encrypt, verified } from '../utils/bcrypt.handle'
 import { generateToken } from '../utils/jwt.handle'
-import _ from 'lodash'
 
 const registerNewUser = async ({ nickname, password, role, nameRole }: Partial<User>): Promise<Auth | string> => {
   const checkIs = await UserModel.findOne({ nickname })

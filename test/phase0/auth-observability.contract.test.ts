@@ -1,30 +1,34 @@
-const { expect } = require('chai')
-const mongoose = require('mongoose')
-const request = require('supertest')
-const sinon = require('sinon')
+import { expect } from 'chai'
+import mongoose from 'mongoose'
+import request from 'supertest'
+import sinon from 'sinon'
+import express from 'express'
 
-const CommercialFactModel = require('../../src/models/commercialFact').default
-const RoleModel = require('../../src/models/role').default
-const SaleModel = require('../../src/models/sale').default
-const UserModel = require('../../src/models/user').default
-const { generateToken } = require('../../src/utils/jwt.handle')
+import CommercialFactModel from '../../src/models/commercialFact'
+import RoleModel from '../../src/models/role'
+import SaleModel from '../../src/models/sale'
+import UserModel from '../../src/models/user'
+import { generateToken } from '../../src/utils/jwt.handle'
+import { correlationId } from '../../src/middleware/correlationId'
+import { requestLogger } from '../../src/middleware/requestLogger'
+import { sendErrorEnvelope } from '../../src/utils/error.handle'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_auth_observability_test'
 const BUSINESS_DATE = '2026-01-15T12:00:00Z'
 
 describe('Phase 0 — auth and observability contract', () => {
-  let app
+  let app: Awaited<ReturnType<typeof import('../../src/app').createApp>>
 
   before(async () => {
     process.env.PHASE_0_CONTRACTS_ENABLED = 'true'
     await mongoose.connect(TEST_DB_URI)
-    const { createApp } = require('../../src/app')
+    const { createApp } = await import('../../src/app')
     app = await createApp()
   })
 
   after(async () => {
-    const dbName = mongoose.connection.db && mongoose.connection.db.databaseName
-    if (dbName && dbName.endsWith('_test')) {
+    const dbName = mongoose.connection.db?.databaseName
+    if (dbName?.endsWith('_test') === true) {
       await mongoose.connection.dropDatabase()
     }
     await mongoose.disconnect()
@@ -38,8 +42,8 @@ describe('Phase 0 — auth and observability contract', () => {
     await RoleModel.deleteMany({})
   })
 
-  const paymentPath = (saleId) => `/commercialFact/sales/${saleId}/payment`
-  const paymentBody = () => ({ businessDate: BUSINESS_DATE, idempotencyKey: 'auth-observability-payment' })
+  const paymentPath = (saleId: string): string => `/commercialFact/sales/${saleId}/payment`
+  const paymentBody = (): { businessDate: string, idempotencyKey: string } => ({ businessDate: BUSINESS_DATE, idempotencyKey: 'auth-observability-payment' })
 
   it('S-24a: missing JWT returns 401 AUTHENTICATION_INVALID before protected data changes', async () => {
     const sale = await SaleModel.create({ estado: 'Pendiente', total: 1000, user: new mongoose.Types.ObjectId() })
@@ -106,10 +110,6 @@ describe('Phase 0 — auth and observability contract', () => {
   })
 
   it('NFR-004: request logs retain correlation while redacting authorization, cookies, passwords, and JWT-like values', async () => {
-    const express = require('express')
-    const { correlationId } = require('../../src/middleware/correlationId')
-    const { requestLogger } = require('../../src/middleware/requestLogger')
-    const { sendErrorEnvelope } = require('../../src/utils/error.handle')
     const logger = sinon.stub(console, 'log')
     const testApp = express()
     testApp.use(express.json())

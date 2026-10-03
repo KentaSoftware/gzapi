@@ -46,7 +46,7 @@ const resetPhase0ContractV1 = async (): Promise<void> => {
   await RoleModel.deleteMany({})
 }
 
-const seedPhase0ContractV1 = async () => {
+const seedPhase0ContractV1 = async (): Promise<typeof PHASE0_CONTRACT_V1> => {
   await resetPhase0ContractV1()
 
   const { ids } = PHASE0_CONTRACT_V1

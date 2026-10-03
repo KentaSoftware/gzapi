@@ -1,6 +1,8 @@
 import { Request, Response } from 'express'
 import { handleHttp } from '../utils/error.handle'
 import { JwtPayload } from 'jsonwebtoken'
+import { Types } from 'mongoose'
+import ExpenseModel from '../models/expense'
 import ExpenseService from '../services/expense'
 import { emitSocket } from '../socket'
 
@@ -24,7 +26,6 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
     const result = await ExpenseService.list(query)
 
     // Emitir evento BI expense_list_viewed
-    const { emitSocket } = require('../socket')
     emitSocket('expense', {
       action: 'list_viewed',
       data: {
@@ -127,8 +128,7 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
 export const getExpense = async ({ params, user }: RequestExt, res: Response): Promise<void> => {
   try {
     // GAP-01: Validar ObjectId antes de query
-    const { Types } = require('mongoose')
-    if (Types.ObjectId.isValid(params.id) === false) {
+    if (!Types.ObjectId.isValid(params.id)) {
       res.status(400).json({ error: 'ID de egreso inválido' })
       return
     }
@@ -137,7 +137,6 @@ export const getExpense = async ({ params, user }: RequestExt, res: Response): P
 
     if (expense == null) {
       // GAP-02: Verificar si está eliminado (soft delete) para retornar 410
-      const ExpenseModel = require('../models/expense').default
       const deleted = await ExpenseModel.findOne({ _id: params.id, isDeleted: true })
 
       if (deleted != null) {
@@ -153,7 +152,6 @@ export const getExpense = async ({ params, user }: RequestExt, res: Response): P
     }
 
     // GAP-03: Emitir evento BI expense_detail_viewed (solo en éxito)
-    const { emitSocket } = require('../socket')
     emitSocket('expense', {
       action: 'detail_viewed',
       data: {

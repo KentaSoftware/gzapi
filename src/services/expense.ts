@@ -159,7 +159,7 @@ class ExpenseService {
     return !isNaN(date.getTime())
   }
 
-  async list (query: ListExpensesQuery) {
+  async list (query: ListExpensesQuery): Promise<any> {
     const {
       preset,
       from,
@@ -559,7 +559,7 @@ class ExpenseService {
     return expense
   }
 
-  async listByBuy (buyId: string, query: ListExpensesQuery) {
+  async listByBuy (buyId: string, query: ListExpensesQuery): Promise<any> {
     const filter: any = {
       isDeleted: false,
       'relatedTo.kind': RELATED_KIND.BUY,

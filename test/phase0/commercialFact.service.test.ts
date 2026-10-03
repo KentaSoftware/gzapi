@@ -1,22 +1,27 @@
-const { expect } = require('chai')
-const sinon = require('sinon')
-const mongoose = require('mongoose')
+import { expect } from 'chai'
+import sinon from 'sinon'
+import mongoose from 'mongoose'
 
-const SaleModel = require('../../src/models/sale').default
-const BuyModel = require('../../src/models/buy').default
-const ItemBuyModel = require('../../src/models/itemBuy').default
-const CommercialFactModel = require('../../src/models/commercialFact').default
-const { CommercialFactService } = require('../../src/services/commercialFact')
-const { CommercialFactError } = require('../../src/interfaces/commercialFact.interface')
-const { financePortAdapter } = require('../../src/services/commercialPorts')
+import SaleModel from '../../src/models/sale'
+import BuyModel from '../../src/models/buy'
+import ItemBuyModel from '../../src/models/itemBuy'
+import CommercialFactModel from '../../src/models/commercialFact'
+import { CommercialFactService } from '../../src/services/commercialFact'
+import { CommercialFactError } from '../../src/interfaces/commercialFact.interface'
+import { financePortAdapter } from '../../src/services/commercialPorts'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_commercialfact_test'
 
-let spyStockPort
+let spyStockPort: {
+  commitSale: sinon.SinonStub
+  receivePurchase: sinon.SinonStub
+  applyPurchaseAdjustment: sinon.SinonStub
+  applyPhysicalReturn: sinon.SinonStub
+}
 
-const makeService = () => new CommercialFactService({ stockPort: spyStockPort })
+const makeService = (): CommercialFactService => new CommercialFactService({ stockPort: spyStockPort })
 
-const captureError = async (promise) => {
+const captureError = async (promise: Promise<unknown>): Promise<unknown> => {
   try {
     await promise
     return undefined
@@ -25,13 +30,15 @@ const captureError = async (promise) => {
   }
 }
 
-const createSale = async (total) =>
-  SaleModel.create({ estado: 'Pendiente', total, user: new mongoose.Types.ObjectId() })
+const createSale = async (total: number): Promise<any> => {
+  return await SaleModel.create({ estado: 'Pendiente', total, user: new mongoose.Types.ObjectId() })
+}
 
-const createBuy = async (total) =>
-  BuyModel.create({ estado: 'Pendiente', total, user: new mongoose.Types.ObjectId() })
+const createBuy = async (total: number): Promise<any> => {
+  return await BuyModel.create({ estado: 'Pendiente', total, user: new mongoose.Types.ObjectId() })
+}
 
-const createBuyWithItems = async (total, cantidad) => {
+const createBuyWithItems = async (total: number, cantidad: number): Promise<any> => {
   const buy = await createBuy(total)
   await ItemBuyModel.create({
     idBuy: buy._id,
@@ -44,8 +51,9 @@ const createBuyWithItems = async (total, cantidad) => {
   return buy
 }
 
-const cancelBuy = async (buyId) =>
-  BuyModel.updateOne({ _id: buyId }, { $set: { estado: 'Cancelado' } })
+const cancelBuy = async (buyId: unknown): Promise<any> => {
+  return await BuyModel.updateOne({ _id: buyId }, { $set: { estado: 'Cancelado' } })
+}
 
 describe('Phase 0 — commercial fact service', () => {
   before(async () => {
@@ -53,8 +61,8 @@ describe('Phase 0 — commercial fact service', () => {
   })
 
   after(async () => {
-    const dbName = mongoose.connection.db && mongoose.connection.db.databaseName
-    if (dbName && dbName.endsWith('_test')) {
+    const dbName = mongoose.connection.db?.databaseName
+    if (dbName?.endsWith('_test') === true) {
       await mongoose.connection.dropDatabase()
     }
     await mongoose.disconnect()
@@ -186,8 +194,8 @@ describe('Phase 0 — commercial fact service', () => {
   })
 
   describe('sale refund', () => {
-    const pay = async (service, sale, key) =>
-      service.confirmSalePayment({
+    const pay = async (service: CommercialFactService, sale: any, key: string): Promise<any> =>
+      await service.confirmSalePayment({
         aggregateId: String(sale._id),
         businessDate: new Date('2026-01-10T12:00:00Z'),
         idempotencyKey: key
@@ -763,10 +771,10 @@ describe('Phase 0 — commercial fact service', () => {
 
       let missNextIdempotencyLookup = true
       const originalFindOne = CommercialFactModel.findOne.bind(CommercialFactModel)
-      const missIdempotencyLookup = sinon.stub(CommercialFactModel, 'findOne').callsFake((query) => {
+      const missIdempotencyLookup = sinon.stub(CommercialFactModel, 'findOne').callsFake((query: any) => {
         if (missNextIdempotencyLookup && query.idempotencyKey === 'deliver-race') {
           missNextIdempotencyLookup = false
-          return originalFindOne({ ...query, idempotencyKey: `${query.idempotencyKey}-missed` })
+          return originalFindOne({ ...query, idempotencyKey: `${String(query.idempotencyKey ?? '')}-missed` })
         }
         return originalFindOne(query)
       })

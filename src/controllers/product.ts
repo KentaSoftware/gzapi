@@ -216,7 +216,7 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
-          .text(`${categorieActive}`, 25)
+          .text(`${String(categorieActive)}`, 25)
       }
 
       const yPosition = doc.y
@@ -296,7 +296,7 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
-          .text(`${categorieActive}`, 25)
+          .text(`${String(categorieActive)}`, 25)
       }
 
       const yPosition = doc.y

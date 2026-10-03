@@ -1,15 +1,14 @@
-const { expect } = require('chai')
-const sinon = require('sinon')
-
-const {
+import { expect } from 'chai'
+import sinon from 'sinon'
+import {
   RoutePlanReaderDouble,
   assertSimulationSnapshotCompatible,
   financePortAdapter,
   stockPortAdapter
-} = require('../../src/services/commercialPorts')
-const { CommercialFactError } = require('../../src/interfaces/commercialFact.interface')
+} from '../../src/services/commercialPorts'
+import { CommercialFactError } from '../../src/interfaces/commercialFact.interface'
 
-const captureError = (fn) => {
+const captureError = (fn: () => unknown): unknown => {
   try {
     fn()
     return undefined

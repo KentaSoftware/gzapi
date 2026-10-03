@@ -81,7 +81,7 @@ const normalizeQuantityPatterns = (text: string): string => {
  */
 export const normalizeBarcode = (barcode: string | null | undefined): string => {
   if (barcode == null || barcode === '') return ''
-  return barcode.replace(/[\s\-]/g, '').replace(/\D/g, '')
+  return barcode.replace(/[\s-]/g, '').replace(/\D/g, '')
 }
 
 /**

@@ -1,8 +1,8 @@
-const { expect } = require('chai')
-const mongoose = require('mongoose')
-const RoleModel = require('../../src/models/role').default
-const UserModel = require('../../src/models/user').default
-const { seedDatabase } = require('../../src/services/seed')
+import { expect } from 'chai'
+import mongoose from 'mongoose'
+import RoleModel from '../../src/models/role'
+import UserModel from '../../src/models/user'
+import { seedDatabase } from '../../src/services/seed'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_test'
 
@@ -16,26 +16,28 @@ const PHASE_0_GRANTS = {
 const EXPECTED_ROLE_NAMES = ['Administración', 'Preventista', 'Propietario', 'Repartidor', 'admin']
 const PHASE_0_PERMISSIONS = [...new Set(Object.values(PHASE_0_GRANTS).flat())]
 
-async function clearCollections () {
+const stringAscending = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
+
+async function clearCollections (): Promise<void> {
   await RoleModel.deleteMany({})
   await UserModel.deleteMany({})
 }
 
-async function roleNames () {
+async function roleNames (): Promise<string[]> {
   const roles = await RoleModel.find().lean()
-  return roles.map((role) => role.name).sort()
+  return roles.map((role) => role.name).sort(stringAscending)
 }
 
-async function permissionsOf (name) {
+async function permissionsOf (name: string): Promise<string[]> {
   const role = await RoleModel.findOne({ name }).lean()
-  return (role && role.permissions ? role.permissions : []).slice().sort()
+  return ((role?.permissions) ?? []).slice().sort(stringAscending)
 }
 
-async function snapshot () {
+async function snapshot (): Promise<Record<string, string[]>> {
   const roles = await RoleModel.find().lean()
-  const result = {}
+  const result: Record<string, string[]> = {}
   for (const role of roles) {
-    result[role.name] = (role.permissions || []).slice().sort()
+    result[role.name] = (role.permissions ?? []).slice().sort(stringAscending)
   }
   return result
 }
@@ -47,8 +49,8 @@ describe('Phase 0 — role seed idempotency', () => {
   })
 
   after(async () => {
-    const dbName = mongoose.connection.db && mongoose.connection.db.databaseName
-    if (dbName && dbName.endsWith('_test')) {
+    const dbName = mongoose.connection.db?.databaseName
+    if (dbName?.endsWith('_test') === true) {
       await mongoose.connection.dropDatabase()
     }
     await mongoose.disconnect()
@@ -69,7 +71,7 @@ describe('Phase 0 — role seed idempotency', () => {
     }
 
     for (const name of Object.keys(PHASE_0_GRANTS)) {
-      expect(await permissionsOf(name)).to.deep.equal([...PHASE_0_GRANTS[name]].sort())
+      expect(await permissionsOf(name)).to.deep.equal([...PHASE_0_GRANTS[name]].sort(stringAscending))
     }
 
     const adminPerms = await permissionsOf('admin')

@@ -1,13 +1,12 @@
-const { expect } = require('chai')
-const mongoose = require('mongoose')
+import { expect } from 'chai'
+import mongoose from 'mongoose'
+import request from 'supertest'
 
-const SaleModel = require('../../src/models/sale').default
-const CommercialFactModel = require('../../src/models/commercialFact').default
-const RoleModel = require('../../src/models/role').default
-const UserModel = require('../../src/models/user').default
-const { generateToken } = require('../../src/utils/jwt.handle')
-
-const request = require('supertest')
+import SaleModel from '../../src/models/sale'
+import CommercialFactModel from '../../src/models/commercialFact'
+import RoleModel from '../../src/models/role'
+import UserModel from '../../src/models/user'
+import { generateToken } from '../../src/utils/jwt.handle'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_commercialfact_controller_test'
 
@@ -22,21 +21,21 @@ const ADMIN_PERMISSIONS = [
 ]
 
 describe('Phase 0 — commercial fact controller', () => {
-  let app
-  let role
-  let user
-  let token
+  let app: Awaited<ReturnType<typeof import('../../src/app').createApp>>
+  let role: any
+  let user: any
+  let token: string
 
   before(async () => {
     process.env.PHASE_0_CONTRACTS_ENABLED = 'true'
     await mongoose.connect(TEST_DB_URI)
-    const { createApp } = require('../../src/app')
+    const { createApp } = await import('../../src/app')
     app = await createApp()
   })
 
   after(async () => {
-    const dbName = mongoose.connection.db && mongoose.connection.db.databaseName
-    if (dbName && dbName.endsWith('_test')) {
+    const dbName = mongoose.connection.db?.databaseName
+    if (dbName?.endsWith('_test') === true) {
       await mongoose.connection.dropDatabase()
     }
     await mongoose.disconnect()
@@ -64,13 +63,14 @@ describe('Phase 0 — commercial fact controller', () => {
     token = await generateToken(user)
   })
 
-  const authed = (method, path, body) =>
+  const authed = (method: 'post', path: string, body: object): request.Test =>
     request(app)[method](path)
       .set('Authorization', `Bearer ${token}`)
       .send(body)
 
-  const createSale = async (total) =>
-    SaleModel.create({ estado: 'Pendiente', total, user: new mongoose.Types.ObjectId() })
+  const createSale = async (total: number): Promise<any> => {
+    return await SaleModel.create({ estado: 'Pendiente', total, user: new mongoose.Types.ObjectId() })
+  }
 
   describe('sale payment', () => {
     it('S-01: confirming a full sale payment before delivery records the cash entry and no delivery', async () => {

@@ -92,7 +92,7 @@ export const uploadPurchaseDoc = async (req: RequestExt, res: Response): Promise
       status: DraftStatus.PROCESSING
     })
 
-    console.log(`[Upload] Draft creado: ${draft._id}`)
+    console.log(`[Upload] Draft creado: ${String(draft._id)}`)
 
     // Extraer token JWT del header Authorization
     const authToken = req.headers.authorization
@@ -101,10 +101,10 @@ export const uploadPurchaseDoc = async (req: RequestExt, res: Response): Promise
     // NOTA: En producción considerar usar una cola de jobs (Bull, BullMQ)
     processDraft(draft._id as Types.ObjectId, authToken)
       .then(() => {
-        console.log(`[Upload] Draft ${draft._id} procesado correctamente`)
+        console.log(`[Upload] Draft ${String(draft._id)} procesado correctamente`)
       })
       .catch(error => {
-        console.error(`[Upload] Error procesando draft ${draft._id}:`, error)
+        console.error(`[Upload] Error procesando draft ${String(draft._id)}:`, error)
       })
 
     // Responder inmediatamente con draft en PROCESSING

@@ -219,7 +219,7 @@ describe('Phase 4 — Dataset Trends for Buys', () => {
       // Inspect the aggregate pipeline args passed to the SaleModel
       const callArgs = saleStub.getCall(0).args[0]
       const matchStage = callArgs.find((stage: any) => stage.$match)
-      expect(matchStage).to.not.be.undefined
+      expect(matchStage).to.not.equal(undefined)
       expect(matchStage.$match).to.have.property('estado')
       expect(matchStage.$match.estado).to.deep.equal({ $ne: 'Cancelado' })
     })

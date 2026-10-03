@@ -1,11 +1,13 @@
-const { expect } = require('chai')
-
-const {
+import { expect } from 'chai'
+import { MongoClient } from 'mongodb'
+import {
   MigrationSafetyError,
   collectPreflight,
   parseMigrationArguments,
   runCreateCommercialFactIndexes
-} = require('../../migrations/phase-0-helpers')
+} from '../../migrations/phase-0-helpers'
+
+const stringAscending = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
 
 describe('Phase 0 migration safety', () => {
   it('S-21: rejects a migration without an explicit target URI', () => {
@@ -33,7 +35,6 @@ describe('Phase 0 migration safety', () => {
   })
 
   it('S-16: applies the expected indexes idempotently to an isolated local database', async function () {
-    const { MongoClient } = require('mongodb')
     const uri = 'mongodb://127.0.0.1:27017'
     const databaseName = 'gzapi_phase0_migration_test'
     const client = new MongoClient(uri, { serverSelectionTimeoutMS: 1000 })
@@ -51,7 +52,7 @@ describe('Phase 0 migration safety', () => {
     try {
       const first = await runCreateCommercialFactIndexes(db, false)
       const second = await runCreateCommercialFactIndexes(db, false)
-      const names = (await db.collection('commercialfacts').indexes()).map((index) => index.name).sort()
+      const names = (await db.collection('commercialfacts').indexes()).map((index) => index.name).sort(stringAscending)
 
       expect(first.applied).to.equal(true)
       expect(second.applied).to.equal(true)
@@ -64,7 +65,6 @@ describe('Phase 0 migration safety', () => {
   })
 
   it('S-21: rejects guarded legacy drift without an explicit classification', async function () {
-    const { MongoClient } = require('mongodb')
     const client = new MongoClient('mongodb://127.0.0.1:27017', { serverSelectionTimeoutMS: 1000 })
     try {
       await client.connect()

@@ -91,9 +91,8 @@ const transformDocumentAIResult = (aiResult: any): AnalyzeResult => {
               score: sug.score
             })) ?? []
           }
-        }
         // Si hay sugerencias pero no match, crear solo con candidates
-        else if (catalogLink.suggestions != null && catalogLink.suggestions.length > 0) {
+        } else if (catalogLink.suggestions != null && catalogLink.suggestions.length > 0) {
           const topSuggestion = catalogLink.suggestions[0]
           catalogMatch = {
             productId: topSuggestion.productId,
@@ -208,7 +207,7 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`[Document AI] Intento ${attempt}/${maxRetries} para draft ${draft._id} DebugMode=${DOCUMENT_AI_DEBUG > 0 ? 'ON' : 'OFF'}`)
+      console.log(`[Document AI] Intento ${attempt}/${maxRetries} para draft ${String(draft._id)} DebugMode=${DOCUMENT_AI_DEBUG > 0 ? 'ON' : 'OFF'}`)
 
       // Construir ruta absoluta del archivo desde la raíz del proyecto
       // draft.file.path viene como "/uploads/purchase-docs/filename.jpg"
@@ -270,7 +269,7 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
       // Transformar resultado de Document AI al formato esperado por DraftPurchaseDoc
       const result: AnalyzeResult = transformDocumentAIResult(aiResult)
 
-      console.log(`[Document AI] Análisis exitoso para draft ${draft._id}`)
+      console.log(`[Document AI] Análisis exitoso para draft ${String(draft._id)}`)
       return result
     } catch (error) {
       // Manejar errores de axios
@@ -314,19 +313,19 @@ export const runDuplicateCheck = async (
   try {
     // Si no hay header o datos mínimos, no podemos verificar duplicados
     if (analysis.header == null || analysis.header.total == null || analysis.header.total === 0) {
-      console.log(`[Duplicate Check] Sin datos suficientes en draft ${draftId}`)
+      console.log(`[Duplicate Check] Sin datos suficientes en draft ${String(draftId)}`)
       return null
     }
 
     // Validar que hay providerId (requerido por CheckDuplicateRequestDTO)
     if (analysis.header.providerId == null || analysis.header.providerId === '') {
-      console.log(`[Duplicate Check] Sin providerId en draft ${draftId}, omitiendo verificación`)
+      console.log(`[Duplicate Check] Sin providerId en draft ${String(draftId)}, omitiendo verificación`)
       return null
     }
 
     // Validar que hay fecha
     if (analysis.header.documentDate == null || analysis.header.documentDate === '') {
-      console.log(`[Duplicate Check] Sin fecha en draft ${draftId}, omitiendo verificación`)
+      console.log(`[Duplicate Check] Sin fecha en draft ${String(draftId)}, omitiendo verificación`)
       return null
     }
 
@@ -368,7 +367,7 @@ export const runDuplicateCheck = async (
         : 'No se encontraron duplicados'
     }
 
-    console.log(`[Duplicate Check] Resultado para draft ${draftId}: ${possibleDuplicate.status}`)
+    console.log(`[Duplicate Check] Resultado para draft ${String(draftId)}: ${possibleDuplicate.status}`)
     return possibleDuplicate
   } catch (error) {
     console.error('[Duplicate Check] Error:', error)
@@ -388,11 +387,11 @@ export const processDraft = async (draftId: Types.ObjectId, authToken?: string):
 
   try {
     // 1. Analizar con Document AI
-    console.log(`[Process Draft] Iniciando análisis para draft ${draftId}`)
+    console.log(`[Process Draft] Iniciando análisis para draft ${String(draftId)}`)
     const analysisResult = await analyzeDraftWithAI(draft, authToken)
 
     // 2. Ejecutar duplicate check
-    console.log(`[Process Draft] Ejecutando duplicate check para draft ${draftId}`)
+    console.log(`[Process Draft] Ejecutando duplicate check para draft ${String(draftId)}`)
     const possibleDuplicate = await runDuplicateCheck(draftId, analysisResult)
 
     // 3. Actualizar draft con resultados
@@ -407,7 +406,7 @@ export const processDraft = async (draftId: Types.ObjectId, authToken?: string):
       throw new Error('Error actualizando draft')
     }
 
-    console.log(`[Process Draft] Draft ${draftId} procesado exitosamente`)
+    console.log(`[Process Draft] Draft ${String(draftId)} procesado exitosamente`)
     return updatedDraft
   } catch (error) {
     // Guardar error en draft
@@ -422,7 +421,7 @@ export const processDraft = async (draftId: Types.ObjectId, authToken?: string):
       error: errorObj
     })
 
-    console.error(`[Process Draft] Error procesando draft ${draftId}:`, error)
+    console.error(`[Process Draft] Error procesando draft ${String(draftId)}:`, error)
     throw error
   }
 }
@@ -446,7 +445,7 @@ const createProduct = async (productData: NewProductData, userId: Types.ObjectId
     user: userId
   })
 
-  console.log(`[Create Product] Producto creado: ${product._id} - ${productData.descripcion}`)
+  console.log(`[Create Product] Producto creado: ${String(product._id)} - ${productData.descripcion}`)
   return product._id
 }
 
@@ -547,10 +546,10 @@ export const confirmDraft = async (
     proveedor: header.providerId,
     fecha: header.documentDate != null && header.documentDate !== '' ? new Date(header.documentDate) : new Date(),
     docNumber: header.documentNumber,
-    fingerprint: `${header.providerId}-${header.documentDate}-${header.total}` // Simple fingerprint
+    fingerprint: `${header.providerId ?? ''}-${header.documentDate ?? ''}-${String(header.total ?? '')}` // Simple fingerprint
   })
 
-  console.log(`[Confirm Draft] Compra creada: ${buy._id}`)
+  console.log(`[Confirm Draft] Compra creada: ${String(buy._id)}`)
 
   // 6. Crear items de compra (ItemBuy)
   await Promise.all(
@@ -584,7 +583,7 @@ export const confirmDraft = async (
     confirmedAt: new Date()
   })
 
-  console.log(`[Confirm Draft] Draft ${draftId} confirmado exitosamente`)
+  console.log(`[Confirm Draft] Draft ${String(draftId)} confirmado exitosamente`)
 
   return {
     buyId: buy._id,

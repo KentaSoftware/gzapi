@@ -20,13 +20,13 @@ const backupCtrl = async (_: Request, res: Response): Promise<void> => {
 
   exec(`mongodump --uri="${BACKUP_URI}" --out=${backupPath} --username="${USER}" --password="${PASS}"`, (error: any, _stdout: any, stderr: any) => {
     if (error != null) {
-      console.error(`Error: ${error.message}`)
+      console.error(`Error: ${String(error.message)}`)
       return res.status(500).send('Error generando el backup')
     }
 
     // Filtrar mensajes de stderr que no son errores reales
     if (stderr != null && stderr !== '' && String(stderr).toLowerCase().includes('error')) {
-      console.error(`stderr: ${stderr}`)
+      console.error(`stderr: ${String(stderr)}`)
       return res.status(500).send('Error generando el backup')
     }
     return res.send('Backup generado exitosamente')
@@ -47,13 +47,13 @@ const restoreCtrl = async (_: Request, res: Response): Promise<void> => {
 
   exec(`mongorestore --uri="${BACKUP_URI}" --username="${USER}" --password="${PASS}" --drop --nsInclude=test.* ${backupPath}`, (error: any, _stdout: any, stderr: any) => {
     if (error != null) {
-      console.error(`Error: ${error.message}`)
+      console.error(`Error: ${String(error.message)}`)
       return res.status(500).send('Error restaurando el backup')
     }
 
     // Filtrar mensajes de stderr que no son errores reales
     if (stderr != null && stderr !== '' && String(stderr).toLowerCase().includes('error')) {
-      console.error(`stderr: ${stderr}`)
+      console.error(`stderr: ${String(stderr)}`)
       return res.status(500).send('Error restaurando el backup')
     }
     return res.send('Backup restaurado exitosamente')
