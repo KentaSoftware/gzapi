@@ -47,12 +47,23 @@ const sumLineQuantities = (lines: CommercialFactLine[]): number =>
     return total + (typeof quantity === 'number' ? quantity : 0)
   }, 0)
 
+// A concurrent request with the same idempotency key can win the unique
+// index race: recognize the raw duplicate-key error to fall back to the
+// recorded fact's replay semantics instead of leaking it.
+const isDuplicateKeyError = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null) return false
+  const candidate = error as { code?: unknown, message?: unknown }
+  return candidate.code === 11000 ||
+    (typeof candidate.message === 'string' && candidate.message.includes('E11000'))
+}
+
 interface ExecuteParams {
   type: CommercialFactType
   aggregateType: 'sale' | 'buy'
   input: CommercialFactInput
   ctx: CommercialFactRequestContext
   amount?: number
+  resolveAmount?: () => number | undefined
   sourceReference: string
   validate: () => Promise<void>
   notify?: (fact: CommercialFact) => Promise<void>
@@ -78,36 +89,77 @@ export class CommercialFactService {
     }).lean()
 
     if (existing !== null) {
-      if (existing.payloadHash === payloadHash) {
-        return { fact: existing as unknown as CommercialFact, replayed: true }
+      if (existing.payloadHash !== payloadHash) {
+        throw new CommercialFactError('IDEMPOTENCY_KEY_CONFLICT', 'idempotencyKey was already used with a different payload')
       }
-      throw new CommercialFactError('IDEMPOTENCY_KEY_CONFLICT', 'idempotencyKey was already used with a different payload')
+      return await this.replayExisting(params, existing as unknown as CommercialFact)
     }
 
     await params.validate()
+    const amount = params.resolveAmount !== undefined ? params.resolveAmount() : params.amount
 
-    const document = await CommercialFactModel.create({
-      type,
-      aggregateType: params.aggregateType,
-      aggregateId: input.aggregateId,
-      amount: params.amount,
-      businessDate: input.businessDate,
-      actorId: ctx.actorId,
-      sourceReference: params.sourceReference,
-      correlationId: ctx.correlationId,
-      idempotencyKey: input.idempotencyKey,
-      payloadHash,
-      reason: input.reason,
-      lines: input.lines
-    })
+    let document
+    try {
+      document = await CommercialFactModel.create({
+        type,
+        aggregateType: params.aggregateType,
+        aggregateId: input.aggregateId,
+        amount,
+        businessDate: input.businessDate,
+        actorId: ctx.actorId,
+        sourceReference: params.sourceReference,
+        correlationId: ctx.correlationId,
+        idempotencyKey: input.idempotencyKey,
+        payloadHash,
+        reason: input.reason,
+        lines: input.lines,
+        status: 'PENDING'
+      })
+    } catch (error) {
+      if (isDuplicateKeyError(error)) {
+        const raced = await CommercialFactModel.findOne({
+          type,
+          aggregateId: input.aggregateId,
+          idempotencyKey: input.idempotencyKey
+        }).lean()
+        if (raced !== null && raced.payloadHash === payloadHash) {
+          return await this.replayExisting(params, raced as unknown as CommercialFact)
+        }
+        if (raced !== null) {
+          throw new CommercialFactError('IDEMPOTENCY_KEY_CONFLICT', 'idempotencyKey was already used with a different payload')
+        }
+      }
+      throw error
+    }
 
     const fact = document.toObject() as unknown as CommercialFact
 
-    if (params.notify !== undefined) {
-      await params.notify(fact)
+    try {
+      if (params.notify !== undefined) {
+        await params.notify(fact)
+      }
+    } catch (portError) {
+      await CommercialFactModel.updateOne({ _id: fact._id }, { status: 'FAILED_RECOVERABLE' })
+      throw portError
     }
 
+    await CommercialFactModel.updateOne({ _id: fact._id }, { status: 'APPLIED' })
+    fact.status = 'APPLIED'
     return { fact, replayed: false }
+  }
+
+  // A replayed key must observe its original result; when the first attempt
+  // never completed its side effects, the recoverable registry re-applies
+  // them before answering so the recorded fact and its projections agree.
+  private async replayExisting (params: ExecuteParams, fact: CommercialFact): Promise<CommercialFactResult> {
+    if (fact.status !== 'APPLIED') {
+      if (params.notify !== undefined) {
+        await params.notify(fact)
+      }
+      await CommercialFactModel.updateOne({ _id: fact._id }, { status: 'APPLIED' })
+      fact.status = 'APPLIED'
+    }
+    return { fact, replayed: true }
   }
 
   async confirmSalePayment (
@@ -115,16 +167,17 @@ export class CommercialFactService {
     ctx: CommercialFactRequestContext,
     options?: { accessible?: boolean }
   ): Promise<CommercialFactResult> {
-    const sale = await SaleModel.findById(input.aggregateId).lean()
+    let saleTotal: number | undefined
 
     return await this.execute({
       type: 'SALE_PAYMENT',
       aggregateType: 'sale',
       input,
       ctx,
-      amount: sale === null ? undefined : sale.total,
+      resolveAmount: () => saleTotal,
       sourceReference: `sale:${input.aggregateId}`,
       validate: async () => {
+        const sale = await SaleModel.findById(input.aggregateId).lean()
         if (sale === null) {
           throw new CommercialFactError('SALE_PAYMENT_FORBIDDEN', 'Sale is not accessible')
         }
@@ -135,6 +188,7 @@ export class CommercialFactService {
         if (prior !== null) {
           throw new CommercialFactError('SALE_ALREADY_PAID', 'Sale already has a confirmed payment')
         }
+        saleTotal = sale.total
       },
       notify: async (fact) => { await this.financePort.recordSalePayment(fact) }
     })
@@ -170,20 +224,22 @@ export class CommercialFactService {
     input: CommercialFactInput,
     ctx: CommercialFactRequestContext
   ): Promise<CommercialFactResult> {
-    const buy = await BuyModel.findById(input.aggregateId).lean()
-    const prior = await CommercialFactModel.findOne({ type: 'PURCHASE_PAYMENT', aggregateId: input.aggregateId }).lean()
+    let buyTotal: number | undefined
 
     return await this.execute({
       type: 'PURCHASE_PAYMENT',
       aggregateType: 'buy',
       input,
       ctx,
-      amount: buy === null ? undefined : Number(buy.total),
+      resolveAmount: () => buyTotal,
       sourceReference: `buy:${input.aggregateId}`,
       validate: async () => {
+        const buy = await BuyModel.findById(input.aggregateId).lean()
+        const prior = await CommercialFactModel.findOne({ type: 'PURCHASE_PAYMENT', aggregateId: input.aggregateId }).lean()
         if (buy === null || prior !== null) {
           throw new CommercialFactError('PURCHASE_ALREADY_PAID', 'Purchase does not exist or is already paid')
         }
+        buyTotal = Number(buy.total)
       },
       notify: async (fact) => { await this.financePort.recordPurchasePayment(fact) }
     })

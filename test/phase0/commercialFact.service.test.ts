@@ -8,6 +8,7 @@ const ItemBuyModel = require('../../src/models/itemBuy').default
 const CommercialFactModel = require('../../src/models/commercialFact').default
 const { CommercialFactService } = require('../../src/services/commercialFact')
 const { CommercialFactError } = require('../../src/interfaces/commercialFact.interface')
+const { financePortAdapter } = require('../../src/services/commercialPorts')
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_commercialfact_test'
 
@@ -708,6 +709,81 @@ describe('Phase 0 — commercial fact service', () => {
       expect(result.fact.businessDate).to.deep.equal(new Date('2026-01-10T12:00:00Z'))
       expect(result.fact.sourceReference).to.equal(`sale:${String(sale._id)}`)
       expect(result.fact.correlationId).to.equal('corr-99')
+    })
+  })
+
+  describe('recoverable fact application', () => {
+    it('correction R3-notify-non-atomic: a failed first attempt records FAILED_RECOVERABLE and the retry re-applies the finance projection', async () => {
+      const sale = await createSale(1000)
+      const financePort = {
+        recordSalePayment: sinon.stub()
+          .onFirstCall().rejects(new Error('projection unavailable'))
+          .onSecondCall().callsFake(async (fact) => { await financePortAdapter.recordSalePayment(fact) }),
+        recordSaleRefund: sinon.stub().resolves(),
+        recordPurchasePayment: sinon.stub().resolves()
+      }
+      const service = new CommercialFactService({ financePort })
+      const input = {
+        aggregateId: String(sale._id),
+        businessDate: new Date('2026-01-10T12:00:00Z'),
+        idempotencyKey: 'pay-retry'
+      }
+
+      const firstError = await captureError(service.confirmSalePayment(input, { actorId: 'actor-1' }))
+      expect(firstError).to.be.instanceOf(Error)
+      expect(financePort.recordSalePayment.calledOnce).to.equal(true)
+
+      const storedAfterFailure = await CommercialFactModel.findOne({ type: 'SALE_PAYMENT', aggregateId: String(sale._id) }).lean()
+      expect(storedAfterFailure.status).to.equal('FAILED_RECOVERABLE')
+      const saleAfterFailure = await SaleModel.findById(sale._id).lean()
+      expect(saleAfterFailure.paidAt).to.equal(undefined)
+
+      const retried = await service.confirmSalePayment(input, { actorId: 'actor-1' })
+      expect(retried.replayed).to.equal(true)
+      expect(financePort.recordSalePayment.calledTwice).to.equal(true)
+
+      const storedAfterRetry = await CommercialFactModel.findOne({ type: 'SALE_PAYMENT', aggregateId: String(sale._id) }).lean()
+      expect(storedAfterRetry.status).to.equal('APPLIED')
+      const saleAfterRetry = await SaleModel.findById(sale._id).lean()
+      expect(saleAfterRetry.paidAt).to.deep.equal(new Date('2026-01-10T12:00:00Z'))
+    })
+
+    it('correction R3-race-check-then-act: a unique-index duplicate create race resolves to the recorded fact replay, never a raw duplicate error', async () => {
+      const sale = await createSale(1000)
+      const service = makeService()
+      const input = {
+        aggregateId: String(sale._id),
+        businessDate: new Date('2026-01-10T12:00:00Z'),
+        idempotencyKey: 'deliver-race'
+      }
+
+      const first = await service.recordSaleDelivery(input, { actorId: 'actor-1' })
+      expect(first.replayed).to.equal(false)
+      expect(first.fact.status).to.equal('APPLIED')
+
+      let missNextIdempotencyLookup = true
+      const originalFindOne = CommercialFactModel.findOne.bind(CommercialFactModel)
+      const missIdempotencyLookup = sinon.stub(CommercialFactModel, 'findOne').callsFake((query) => {
+        if (missNextIdempotencyLookup === true && query.idempotencyKey === 'deliver-race') {
+          missNextIdempotencyLookup = false
+          return originalFindOne({ ...query, idempotencyKey: `${query.idempotencyKey}-missed` })
+        }
+        return originalFindOne(query)
+      })
+      const duplicateKeyError = Object.assign(new Error('E11000 duplicate key error collection: commercialfacts'), { code: 11000 })
+      const duplicateCreate = sinon.stub(CommercialFactModel, 'create').rejects(duplicateKeyError)
+
+      try {
+        const raced = await service.recordSaleDelivery(input, { actorId: 'actor-2' })
+        expect(raced.replayed).to.equal(true)
+        expect(String(raced.fact._id)).to.equal(String(first.fact._id))
+      } finally {
+        missIdempotencyLookup.restore()
+        duplicateCreate.restore()
+      }
+
+      const deliveryCount = await CommercialFactModel.countDocuments({ type: 'SALE_DELIVERY', aggregateId: String(sale._id) })
+      expect(deliveryCount).to.equal(1)
     })
   })
 })

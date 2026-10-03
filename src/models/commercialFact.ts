@@ -55,6 +55,12 @@ const CommercialFactSchema = new Schema<CommercialFact>(
       type: String,
       required: true
     },
+    status: {
+      type: String,
+      enum: ['PENDING', 'APPLIED', 'FAILED_RECOVERABLE'],
+      required: true,
+      default: 'PENDING'
+    },
     reason: {
       type: String,
       required: false

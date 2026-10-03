@@ -28,7 +28,13 @@ export type CommercialErrorCode =
 
 export type CommercialFactLine = Record<string, unknown>
 
+export type CommercialFactStatus =
+  | 'PENDING'
+  | 'APPLIED'
+  | 'FAILED_RECOVERABLE'
+
 export interface CommercialFact {
+  _id?: unknown
   type: CommercialFactType
   aggregateType: string
   aggregateId: string
@@ -39,6 +45,7 @@ export interface CommercialFact {
   correlationId?: string
   idempotencyKey: string
   payloadHash: string
+  status: CommercialFactStatus
   reason?: string
   lines?: CommercialFactLine[]
   createdAt: Date
