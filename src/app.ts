@@ -4,6 +4,7 @@ import cors from 'cors'
 import path from 'path'
 import { loadRoutes } from './routes/index'
 import { requestLogger } from './middleware/requestLogger'
+import { correlationId } from './middleware/correlationId'
 
 // Under CommonJS the public directory sits next to the compiled/source root.
 // The native ES module loader used by the test runner has no `__dirname`, so
@@ -17,10 +18,8 @@ const createApp = async (): Promise<Express> => {
 
   app.use(cors())
   app.use('/image', express.static(publicDirectory))
-  console.log(publicDirectory)
   app.use(express.json())
-
-  // Middleware de logging para todas las requests
+  app.use(correlationId)
   app.use(requestLogger)
 
   const router = await loadRoutes()
