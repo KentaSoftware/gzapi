@@ -44,7 +44,7 @@ describe('Phase 0 — RBAC contract', () => {
     .set('Authorization', `Bearer ${token}`)
     .send(body)
 
-  it('S-05: a Preventista confirms payment for their own sale', async () => {
+  it('S-05a: a Preventista confirms payment for their own undelivered sale', async () => {
     const { ids, businessDate } = PHASE0_CONTRACT_V1
     const response = await post(tokens['fixture-salesperson'], `/commercialFact/sales/${ids.sale}/payment`, {
       businessDate,
@@ -55,7 +55,24 @@ describe('Phase 0 — RBAC contract', () => {
     expect(response.body.fact.actorId).to.equal(ids.salespersonUser)
   })
 
-  it('S-05b: a Preventista cannot mutate another user’s sale', async () => {
+  it('S-05b: a Preventista confirms payment for their own delivered sale', async () => {
+    const { ids, businessDate } = PHASE0_CONTRACT_V1
+    const delivery = await post(tokens['fixture-salesperson'], `/commercialFact/sales/${ids.sale}/delivery`, {
+      businessDate,
+      idempotencyKey: 'own-sale-delivery'
+    })
+    expect(delivery.status).to.equal(201)
+
+    const payment = await post(tokens['fixture-salesperson'], `/commercialFact/sales/${ids.sale}/payment`, {
+      businessDate,
+      idempotencyKey: 'own-delivered-sale-payment'
+    })
+
+    expect(payment.status).to.equal(201)
+    expect(payment.body.fact.actorId).to.equal(ids.salespersonUser)
+  })
+
+  it('S-05 ownership denial: a Preventista cannot mutate another user’s sale', async () => {
     const { ids, businessDate } = PHASE0_CONTRACT_V1
     const response = await post(tokens['fixture-salesperson'], `/commercialFact/sales/${ids.otherSale}/payment`, {
       businessDate,
@@ -67,7 +84,7 @@ describe('Phase 0 — RBAC contract', () => {
     expect(await CommercialFactModel.countDocuments({ aggregateId: ids.otherSale })).to.equal(0)
   })
 
-  it('S-08: Administración confirms payment for a sale created by a Preventista', async () => {
+  it('S-08a: Administración confirms payment for a sale created by a Preventista', async () => {
     const { ids, businessDate } = PHASE0_CONTRACT_V1
     const response = await post(tokens['fixture-admin'], `/commercialFact/sales/${ids.sale}/payment`, {
       businessDate,
@@ -78,7 +95,24 @@ describe('Phase 0 — RBAC contract', () => {
     expect(response.body.fact.actorId).to.equal(ids.adminUser)
   })
 
-  it('S-20a/S-20b: roles without refund permission are denied without a financial mutation', async () => {
+  it('S-08b: Administración confirms payment for a sale created by Administración', async () => {
+    const { ids, businessDate, saleTotal } = PHASE0_CONTRACT_V1
+    const sale = await require('../../src/models/sale').default.create({
+      estado: 'Pendiente',
+      total: saleTotal,
+      user: ids.adminUser
+    })
+
+    const response = await post(tokens['fixture-admin'], `/commercialFact/sales/${sale._id}/payment`, {
+      businessDate,
+      idempotencyKey: 'admin-created-sale-payment'
+    })
+
+    expect(response.status).to.equal(201)
+    expect(response.body.fact.actorId).to.equal(ids.adminUser)
+  })
+
+  it('S-20/S-20a: Repartidor and Preventista are denied a refund without a financial mutation', async () => {
     const { ids, businessDate } = PHASE0_CONTRACT_V1
     const body = {
       amount: 100,
@@ -95,7 +129,7 @@ describe('Phase 0 — RBAC contract', () => {
     expect(await CommercialFactModel.countDocuments({ type: 'SALE_REFUND' })).to.equal(0)
   })
 
-  it('S-25: a Preventista cannot create a compensatory Stock adjustment', async () => {
+  it('S-25a: a Preventista cannot adjust Stock after a complete purchase receipt', async () => {
     const { ids, businessDate, buyQuantity } = PHASE0_CONTRACT_V1
     const receipt = await post(tokens['fixture-admin'], `/commercialFact/buys/${ids.buy}/receipt`, {
       businessDate,
