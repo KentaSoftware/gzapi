@@ -5,12 +5,12 @@ import { deleteItem, getItem, getItems, createItem, updateItem } from '../contro
 
 const router = Router()
 
-router.get('/', checkJwt, checkPermission('read_role'), getItems)
-router.get('/:id', checkJwt, checkPermission('read_role'), getItem)
-router.post('/skip', checkJwt, checkPermission('read_role'), getItems)
-router.post('/search', checkJwt, checkPermission('read_role'), getItems)
-router.post('/', checkJwt, checkPermission('create_role'), createItem)
-router.patch('/:id', checkJwt, checkPermission('update_role'), updateItem)
-router.delete('/:id', checkJwt, checkPermission('delete_role'), deleteItem)
+router.get('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_role')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.get('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_role')(req, res, next) }, (req, res) => { void getItem(req, res) })
+router.post('/skip', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_role')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.post('/search', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_role')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.post('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_role')(req, res, next) }, (req, res) => { void createItem(req, res) })
+router.patch('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('update_role')(req, res, next) }, (req, res) => { void updateItem(req, res) })
+router.delete('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('delete_role')(req, res, next) }, (req, res) => { void deleteItem(req, res) })
 
 export { router }

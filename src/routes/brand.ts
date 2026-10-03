@@ -5,10 +5,10 @@ import { checkPermission } from '../middleware/checkPermission'
 
 const router = Router()
 
-router.get('/', checkJwt, checkPermission('read_product'), getItems)
-router.get('/:id', checkJwt, checkPermission('read_product'), getItem)
-router.post('/', checkJwt, checkPermission('create_product'), postItem)
-router.patch('/:id', checkJwt, checkPermission('update_product'), uptdateItem)
-router.delete('/:id', checkJwt, checkPermission('delete_product'), deleteItem)
+router.get('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.get('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void getItem(req, res) })
+router.post('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_product')(req, res, next) }, (req, res) => { void postItem(req, res) })
+router.patch('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('update_product')(req, res, next) }, (req, res) => { void uptdateItem(req, res) })
+router.delete('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('delete_product')(req, res, next) }, deleteItem)
 
 export { router }

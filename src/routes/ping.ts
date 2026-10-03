@@ -3,6 +3,6 @@ import { getItem } from '../controllers/ping'
 
 const router = Router()
 
-router.get('/', getItem)
+router.get('/', (req, res) => { void getItem(req, res) })
 
 export { router }

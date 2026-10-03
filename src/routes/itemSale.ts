@@ -5,12 +5,12 @@ import { checkPermission } from '../middleware/checkPermission'
 
 const router = Router()
 
-router.get('/', checkJwt, checkPermission('read_sale'), getItems)
-router.get('/:id', checkJwt, checkPermission('read_sale'), getItem)
-router.post('/', checkJwt, checkPermission('create_sale'), postItem)
-router.patch('/:id', checkJwt, checkPermission('update_sale'), patchItem)
-router.delete('/:id', checkJwt, checkPermission('delete_sale'), deleteItem)
-router.get('/listbuy/:start/:end/:prov', checkJwt, checkPermission('read_sale'), getListBuyByDateRangeCtrl)
-router.get('/listbuyavg/:prov', checkJwt, checkPermission('read_sale'), getListBuyAvgCtrl)
+router.get('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_sale')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.get('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_sale')(req, res, next) }, (req, res) => { void getItem(req, res) })
+router.post('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_sale')(req, res, next) }, (req, res) => { void postItem(req, res) })
+router.patch('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('update_sale')(req, res, next) }, (req, res) => { void patchItem(req, res) })
+router.delete('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('delete_sale')(req, res, next) }, (req, res) => { void deleteItem(req, res) })
+router.get('/listbuy/:start/:end/:prov', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_sale')(req, res, next) }, (req, res) => { void getListBuyByDateRangeCtrl(req, res) })
+router.get('/listbuyavg/:prov', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_sale')(req, res, next) }, (req, res) => { void getListBuyAvgCtrl(req, res) })
 
 export { router }

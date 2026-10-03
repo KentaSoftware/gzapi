@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import { NextFunction, Request, Response, Router } from 'express'
 import { checkJwt } from '../middleware/session'
 import { checkPermission } from '../middleware/checkPermission'
 import {
@@ -23,12 +23,12 @@ const router = Router()
  */
 router.post(
   '/upload',
-  checkJwt,
-  checkPermission('create_buy'),
+  (req: Request, res: Response, next: NextFunction) => { void checkJwt(req, res, next) },
+  (req: Request, res: Response, next: NextFunction) => { void checkPermission('create_buy')(req, res, next) },
   uploadPurchaseDoc, // Multer middleware
   handleUploadError, // Manejo de errores de multer
   validateFileExists, // Validar que archivo existe
-  uploadController // Controller
+  (req: Request, res: Response) => { void uploadController(req, res) } // Controller
 )
 
 /**
@@ -39,9 +39,9 @@ router.post(
  */
 router.get(
   '/',
-  checkJwt,
-  checkPermission('read_buy'),
-  listDrafts
+  (req, res, next) => { void checkJwt(req, res, next) },
+  (req, res, next) => { void checkPermission('read_buy')(req, res, next) },
+  (req, res) => { void listDrafts(req, res) }
 )
 
 /**
@@ -51,9 +51,9 @@ router.get(
  */
 router.get(
   '/:draftId',
-  checkJwt,
-  checkPermission('read_buy'),
-  getDraftStatus
+  (req, res, next) => { void checkJwt(req, res, next) },
+  (req, res, next) => { void checkPermission('read_buy')(req, res, next) },
+  (req, res) => { void getDraftStatus(req, res) }
 )
 
 /**
@@ -64,9 +64,9 @@ router.get(
  */
 router.post(
   '/:draftId/confirm',
-  checkJwt,
-  checkPermission('create_buy'),
-  confirmPurchaseDoc
+  (req, res, next) => { void checkJwt(req, res, next) },
+  (req, res, next) => { void checkPermission('create_buy')(req, res, next) },
+  (req, res) => { void confirmPurchaseDoc(req, res) }
 )
 
 export { router }

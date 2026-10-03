@@ -16,25 +16,17 @@ import {
 const router = Router()
 
 // Sale lifecycle — gated by sale access (confirm_sale_payment) plus ownership.
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/sales/:saleId/payment', checkJwt, requireContractsEnabled, checkPermission('confirm_sale_payment'), confirmSalePayment)
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/sales/:saleId/delivery', checkJwt, requireContractsEnabled, checkPermission('confirm_sale_payment'), recordSaleDelivery)
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/sales/:saleId/cancellation', checkJwt, requireContractsEnabled, checkPermission('confirm_sale_payment'), recordSaleCancellation)
+router.post('/sales/:saleId/payment', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void confirmSalePayment(req, res) })
+router.post('/sales/:saleId/delivery', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void recordSaleDelivery(req, res) })
+router.post('/sales/:saleId/cancellation', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void recordSaleCancellation(req, res) })
 
 // Sale money movement and physical adjustment.
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/sales/:saleId/refunds', checkJwt, requireContractsEnabled, checkPermission('refund_sale'), recordSaleRefund)
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/sales/:saleId/physical-return', checkJwt, requireContractsEnabled, checkPermission('adjust_stock'), applyPhysicalReturn)
+router.post('/sales/:saleId/refunds', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('refund_sale')(req, res, next) }, (req, res) => { void recordSaleRefund(req, res) })
+router.post('/sales/:saleId/physical-return', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('adjust_stock')(req, res, next) }, (req, res) => { void applyPhysicalReturn(req, res) })
 
 // Purchase lifecycle and physical adjustment.
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/buys/:buyId/payment', checkJwt, requireContractsEnabled, checkPermission('confirm_purchase_payment'), confirmPurchasePayment)
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/buys/:buyId/receipt', checkJwt, requireContractsEnabled, checkPermission('receive_purchase'), receivePurchase)
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/buys/:buyId/adjustments', checkJwt, requireContractsEnabled, checkPermission('adjust_stock'), applyPurchaseAdjustment)
+router.post('/buys/:buyId/payment', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_purchase_payment')(req, res, next) }, (req, res) => { void confirmPurchasePayment(req, res) })
+router.post('/buys/:buyId/receipt', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('receive_purchase')(req, res, next) }, (req, res) => { void receivePurchase(req, res) })
+router.post('/buys/:buyId/adjustments', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('adjust_stock')(req, res, next) }, (req, res) => { void applyPurchaseAdjustment(req, res) })
 
 export { router }

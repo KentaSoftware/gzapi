@@ -22,10 +22,10 @@ import {
 
 const router = Router()
 
-router.get('/summary', checkJwt, checkPermission('read_cashflow'), getSummary)
-router.get('/timeline', checkJwt, checkPermission('read_cashflow'), getTimeline)
-router.get('/movements', checkJwt, checkPermission('read_cashflow'), getMovements)
-router.get('/config', checkJwt, checkPermission('read_cashflow'), getConfig)
-router.put('/config', checkJwt, checkPermission('configure_cashflow'), updateConfig)
+router.get('/summary', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_cashflow')(req, res, next) }, (req, res) => { void getSummary(req, res) })
+router.get('/timeline', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_cashflow')(req, res, next) }, (req, res) => { void getTimeline(req, res) })
+router.get('/movements', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_cashflow')(req, res, next) }, (req, res) => { void getMovements(req, res) })
+router.get('/config', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_cashflow')(req, res, next) }, (req, res) => { void getConfig(req, res) })
+router.put('/config', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('configure_cashflow')(req, res, next) }, (req, res) => { void updateConfig(req, res) })
 
 export { router }

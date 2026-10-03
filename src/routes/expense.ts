@@ -13,12 +13,12 @@ import {
 
 const router = Router()
 
-router.post('/', checkJwt, checkPermission('create_expense'), createExpense)
-router.get('/kpi/total', checkJwt, checkPermission('read_expense'), getExpensesKPI)
-router.get('/kpi/simple-result', checkJwt, checkPermission('read_expense'), getSimpleResultKPI)
-router.get('/', checkJwt, checkPermission('read_expense'), listExpenses)
-router.get('/:id', checkJwt, checkPermission('read_expense'), getExpense)
-router.patch('/:id', checkJwt, checkPermission('update_expense'), updateExpense)
-router.delete('/:id', checkJwt, checkPermission('delete_expense'), deleteExpense)
+router.post('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_expense')(req, res, next) }, (req, res) => { void createExpense(req, res) })
+router.get('/kpi/total', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_expense')(req, res, next) }, (req, res) => { void getExpensesKPI(req, res) })
+router.get('/kpi/simple-result', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_expense')(req, res, next) }, (req, res) => { void getSimpleResultKPI(req, res) })
+router.get('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_expense')(req, res, next) }, (req, res) => { void listExpenses(req, res) })
+router.get('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_expense')(req, res, next) }, (req, res) => { void getExpense(req, res) })
+router.patch('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('update_expense')(req, res, next) }, (req, res) => { void updateExpense(req, res) })
+router.delete('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('delete_expense')(req, res, next) }, (req, res) => { void deleteExpense(req, res) })
 
 export { router }

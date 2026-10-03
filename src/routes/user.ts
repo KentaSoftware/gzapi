@@ -5,12 +5,12 @@ import { deleteItem, getItem, getItems, updateItem, getAllItems } from '../contr
 
 const router = Router()
 
-router.get('/', checkJwt, checkPermission('read_user'), getItems)
-router.get('/:id', checkJwt, checkPermission('read_user'), getItem)
-router.get('/get/all', checkJwt, checkPermission('read_user'), getAllItems)
-router.post('/skip', checkJwt, checkPermission('read_user'), getItems)
-router.post('/search', checkJwt, checkPermission('read_user'), getItems)
-router.patch('/:id', checkJwt, checkPermission('update_user'), updateItem)
-router.delete('/:id', checkJwt, checkPermission('delete_user'), deleteItem)
+router.get('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_user')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.get('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_user')(req, res, next) }, (req, res) => { void getItem(req, res) })
+router.get('/get/all', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_user')(req, res, next) }, (req, res) => { void getAllItems(req, res) })
+router.post('/skip', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_user')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.post('/search', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_user')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.patch('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('update_user')(req, res, next) }, (req, res) => { void updateItem(req, res) })
+router.delete('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('delete_user')(req, res, next) }, (req, res) => { void deleteItem(req, res) })
 
 export { router }
