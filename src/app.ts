@@ -1,44 +1,32 @@
 import 'dotenv/config'
-import express from 'express'
+import express, { Express } from 'express'
 import cors from 'cors'
-import { router } from './routes'
-import db from './config/mongo'
-import { init } from './socket'
 import path from 'path'
-import { seedDatabase } from './services/seed'
+import { loadRoutes } from './routes/index'
 import { requestLogger } from './middleware/requestLogger'
 
-const PORT = process.env.PORT ?? 3002
-const app = express()
+// Under CommonJS the public directory sits next to the compiled/source root.
+// The native ES module loader used by the test runner has no `__dirname`, so
+// fall back to the process CWD, which is the repository root for every npm script.
+const publicDirectory = typeof __dirname === 'string'
+  ? path.join(__dirname, '..', 'public')
+  : path.join(process.cwd(), 'public')
 
-app.use(cors())
-app.use('/image', express.static(path.join(__dirname, '..', '/public')))
-console.log(path.join(__dirname, '..', '/public'))
-app.use(express.json())
+const createApp = async (): Promise<Express> => {
+  const app = express()
 
-// Middleware de logging para todas las requests
-app.use(requestLogger)
+  app.use(cors())
+  app.use('/image', express.static(publicDirectory))
+  console.log(publicDirectory)
+  app.use(express.json())
 
-app.use(router)
+  // Middleware de logging para todas las requests
+  app.use(requestLogger)
 
-db().then(async () => {
-  console.log('Conexion lista')
-  try {
-    await seedDatabase();
-    console.log('✅ Database seeded');
-  } catch (seedError: any) {
-    console.warn('⚠️ Error durante seed (no es crítico):', seedError?.message || seedError);
-  }
+  const router = await loadRoutes()
+  app.use(router)
+
+  return app
 }
-).catch((e: any) => {
-  console.error('Ocurrio un error en la conexion con la bd', e);
-  process.exit(1);
-})
 
-const server = app.listen(PORT, () => {
-  console.log(`Listening on port ${PORT}...`)
-  const io = init(server)
-  io.on('connection', () => {
-    console.log('Client connected!')
-  })
-})
+export { createApp }

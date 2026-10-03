@@ -1,0 +1,3 @@
+const PHASE_0_CONTRACTS_ENABLED = process.env.PHASE_0_CONTRACTS_ENABLED === 'true'
+
+export { PHASE_0_CONTRACTS_ENABLED }

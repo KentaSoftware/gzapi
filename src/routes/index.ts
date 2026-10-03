@@ -1,56 +1,50 @@
 import { Router } from 'express'
 import { readdirSync } from 'fs'
+import path from 'path'
 
-const PATH_ROUTER = `${__dirname}`
-const router = Router()
+// Under CommonJS (ts-node / compiled build) the routes live next to this file.
+// The native ES module loader used by the test runner has no `__dirname`, so
+// fall back to the source routes directory relative to the process CWD.
+const routesDirectory = typeof __dirname === 'string'
+  ? __dirname
+  : path.join(process.cwd(), 'src', 'routes')
 
 const cleanFileName = (fileName: string): string => {
   const file = fileName.split('.').shift()
   return file ?? ''
 }
 
-readdirSync(PATH_ROUTER).map((fileName): string => {
-  const cleanName = cleanFileName(fileName)
-
-  if (cleanName !== 'index') {
-    import(`./${cleanName}`).then((moduleRouter) => {
-      router.use(`/${cleanName}`, moduleRouter.router)
-    }).catch((e) => console.log('Ocurrio un error en la ruta', e))
+const loadRouteModule = async (name: string): Promise<any> => {
+  try {
+    return await import(`./${name}`)
+  } catch (error) {
+    // The native ESM loader requires an explicit extension; CommonJS resolves
+    // the extensionless form directly.
+    return await import(`./${name}.ts`)
   }
-  return cleanName
-})
+}
 
-/* import { router as authRouter } from './auth';
-import { router as backupRouter } from './backup';
-import { router as brandRouter } from './brand';
-import { router as buyRouter } from './buy';
-import { router as categorieRouter } from './categorie';
-import { router as cityRouter } from './city';
-import { router as clientRouter } from './client';
-import { router as datasetRouter } from './dataset';
-import { router as itemBuyRouter } from './itemBuy';
-import { router as itemSaleRouter } from './itemSale';
-import { router as logRouter } from './log';
-import { router as productRouter } from './product';
-import { router as providerRouter } from './provider';
-import { router as saleRouter } from './sale';
+const loadRoutes = async (): Promise<Router> => {
+  const router = Router()
 
-const router = Router();
+  const routeNames = [...new Set(
+    readdirSync(routesDirectory)
+      .map(cleanFileName)
+      .filter((name) => name !== '' && name !== 'index')
+  )]
 
-// Define las rutas
-router.use('/auth', authRouter);
-router.use('/backup', backupRouter);
-router.use('/brand', brandRouter);
-router.use('/buy', buyRouter);
-router.use('/categorie', categorieRouter);
-router.use('/city', cityRouter);
-router.use('/client', clientRouter);
-router.use('/dataset', datasetRouter);
-router.use('/itemBuy', itemBuyRouter);
-router.use('/itemSale', itemSaleRouter);
-router.use('/log', logRouter);
-router.use('/product', productRouter);
-router.use('/provider', providerRouter);
-router.use('/sale', saleRouter); */
+  await Promise.all(
+    routeNames.map(async (name) => {
+      try {
+        const moduleRouter = await loadRouteModule(name)
+        router.use(`/${name}`, moduleRouter.router)
+      } catch (error) {
+        console.log('Ocurrio un error en la ruta', error)
+      }
+    })
+  )
 
-export { router }
+  return router
+}
+
+export { loadRoutes }
