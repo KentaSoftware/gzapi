@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "node ./dist/server.js",
     "test": "cross-env TS_NODE_TRANSPILE_ONLY=1 NODE_OPTIONS=--no-strip-types mocha -r ts-node/register \"test/**/*.test.ts\" --timeout 10000",
+    "test:phase0:performance": "cross-env TS_NODE_TRANSPILE_ONLY=1 NODE_OPTIONS=--no-strip-types mocha -r ts-node/register \"test/phase0/performance.test.ts\" --timeout 60000",
     "migration:phase0:preflight": "node -r ts-node/register migrations/phase-0-001-preflight.ts",
     "migration:phase0:backup": "node -r ts-node/register migrations/phase-0-002-backup-verify.ts",
     "migration:phase0:indexes": "node -r ts-node/register migrations/phase-0-003-create-commercial-fact-indexes.ts",
