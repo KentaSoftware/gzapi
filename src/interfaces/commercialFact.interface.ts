@@ -51,11 +51,17 @@ export interface CommercialFactInput {
   reason?: string
   amount?: number
   lines?: CommercialFactLine[]
+  sourceFactId?: string
 }
 
 export interface CommercialFactResult {
   fact: CommercialFact
   replayed: boolean
+}
+
+export interface CommercialFactRequestContext {
+  actorId: string
+  correlationId?: string
 }
 
 export interface StockPort {
@@ -73,4 +79,14 @@ export interface FinancePort {
 
 export interface RoutePlanReader {
   readSavedPlan: (planId: string) => Promise<unknown>
+}
+
+export class CommercialFactError extends Error {
+  readonly code: CommercialErrorCode
+
+  constructor (code: CommercialErrorCode, message: string) {
+    super(message)
+    this.name = 'CommercialFactError'
+    this.code = code
+  }
 }
