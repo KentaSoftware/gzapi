@@ -13,7 +13,8 @@ const BASE_PERMISSIONS = [
   'read_dataset',
   'read_log',
   'catalog_read', 'catalog_write',
-  'read_cashflow', 'configure_cashflow'
+  'read_cashflow', 'configure_cashflow',
+  'confirm_client_location'
 ]
 
 const PHASE_0_ROLE_GRANTS = [
@@ -21,14 +22,14 @@ const PHASE_0_ROLE_GRANTS = [
     name: 'Propietario',
     permissions: [
       'confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment',
-      'receive_purchase', 'adjust_stock', 'read_route_plan'
+      'receive_purchase', 'adjust_stock', 'read_route_plan', 'confirm_client_location'
     ]
   },
   {
     name: 'Administración',
     permissions: [
       'confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment',
-      'receive_purchase', 'adjust_stock', 'read_route_plan'
+      'receive_purchase', 'adjust_stock', 'read_route_plan', 'confirm_client_location'
     ]
   },
   {

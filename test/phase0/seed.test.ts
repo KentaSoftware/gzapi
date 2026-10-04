@@ -7,8 +7,8 @@ import { seedDatabase } from '../../src/services/seed'
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_test'
 
 const PHASE_0_GRANTS = {
-  Propietario: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan'],
-  Administración: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan'],
+  Propietario: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan', 'confirm_client_location'],
+  Administración: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan', 'confirm_client_location'],
   Preventista: ['confirm_sale_payment'],
   Repartidor: ['read_route_plan']
 }

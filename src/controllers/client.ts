@@ -1,9 +1,20 @@
 import { Request, Response } from 'express'
-import { handleHttp } from '../utils/error.handle'
+import { handleHttp, sendErrorEnvelope } from '../utils/error.handle'
 import { Types } from 'mongoose'
 import { JwtPayload } from 'jsonwebtoken'
 import { emitSocket } from '../socket'
-import { getClient, getClients, getClientSearch, insertClient, updateClient } from '../services/client'
+import {
+  ClientNotFoundError,
+  confirmLocation,
+  geocodeClient,
+  getClient,
+  getClients,
+  getClientSearch,
+  insertClient,
+  updateClient
+} from '../services/client'
+import { GeocodingProviderUnavailableError } from '../services/geocodingProvider'
+import { clientLocationConfirmationSchema, geocodeRequestSchema } from '../schemas/clientGeocoding'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
@@ -65,4 +76,59 @@ const deleteItem = (_: Request, res: Response): void => {
   }
 }
 
-export { getItem, getItems, uptdateItem, postItem, deleteItem }
+const clientObjectId = (id: string): Types.ObjectId | undefined => {
+  if (!Types.ObjectId.isValid(id)) return undefined
+  return new Types.ObjectId(id)
+}
+
+const geocodeItem = async ({ params, body }: RequestExt, res: Response): Promise<void> => {
+  const id = clientObjectId(params.id)
+  const request = geocodeRequestSchema.safeParse(body)
+  if (id === undefined || !request.success) {
+    sendErrorEnvelope(res, 400, 'INVALID_LOCATION_INPUT', 'Location input is invalid')
+    return
+  }
+
+  try {
+    const candidates = await geocodeClient(id, request.data.address)
+    res.send({ candidates })
+  } catch (error: unknown) {
+    if (error instanceof ClientNotFoundError) {
+      sendErrorEnvelope(res, 404, 'CLIENT_NOT_FOUND', 'Client was not found')
+      return
+    }
+    if (error instanceof GeocodingProviderUnavailableError) {
+      sendErrorEnvelope(res, 503, 'GEOCODING_PROVIDER_UNAVAILABLE', 'Geocoding provider is unavailable')
+      return
+    }
+    if (error instanceof Error && error.message === 'Client address is required') {
+      sendErrorEnvelope(res, 400, 'INVALID_LOCATION_INPUT', 'Client address is required')
+      return
+    }
+    handleHttp(res, 'ERROR_GEOCODE_CLIENT', error)
+  }
+}
+
+const confirmLocationItem = async ({ params, body }: RequestExt, res: Response): Promise<void> => {
+  const id = clientObjectId(params.id)
+  const confirmation = clientLocationConfirmationSchema.safeParse(body)
+  const userId = res.locals.userId
+  if (id === undefined || !confirmation.success || typeof userId !== 'string' || !Types.ObjectId.isValid(userId)) {
+    sendErrorEnvelope(res, 400, 'INVALID_LOCATION_INPUT', 'Location input is invalid')
+    return
+  }
+
+  try {
+    const client = await confirmLocation(id, confirmation.data, userId)
+    emitSocket('client', { action: 'update', data: client })
+    res.send(client)
+  } catch (error: unknown) {
+    if (error instanceof ClientNotFoundError) {
+      sendErrorEnvelope(res, 404, 'CLIENT_NOT_FOUND', 'Client was not found')
+      return
+    }
+    handleHttp(res, 'ERROR_CONFIRM_CLIENT_LOCATION', error)
+  }
+}
+
+export { confirmLocationItem, deleteItem, geocodeItem, getItem, getItems, uptdateItem, postItem }
