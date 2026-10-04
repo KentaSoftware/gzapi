@@ -2,8 +2,9 @@ import { expect } from 'chai'
 import DeliveryZoneModel from '../../src/models/deliveryZone'
 import RoutePlanModel from '../../src/models/routePlan'
 import RoutingConfigModel from '../../src/models/routingConfig'
+import SaleModel from '../../src/models/sale'
 import { isRouteOptimizationEnabled } from '../../src/config/phase0'
-import { routePlanSnapshotSchema } from '../../src/schemas/routeOptimization'
+import { routePlanSnapshotSchema, saleDeliverySchema } from '../../src/schemas/routeOptimization'
 
 describe('Route optimization data contracts', () => {
   const originalRouteOptimizationFlag = process.env.ROUTE_OPTIMIZATION_ENABLED
@@ -69,5 +70,29 @@ describe('Route optimization data contracts', () => {
       expect(error).to.be.an('error')
       expect((error as Error).message).to.equal('Route plans are append-only')
     }
+  })
+
+  it('validates delivery states without defaulting historical sales into delivery workflows', async () => {
+    const sale = {
+      estado: 'Pendiente',
+      total: 100,
+      user: '507f1f77bcf86cd799439011'
+    }
+
+    expect(await SaleModel.validate(sale)).to.not.have.property('delivery')
+    expect(saleDeliverySchema.safeParse({ status: 'PENDING', serviceDate: new Date() }).success).to.equal(true)
+    expect(saleDeliverySchema.safeParse({ status: 'DELIVERED' }).success).to.equal(false)
+    expect(saleDeliverySchema.safeParse({ status: 'DELIVERED', deliveredAt: new Date() }).success).to.equal(true)
+
+    let pendingWithoutClientError: unknown
+    try {
+      await new SaleModel({
+        ...sale,
+        delivery: { status: 'PENDING', serviceDate: new Date() }
+      }).validate()
+    } catch (error: unknown) {
+      pendingWithoutClientError = error
+    }
+    expect(pendingWithoutClientError).to.be.an('error')
   })
 })

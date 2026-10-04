@@ -1,6 +1,30 @@
 import { z } from 'zod'
+import { SALE_DELIVERY_STATUS } from '../interfaces/sale.interface'
 
 const coordinateSchema = z.number().finite()
+
+const saleDeliverySchema = z.object({
+  status: z.enum([SALE_DELIVERY_STATUS.PENDING, SALE_DELIVERY_STATUS.DELIVERED]),
+  serviceDate: z.date().optional(),
+  deliveredAt: z.date().optional(),
+  notes: z.string().trim().optional()
+}).superRefine((delivery, context) => {
+  if (delivery.status === SALE_DELIVERY_STATUS.PENDING && delivery.serviceDate === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'PENDING delivery requires serviceDate',
+      path: ['serviceDate']
+    })
+  }
+
+  if (delivery.status === SALE_DELIVERY_STATUS.DELIVERED && delivery.deliveredAt === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'DELIVERED delivery requires deliveredAt',
+      path: ['deliveredAt']
+    })
+  }
+})
 
 const routingDepotSchema = z.object({
   name: z.string().trim().min(1),
@@ -67,5 +91,6 @@ export {
   routePlanSnapshotSchema,
   routePlanStopSchema,
   routePlanZoneSnapshotSchema,
-  routingDepotSchema
+  routingDepotSchema,
+  saleDeliverySchema
 }

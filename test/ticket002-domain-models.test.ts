@@ -28,6 +28,17 @@ describe('TICKET-002: Sale interface', () => {
     // At runtime, just assert the module loaded cleanly.
     expect(SaleModel).to.not.equal(undefined)
   })
+
+  it('supports an optional delivery subdocument with the route-optimization fields', () => {
+    const paths = SaleModel.schema.paths
+    const deliveryPaths = paths.delivery.schema.paths
+
+    expect(paths).to.have.property('delivery')
+    expect(deliveryPaths.status.enumValues).to.include.members(['PENDING', 'DELIVERED'])
+    expect(deliveryPaths.serviceDate.instance).to.equal('Date')
+    expect(deliveryPaths.deliveredAt.instance).to.equal('Date')
+    expect(deliveryPaths.notes.instance).to.equal('String')
+  })
 })
 
 // ─── Buy interface structural test ───────────────────────────────────────────

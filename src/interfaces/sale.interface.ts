@@ -1,5 +1,19 @@
 import { ObjectId, Types } from 'mongoose'
 
+export const SALE_DELIVERY_STATUS = {
+  PENDING: 'PENDING',
+  DELIVERED: 'DELIVERED'
+} as const
+
+export type SaleDeliveryStatus = (typeof SALE_DELIVERY_STATUS)[keyof typeof SALE_DELIVERY_STATUS]
+
+export interface SaleDelivery {
+  status: SaleDeliveryStatus
+  serviceDate?: Date
+  deliveredAt?: Date
+  notes?: string
+}
+
 export interface Sale {
   _id: Types.ObjectId
   estado: string
@@ -11,6 +25,7 @@ export interface Sale {
   porcentaje?: number
   idCliente?: ObjectId
   paidAt?: Date
+  delivery?: SaleDelivery
 }
 
 export interface ItemSale {
