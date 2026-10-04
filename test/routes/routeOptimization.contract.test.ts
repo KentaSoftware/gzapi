@@ -1,0 +1,73 @@
+import { expect } from 'chai'
+import DeliveryZoneModel from '../../src/models/deliveryZone'
+import RoutePlanModel from '../../src/models/routePlan'
+import RoutingConfigModel from '../../src/models/routingConfig'
+import { isRouteOptimizationEnabled } from '../../src/config/phase0'
+import { routePlanSnapshotSchema } from '../../src/schemas/routeOptimization'
+
+describe('Route optimization data contracts', () => {
+  const originalRouteOptimizationFlag = process.env.ROUTE_OPTIMIZATION_ENABLED
+
+  afterEach(() => {
+    if (originalRouteOptimizationFlag === undefined) delete process.env.ROUTE_OPTIMIZATION_ENABLED
+    else process.env.ROUTE_OPTIMIZATION_ENABLED = originalRouteOptimizationFlag
+  })
+
+  it('fails closed unless explicitly enabled', () => {
+    delete process.env.ROUTE_OPTIMIZATION_ENABLED
+    expect(isRouteOptimizationEnabled()).to.equal(false)
+
+    process.env.ROUTE_OPTIMIZATION_ENABLED = 'TRUE'
+    expect(isRouteOptimizationEnabled()).to.equal(false)
+
+    process.env.ROUTE_OPTIMIZATION_ENABLED = 'true'
+    expect(isRouteOptimizationEnabled()).to.equal(true)
+  })
+
+  it('enforces unique zone and singleton configuration indexes', () => {
+    const deliveryZoneIndexes = DeliveryZoneModel.schema.indexes()
+    const routingConfigIndexes = RoutingConfigModel.schema.indexes()
+
+    expect(deliveryZoneIndexes.some(([keys, options]) => keys.code === 1 && options.name === 'idx_unique_delivery_zone_code' && options.unique === true)).to.equal(true)
+    expect(deliveryZoneIndexes.some(([keys, options]) => keys.normalizedName === 1 && options.name === 'idx_unique_delivery_zone_normalized_name' && options.unique === true)).to.equal(true)
+    expect(routingConfigIndexes.some(([keys, options]) => keys.key === 1 && options.name === 'idx_unique_routing_config_key' && options.unique === true)).to.equal(true)
+  })
+
+  it('accepts complete route-plan snapshots and rejects incomplete snapshots', () => {
+    const snapshot = {
+      planningDate: new Date('2026-10-04T00:00:00.000Z'),
+      zoneSnapshot: { code: 'NORTE', normalizedName: 'norte', name: 'Norte' },
+      selectedSaleIds: ['sale-1'],
+      depot: { name: 'Main depot', latitude: -34.6, longitude: -58.4 },
+      stops: [{ saleId: 'sale-1', sequence: 1, latitude: -34.61, longitude: -58.41 }],
+      segments: [{ fromStopSequence: 0, toStopSequence: 1, distanceMeters: 1000, durationSeconds: 300 }],
+      metrics: { distanceMeters: 1000, durationSeconds: 300, stopCount: 1 },
+      algorithm: { name: 'nearest-neighbor', version: '1.0.0', provider: 'internal' },
+      routingConfigRevision: 1,
+      warnings: [],
+      audit: { createdBy: 'user-1', createdAt: new Date('2026-10-04T10:00:00.000Z') }
+    }
+
+    expect(routePlanSnapshotSchema.safeParse(snapshot).success).to.equal(true)
+    expect(routePlanSnapshotSchema.safeParse({ ...snapshot, selectedSaleIds: [] }).success).to.equal(false)
+  })
+
+  it('indexes route plans for zone/date and creator/date while keeping snapshots immutable', () => {
+    const routePlanIndexes = RoutePlanModel.schema.indexes()
+
+    expect(routePlanIndexes.some(([keys, options]) => keys['zoneSnapshot.code'] === 1 && keys.planningDate === 1 && options.name === 'idx_route_plan_zone_date')).to.equal(true)
+    expect(routePlanIndexes.some(([keys, options]) => keys['audit.createdBy'] === 1 && keys.createdAt === -1 && options.name === 'idx_route_plan_creator_date')).to.equal(true)
+    expect(RoutePlanModel.schema.path('planningDate').options.immutable).to.equal(true)
+    expect(RoutePlanModel.schema.path('selectedSaleIds').options.immutable).to.equal(true)
+  })
+
+  it('rejects route-plan updates to preserve append-only snapshots', async () => {
+    try {
+      await RoutePlanModel.updateOne({}, { $set: { warnings: ['recalculated'] } }).exec()
+      expect.fail('Expected RoutePlan update to be rejected')
+    } catch (error: unknown) {
+      expect(error).to.be.an('error')
+      expect((error as Error).message).to.equal('Route plans are append-only')
+    }
+  })
+})
