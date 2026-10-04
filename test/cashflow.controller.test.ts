@@ -12,10 +12,10 @@
  * TS_NODE_TRANSPILE_ONLY=1 is set by npm test; tsc is the type gate.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { expect } = require('chai')
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const sinon = require('sinon')
+import { expect } from 'chai'
+import sinon from 'sinon'
+import cashflowService from '../src/services/cashflow'
+import * as cashflowController from '../src/controllers/cashflow'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -32,19 +32,9 @@ function makeReq (overrides: object = {}): any {
 
 // ── Load module under test (after stubs are set up) ───────────────────────────
 
-// We import the service first so we can stub its methods before the
-// controller module caches the reference.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const cashflowService = require('../src/services/cashflow').default
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-let controller: any
 // Lazy-load after potential stub setup
-function getController (): any {
-  if (!controller) {
-    controller = require('../src/controllers/cashflow')
-  }
-  return controller
+function getController (): typeof cashflowController {
+  return cashflowController
 }
 
 // ─── REQ: Missing date params → 400 ─────────────────────────────────────────

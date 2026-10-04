@@ -4,8 +4,17 @@ import path from 'path'
 import fs from 'fs'
 
 // Configuración de límites y tipos permitidos
-const UPLOAD_MAX_SIZE = parseInt(process.env.UPLOAD_MAX_SIZE || '10485760', 10) // 10MB por defecto
-const ALLOWED_MIMES = (process.env.UPLOAD_ALLOWED_MIMES || 'image/jpeg,image/png,image/webp,application/pdf').split(',')
+const UPLOAD_MAX_SIZE_ENV = process.env.UPLOAD_MAX_SIZE
+const UPLOAD_MAX_SIZE = parseInt(
+  UPLOAD_MAX_SIZE_ENV != null && UPLOAD_MAX_SIZE_ENV !== '' ? UPLOAD_MAX_SIZE_ENV : '10485760',
+  10
+) // 10MB por defecto
+const ALLOWED_MIMES_ENV = process.env.UPLOAD_ALLOWED_MIMES
+const ALLOWED_MIMES = (
+  ALLOWED_MIMES_ENV != null && ALLOWED_MIMES_ENV !== ''
+    ? ALLOWED_MIMES_ENV
+    : 'image/jpeg,image/png,image/webp,application/pdf'
+).split(',')
 
 // Directorio de almacenamiento
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'purchase-docs')
@@ -108,10 +117,10 @@ export const handleUploadError = (
     return
   }
 
-  if (err) {
+  if (err != null) {
     res.status(400).json({
       success: false,
-      error: err.message || 'Error al procesar archivo'
+      error: err.message != null && err.message !== '' ? err.message : 'Error al procesar archivo'
     })
     return
   }
@@ -127,7 +136,7 @@ export const validateFileExists = (
   res: Response,
   next: NextFunction
 ): void => {
-  if (!req.file) {
+  if (req.file == null) {
     res.status(400).json({
       success: false,
       error: 'Archivo requerido',

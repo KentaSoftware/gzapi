@@ -18,7 +18,7 @@ const router = Router()
  * @desc    Obtiene todos los proveedores con su versión de catálogo
  * @access  Private (catalog_read)
  */
-router.get('/providers', checkJwt, checkPermission('catalog_read'), getAllProvidersWithVersion)
+router.get('/providers', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('catalog_read')(req, res, next) }, (req, res) => { void getAllProvidersWithVersion(req, res) })
 
 /**
  * @route   GET /catalog/version
@@ -26,7 +26,7 @@ router.get('/providers', checkJwt, checkPermission('catalog_read'), getAllProvid
  * @access  Private (catalog_read)
  * @query   providerId - ID del proveedor (required)
  */
-router.get('/version', checkJwt, checkPermission('catalog_read'), getCatalogVersion)
+router.get('/version', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('catalog_read')(req, res, next) }, (req, res) => { void getCatalogVersion(req, res) })
 
 /**
  * @route   GET /catalog/snapshot
@@ -37,7 +37,7 @@ router.get('/version', checkJwt, checkPermission('catalog_read'), getCatalogVers
  * @query   cursor - Cursor para paginación (último productId)
  * @query   version - Versión actual del cliente (para cache validation)
  */
-router.get('/snapshot', checkJwt, checkPermission('catalog_read'), getCatalogSnapshot)
+router.get('/snapshot', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('catalog_read')(req, res, next) }, (req, res) => { void getCatalogSnapshot(req, res) })
 
 /**
  * @route   GET /catalog/search
@@ -49,7 +49,7 @@ router.get('/snapshot', checkJwt, checkPermission('catalog_read'), getCatalogSna
  * @query   sku - Buscar por SKU (futuro)
  * @query   limit - Cantidad máxima de resultados (default: 20, max: 100)
  */
-router.get('/search', checkJwt, checkPermission('catalog_read'), searchProducts)
+router.get('/search', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('catalog_read')(req, res, next) }, (req, res) => { void searchProducts(req, res) })
 
 /**
  * @route   POST /catalog/search/batch
@@ -61,7 +61,7 @@ router.get('/search', checkJwt, checkPermission('catalog_read'), searchProducts)
  * @body    topK - Cantidad máxima de candidatos por query (default: 20, max: 50)
  * @body    minCandidates - Mínimo de candidatos antes de fallback global (default: 10)
  */
-router.post('/search/batch', checkJwt, checkPermission('catalog_read'), batchSearch)
+router.post('/search/batch', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('catalog_read')(req, res, next) }, (req, res) => { void batchSearch(req, res) })
 
 /**
  * @route   POST /catalog/aliases
@@ -73,7 +73,7 @@ router.post('/search/batch', checkJwt, checkPermission('catalog_read'), batchSea
  * @body    productId - ID del producto al que apunta (required)
  * @body    confidence - Confianza 0-1 (optional, default: 0.95)
  */
-router.post('/aliases', checkJwt, checkPermission('catalog_write'), createOrUpdateAlias)
+router.post('/aliases', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('catalog_write')(req, res, next) }, (req, res) => { void createOrUpdateAlias(req, res) })
 
 /**
  * @route   POST /catalog/matches/confirm
@@ -89,6 +89,6 @@ router.post('/aliases', checkJwt, checkPermission('catalog_write'), createOrUpda
  * @body    detected - Datos detectados: { barcode?, unit?, qty? } (optional)
  * @body    doc - Info del documento: { draftId?, buyId?, date?, total? } (optional)
  */
-router.post('/matches/confirm', checkJwt, checkPermission('catalog_write'), confirmMatch)
+router.post('/matches/confirm', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('catalog_write')(req, res, next) }, (req, res) => { void confirmMatch(req, res) })
 
 export { router }

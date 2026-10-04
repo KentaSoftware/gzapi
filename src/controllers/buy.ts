@@ -149,7 +149,7 @@ const createBuyExpense = async ({ params, body, user }: RequestExt, res: Respons
 
     // Verificar que la compra existe
     const buy = await BuyModel.findById(buyId)
-    if (!buy) {
+    if (buy == null) {
       res.status(404).json({ error: 'Compra no encontrada' })
       return
     }

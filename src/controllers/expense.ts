@@ -1,6 +1,8 @@
 import { Request, Response } from 'express'
 import { handleHttp } from '../utils/error.handle'
 import { JwtPayload } from 'jsonwebtoken'
+import { Types } from 'mongoose'
+import ExpenseModel from '../models/expense'
 import ExpenseService from '../services/expense'
 import { emitSocket } from '../socket'
 
@@ -22,9 +24,8 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
   try {
     const userId = user?.id
     const result = await ExpenseService.list(query)
-    
+
     // Emitir evento BI expense_list_viewed
-    const { emitSocket } = require('../socket')
     emitSocket('expense', {
       action: 'list_viewed',
       data: {
@@ -57,9 +58,9 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
         }
       }
     })
-    
+
     // Emitir evento BI expense_search_used SI search presente
-    if (result._metadata.appliedFilters.search) {
+    if (result._metadata.appliedFilters.search != null && result._metadata.appliedFilters.search !== '') {
       const searchTerm = result._metadata.appliedFilters.search
       emitSocket('expense', {
         action: 'search_used',
@@ -93,15 +94,15 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
         }
       })
     }
-    
+
     // Agregar flags de permisos a la respuesta
-    const userPermissions = user?.permissions || []
+    const userPermissions = user?.permissions ?? []
     const canEdit = userPermissions.includes('update_expense')
     const canDelete = userPermissions.includes('delete_expense')
-    
+
     // Remover metadata interna antes de enviar response
     const { _metadata, ...responseData } = result
-    
+
     res.json({
       ...responseData,
       permissions: {
@@ -111,12 +112,12 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
     })
   } catch (error: any) {
     // Manejar errores de validación con código 400
-    if (error.message?.includes('formato inválido') || 
-        error.message?.includes('no puede ser posterior') ||
-        error.message?.includes('Preset inválido') ||
-        error.message?.includes('Límite máximo') ||
-        error.message?.includes('término de búsqueda') ||
-        error.message?.includes('inválido')) {
+    if (error.message?.includes('formato inválido') === true ||
+        error.message?.includes('no puede ser posterior') === true ||
+        error.message?.includes('Preset inválido') === true ||
+        error.message?.includes('Límite máximo') === true ||
+        error.message?.includes('término de búsqueda') === true ||
+        error.message?.includes('inválido') === true) {
       res.status(400).json({ error: error.message })
       return
     }
@@ -127,33 +128,30 @@ export const listExpenses = async ({ query, user }: RequestExt, res: Response): 
 export const getExpense = async ({ params, user }: RequestExt, res: Response): Promise<void> => {
   try {
     // GAP-01: Validar ObjectId antes de query
-    const { Types } = require('mongoose')
     if (!Types.ObjectId.isValid(params.id)) {
       res.status(400).json({ error: 'ID de egreso inválido' })
       return
     }
 
     const expense = await ExpenseService.getById(params.id)
-    
-    if (!expense) {
+
+    if (expense == null) {
       // GAP-02: Verificar si está eliminado (soft delete) para retornar 410
-      const ExpenseModel = require('../models/expense').default
       const deleted = await ExpenseModel.findOne({ _id: params.id, isDeleted: true })
-      
-      if (deleted) {
-        res.status(410).json({ 
+
+      if (deleted != null) {
+        res.status(410).json({
           error: 'Egreso eliminado',
-          deletedAt: deleted.deletedAt 
+          deletedAt: deleted.deletedAt
         })
         return
       }
-      
+
       res.status(404).json({ error: 'Egreso no encontrado' })
       return
     }
 
     // GAP-03: Emitir evento BI expense_detail_viewed (solo en éxito)
-    const { emitSocket } = require('../socket')
     emitSocket('expense', {
       action: 'detail_viewed',
       data: {
@@ -176,11 +174,11 @@ export const getExpense = async ({ params, user }: RequestExt, res: Response): P
     })
 
     // GAP-04: Calcular flags de permisos
-    const userPermissions = user?.permissions || []
+    const userPermissions = user?.permissions ?? []
     const canEdit = userPermissions.includes('update_expense')
     const canDelete = userPermissions.includes('delete_expense')
 
-    res.json({ 
+    res.json({
       expense,
       permissions: {
         canEdit,
@@ -219,9 +217,9 @@ export const deleteExpense = async ({ params, user }: RequestExt, res: Response)
   try {
     const userId = user?.id
     const expense = await ExpenseService.softDelete(params.id, userId)
-    res.json({ 
+    res.json({
       message: 'Egreso eliminado correctamente',
-      expense 
+      expense
     })
   } catch (error: any) {
     // Manejar status codes específicos
@@ -257,7 +255,7 @@ export const getExpensesKPI = async ({ query, user }: RequestExt, res: Response)
           to: query.to
         },
         filter: {
-          tipo_egreso: query.type || null
+          tipo_egreso: query.type != null && query.type !== '' ? query.type : null
         },
         result: {
           totalAmount: result.totalAmount,
@@ -271,10 +269,10 @@ export const getExpensesKPI = async ({ query, user }: RequestExt, res: Response)
   } catch (error: any) {
     // Validaciones retornan 400
     if (
-      error.message.includes('requeridos') ||
-      error.message.includes('Formato inválido') ||
-      error.message.includes('no puede ser posterior') ||
-      error.message.includes('inválido')
+      error.message.includes('requeridos') === true ||
+      error.message.includes('Formato inválido') === true ||
+      error.message.includes('no puede ser posterior') === true ||
+      error.message.includes('inválido') === true
     ) {
       res.status(400).json({ error: error.message })
       return
@@ -320,9 +318,9 @@ export const getSimpleResultKPI = async ({ query, user }: RequestExt, res: Respo
   } catch (error: any) {
     // Validaciones retornan 400
     if (
-      error.message.includes('requeridos') ||
-      error.message.includes('Formato inválido') ||
-      error.message.includes('no puede ser posterior')
+      error.message.includes('requeridos') === true ||
+      error.message.includes('Formato inválido') === true ||
+      error.message.includes('no puede ser posterior') === true
     ) {
       res.status(400).json({ error: error.message })
       return
@@ -330,4 +328,3 @@ export const getSimpleResultKPI = async ({ query, user }: RequestExt, res: Respo
     handleHttp(res, 'ERROR_GET_SIMPLE_RESULT_KPI', error)
   }
 }
-

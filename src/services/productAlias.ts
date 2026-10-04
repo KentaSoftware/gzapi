@@ -23,7 +23,7 @@ export const upsertProductAlias = async (dto: UpsertAliasDTO): Promise<IProductA
     ? normalizeBarcode(dto.aliasValueRaw)
     : normalizeText(dto.aliasValueRaw)
 
-  if (!normalizedValue) {
+  if (normalizedValue === '') {
     throw new Error('El valor del alias no puede estar vacío después de normalizar')
   }
 
@@ -71,7 +71,7 @@ export const upsertProductAlias = async (dto: UpsertAliasDTO): Promise<IProductA
     accion: 'upsert',
     coleccion: 'productAlias',
     idColeccion: alias._id,
-    userId: userId,
+    userId,
     metadata: {
       providerId: dto.providerId,
       productId: dto.productId,
@@ -90,7 +90,7 @@ export const upsertMultipleAliases = async (
   aliases: UpsertAliasDTO[]
 ): Promise<IProductAlias[]> => {
   const results: IProductAlias[] = []
-  
+
   for (const dto of aliases) {
     try {
       const alias = await upsertProductAlias(dto)
@@ -109,7 +109,7 @@ export const upsertMultipleAliases = async (
  */
 export const getAliasesByProvider = async (
   providerId: string,
-  options?: { limit?: number; activeOnly?: boolean }
+  options?: { limit?: number, activeOnly?: boolean }
 ): Promise<any[]> => {
   const query: any = {
     providerId: new Types.ObjectId(providerId)
@@ -119,7 +119,7 @@ export const getAliasesByProvider = async (
     query.isActive = true
   }
 
-  return ProductAliasModel.find(query)
+  return await ProductAliasModel.find(query)
     .select('aliasType aliasValueNormalized productId confidence')
     .limit(options?.limit ?? 10000)
     .lean()
@@ -137,7 +137,7 @@ export const findExactAlias = async (
     ? normalizeBarcode(value)
     : normalizeText(value)
 
-  return ProductAliasModel.findOne({
+  return await ProductAliasModel.findOne({
     providerId: new Types.ObjectId(providerId),
     aliasType,
     aliasValueNormalized: normalizedValue,
@@ -156,7 +156,7 @@ export const findAliasByValue = async (
     ? normalizeBarcode(value)
     : normalizeText(value)
 
-  return ProductAliasModel.find({
+  return await ProductAliasModel.find({
     aliasType,
     aliasValueNormalized: normalizedValue,
     isActive: true
@@ -172,17 +172,17 @@ export const deactivateAlias = async (
 ): Promise<IProductAlias | null> => {
   const alias = await ProductAliasModel.findByIdAndUpdate(
     aliasId,
-    { 
+    {
       $set: { isActive: false }
     },
     { new: true }
   )
 
-  if (alias) {
+  if (alias != null) {
     // Actualizar versión del catálogo
     await bumpCatalogVersion(
-      alias.providerId.toString(), 
-      CatalogVersionReason.ALIAS_DELETED, 
+      alias.providerId.toString(),
+      CatalogVersionReason.ALIAS_DELETED,
       userId
     )
 
@@ -218,12 +218,14 @@ export const createConfirmedMatch = async (dto: CreateConfirmedMatchDTO): Promis
       suggestionScore: dto.chosen.suggestionScore,
       suggestionRank: dto.chosen.suggestionRank
     },
-    doc: dto.doc ? {
-      draftId: dto.doc.draftId ? new Types.ObjectId(dto.doc.draftId) : undefined,
-      buyId: dto.doc.buyId ? new Types.ObjectId(dto.doc.buyId) : undefined,
-      date: dto.doc.date,
-      total: dto.doc.total
-    } : {},
+    doc: (dto.doc != null)
+      ? {
+          draftId: dto.doc.draftId != null && dto.doc.draftId !== '' ? new Types.ObjectId(dto.doc.draftId) : undefined,
+          buyId: dto.doc.buyId != null && dto.doc.buyId !== '' ? new Types.ObjectId(dto.doc.buyId) : undefined,
+          date: dto.doc.date,
+          total: dto.doc.total
+        }
+      : {},
     createdBy: new Types.ObjectId(dto.userId)
   })
 
@@ -250,7 +252,7 @@ export const createMultipleConfirmedMatches = async (
   matches: CreateConfirmedMatchDTO[]
 ): Promise<IConfirmedItemMatch[]> => {
   const results: IConfirmedItemMatch[] = []
-  
+
   for (const dto of matches) {
     try {
       const match = await createConfirmedMatch(dto)
@@ -268,9 +270,9 @@ export const createMultipleConfirmedMatches = async (
  */
 export const getConfirmedMatchesByProvider = async (
   providerId: string,
-  options?: { limit?: number; skip?: number }
+  options?: { limit?: number, skip?: number }
 ): Promise<any[]> => {
-  return ConfirmedItemMatchModel.find({
+  return await ConfirmedItemMatchModel.find({
     providerId: new Types.ObjectId(providerId)
   })
     .sort({ createdAt: -1 })
@@ -295,7 +297,7 @@ export const bumpCatalogVersion = async (
       $set: {
         version: newVersion,
         reason,
-        triggeredBy: userId ? new Types.ObjectId(userId) : null,
+        triggeredBy: userId != null && userId !== '' ? new Types.ObjectId(userId) : null,
         updatedAt: new Date()
       },
       $setOnInsert: {
@@ -319,7 +321,7 @@ export const getCatalogVersionByProvider = async (providerId: string): Promise<{
     providerId: new Types.ObjectId(providerId)
   }).lean()
 
-  if (catalogVersion) {
+  if (catalogVersion != null) {
     return {
       version: catalogVersion.version,
       updatedAt: catalogVersion.updatedAt

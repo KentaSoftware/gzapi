@@ -26,7 +26,7 @@ export const getCatalogVersion = async (req: RequestExt, res: Response): Promise
   try {
     const { providerId } = req.query
 
-    if (!providerId || typeof providerId !== 'string') {
+    if (providerId == null || providerId === '' || typeof providerId !== 'string') {
       res.status(400).json({
         error: 'PROVIDER_ID_REQUIRED',
         message: 'El parámetro providerId es obligatorio'
@@ -64,7 +64,7 @@ export const getCatalogSnapshot = async (req: RequestExt, res: Response): Promis
   try {
     const { providerId, limit, cursor, version } = req.query
 
-    if (!providerId || typeof providerId !== 'string') {
+    if (providerId == null || providerId === '' || typeof providerId !== 'string') {
       res.status(400).json({
         error: 'PROVIDER_ID_REQUIRED',
         message: 'El parámetro providerId es obligatorio'
@@ -81,7 +81,7 @@ export const getCatalogSnapshot = async (req: RequestExt, res: Response): Promis
     }
 
     // Validar cursor si viene
-    if (cursor && typeof cursor === 'string' && !isValidObjectId(cursor)) {
+    if (cursor != null && cursor !== '' && typeof cursor === 'string' && !isValidObjectId(cursor)) {
       res.status(400).json({
         error: 'INVALID_CURSOR',
         message: 'El cursor no tiene un formato válido'
@@ -89,10 +89,10 @@ export const getCatalogSnapshot = async (req: RequestExt, res: Response): Promis
       return
     }
 
-    const parsedLimit = limit ? Math.min(Math.max(parseInt(limit as string, 10), 1), 1000) : 500
+    const parsedLimit = limit != null && limit !== '' ? Math.min(Math.max(parseInt(limit as string, 10), 1), 1000) : 500
 
     // Obtener versión actual para comparar
-    if (version && typeof version === 'string') {
+    if (version != null && version !== '' && typeof version === 'string') {
       const currentVersion = await getCatalogVersionService(providerId)
       if (currentVersion.version === version) {
         // Cache hit - devolver 304 Not Modified
@@ -128,7 +128,7 @@ export const searchProducts = async (req: RequestExt, res: Response): Promise<vo
     const { q, providerId, barcode, sku, limit } = req.query
 
     // Validar providerId si viene
-    if (providerId && typeof providerId === 'string' && !isValidObjectId(providerId)) {
+    if (providerId != null && providerId !== '' && typeof providerId === 'string' && !isValidObjectId(providerId)) {
       res.status(400).json({
         error: 'INVALID_PROVIDER_ID',
         message: 'El providerId no tiene un formato válido'
@@ -136,7 +136,7 @@ export const searchProducts = async (req: RequestExt, res: Response): Promise<vo
       return
     }
 
-    const parsedLimit = limit ? Math.min(Math.max(parseInt(limit as string, 10), 1), 100) : 20
+    const parsedLimit = limit != null && limit !== '' ? Math.min(Math.max(parseInt(limit as string, 10), 1), 100) : 20
 
     const results = await searchProductsService({
       q: q as string | undefined,
@@ -150,10 +150,10 @@ export const searchProducts = async (req: RequestExt, res: Response): Promise<vo
       results,
       count: results.length,
       query: {
-        q: q || null,
-        providerId: providerId || null,
-        barcode: barcode || null,
-        sku: sku || null
+        q: q != null && q !== '' ? q : null,
+        providerId: providerId != null && providerId !== '' ? providerId : null,
+        barcode: barcode != null && barcode !== '' ? barcode : null,
+        sku: sku != null && sku !== '' ? sku : null
       }
     })
   } catch (e: any) {
@@ -175,7 +175,7 @@ export const searchProducts = async (req: RequestExt, res: Response): Promise<vo
 export const getAllProvidersWithVersion = async (_req: RequestExt, res: Response): Promise<void> => {
   try {
     const providers = await getAllProvidersWithVersionService()
-    
+
     res.json({
       providers,
       count: providers.length
@@ -196,7 +196,7 @@ export const createOrUpdateAlias = async (req: RequestExt, res: Response): Promi
     const userId = req.user?.id
 
     // Validaciones
-    if (!providerId || !aliasType || !aliasValueRaw || !productId) {
+    if (providerId == null || providerId === '' || aliasType == null || aliasType === '' || aliasValueRaw == null || aliasValueRaw === '' || productId == null || productId === '') {
       res.status(400).json({
         error: 'MISSING_REQUIRED_FIELDS',
         message: 'Los campos providerId, aliasType, aliasValueRaw y productId son obligatorios'
@@ -259,12 +259,12 @@ export const createOrUpdateAlias = async (req: RequestExt, res: Response): Promi
         aliasValueNormalized: alias.aliasValueNormalized,
         productId: alias.productId,
         confidence: alias.confidence,
-        usedCount: alias.stats?.usedCount || 0,
+        usedCount: alias.stats?.usedCount ?? 0,
         isActive: alias.isActive
       }
     })
   } catch (e: any) {
-    if (e.message?.includes('vacío después de normalizar')) {
+    if (e.message?.includes('vacío después de normalizar') === true) {
       res.status(400).json({
         error: 'INVALID_ALIAS_VALUE',
         message: e.message
@@ -296,7 +296,7 @@ export const confirmMatch = async (req: RequestExt, res: Response): Promise<void
     const userId = req.user?.id
 
     // Validaciones
-    if (!providerId || !rawDescription || !productId || !method) {
+    if (providerId == null || providerId === '' || rawDescription == null || rawDescription === '' || productId == null || productId === '' || method == null || method === '') {
       res.status(400).json({
         error: 'MISSING_REQUIRED_FIELDS',
         message: 'Los campos providerId, rawDescription, productId y method son obligatorios'
@@ -350,12 +350,14 @@ export const confirmMatch = async (req: RequestExt, res: Response): Promise<void
     // para aprender de la elección del usuario
     if (method === MatchMethod.MANUAL_SELECTION || method === MatchMethod.FUZZY_MATCH) {
       try {
+        const suggestionScoreHas = Boolean(suggestionScore)
+        const aliasConfidence = method === MatchMethod.MANUAL_SELECTION ? 1.0 : (suggestionScoreHas ? suggestionScore : 0.8)
         await upsertProductAlias({
           providerId,
           aliasType: AliasType.DESCRIPTION,
           aliasValueRaw: rawDescription,
           productId,
-          confidence: method === MatchMethod.MANUAL_SELECTION ? 1.0 : (suggestionScore || 0.8),
+          confidence: aliasConfidence,
           userId
         })
       } catch (aliasError) {
@@ -389,7 +391,7 @@ export const batchSearch = async (req: RequestExt, res: Response): Promise<void>
     const { queries, providerId, scope, topK, minCandidates } = req.body
 
     // Validar queries array
-    if (!queries || !Array.isArray(queries)) {
+    if (queries == null || !Array.isArray(queries)) {
       res.status(400).json({
         error: 'INVALID_QUERIES',
         message: 'El campo queries debe ser un array'
@@ -417,7 +419,7 @@ export const batchSearch = async (req: RequestExt, res: Response): Promise<void>
     for (let i = 0; i < queries.length; i++) {
       const query = queries[i]
 
-      if (!query.queryId) {
+      if (query.queryId == null || query.queryId === '') {
         res.status(400).json({
           error: 'MISSING_QUERY_ID',
           message: `La query en posición ${i} no tiene queryId`
@@ -425,25 +427,25 @@ export const batchSearch = async (req: RequestExt, res: Response): Promise<void>
         return
       }
 
-      if (!query.q && !query.barcode) {
+      if ((query.q == null || query.q === '') && (query.barcode == null || query.barcode === '')) {
         res.status(400).json({
           error: 'MISSING_SEARCH_TERM',
-          message: `La query ${query.queryId} debe tener al menos 'q' o 'barcode'`
+          message: `La query ${String(query.queryId)} debe tener al menos 'q' o 'barcode'`
         })
         return
       }
 
-      if (query.q && query.q.length < 2) {
+      if (query.q != null && query.q !== '' && query.q.length < 2) {
         res.status(400).json({
           error: 'QUERY_TOO_SHORT',
-          message: `La query ${query.queryId} tiene un término de búsqueda demasiado corto (mínimo 2 caracteres)`
+          message: `La query ${String(query.queryId)} tiene un término de búsqueda demasiado corto (mínimo 2 caracteres)`
         })
         return
       }
     }
 
     // Validar providerId si está presente
-    if (providerId && !isValidObjectId(providerId)) {
+    if (providerId != null && providerId !== '' && !isValidObjectId(providerId)) {
       res.status(400).json({
         error: 'INVALID_PROVIDER_ID',
         message: 'El providerId no tiene un formato válido'
@@ -453,7 +455,7 @@ export const batchSearch = async (req: RequestExt, res: Response): Promise<void>
 
     // Validar scope si está presente
     const validScopes = ['PROVIDER_ONLY', 'GLOBAL_ONLY', 'PROVIDER_FIRST']
-    if (scope && !validScopes.includes(scope)) {
+    if (scope != null && scope !== '' && !validScopes.includes(scope)) {
       res.status(400).json({
         error: 'INVALID_SCOPE',
         message: `El scope debe ser uno de: ${validScopes.join(', ')}`

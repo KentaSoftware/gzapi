@@ -1,104 +1,94 @@
-import RoleModel from '../models/role';
-import UserModel from '../models/user';
-import { encrypt } from '../utils/bcrypt.handle';
+import RoleModel from '../models/role'
+import UserModel from '../models/user'
+import { encrypt } from '../utils/bcrypt.handle'
 
-export const seedDatabase = async () => {
+const BASE_PERMISSIONS = [
+  'create_user', 'delete_user', 'update_user', 'read_user',
+  'create_role', 'delete_role', 'update_role', 'read_role',
+  'create_product', 'delete_product', 'update_product', 'read_product',
+  'create_client', 'delete_client', 'update_client', 'read_client',
+  'create_sale', 'delete_sale', 'update_sale', 'read_sale', 'read_stats',
+  'create_buy', 'delete_buy', 'update_buy', 'read_buy',
+  'create_expense', 'delete_expense', 'update_expense', 'read_expense',
+  'read_dataset',
+  'read_log',
+  'catalog_read', 'catalog_write',
+  'read_cashflow', 'configure_cashflow'
+]
 
-  console.log('Iniciando seed de la base de datos')
+const PHASE_0_ROLE_GRANTS = [
+  {
+    name: 'Propietario',
+    permissions: [
+      'confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment',
+      'receive_purchase', 'adjust_stock', 'read_route_plan'
+    ]
+  },
+  {
+    name: 'Administración',
+    permissions: [
+      'confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment',
+      'receive_purchase', 'adjust_stock', 'read_route_plan'
+    ]
+  },
+  {
+    name: 'Preventista',
+    permissions: ['confirm_sale_payment']
+  },
+  {
+    name: 'Repartidor',
+    permissions: ['read_route_plan']
+  }
+]
 
-  // Crear permisos básicos
-  const permissions = [
-    //Usuarios  x
-    'create_user',
-    'delete_user',
-    'update_user',
-    'read_user',
-    //Roles x
-    'create_role',
-    'delete_role',
-    'update_role',
-    'read_role',
-    //Productos x
-    'create_product',
-    'delete_product',
-    'update_product',
-    'read_product',
-    //Clientes x
-    'create_client',
-    'delete_client',
-    'update_client',
-    'read_client',
-    //Ventas x
-    'create_sale',
-    'delete_sale',
-    'update_sale',
-    'read_sale',
-    'read_stats',
-    //Compras x
-    'create_buy',
-    'delete_buy',
-    'update_buy',
-    'read_buy',
-    //Egresos x
-    'create_expense',
-    'delete_expense',
-    'update_expense',
-    'read_expense',
-    //Datasets x
-    'read_dataset',
-    //Logs x
-    'read_log',
-    //Catálogo (Document AI) - Fase 3 v0.4.0
-    'catalog_read',
-    'catalog_write',
-    //Cash Flow Real - cash-flow-real-v1
-    'read_cashflow',
-    'configure_cashflow',
-  ];
+const upsertRole = async (name: string, permissions: string[]): Promise<void> => {
+  const existing = await RoleModel.findOne({ name })
 
-
-  // Crear o actualizar rol admin
-  const adminRole = await RoleModel.findOne({ name: 'admin' });
-  if (!adminRole) {
-    // Si no existe el rol admin, crearlo
-    await RoleModel.create({
-      nickname: 'admin',
-      permissions: permissions
-    });
-  } else {
-    // Si existe, verificar y actualizar permisos faltantes
-    const missingPermissions = permissions.filter(
-      permission => !adminRole.permissions.includes(permission)
-    );
-
-    if (missingPermissions.length > 0) {
-      adminRole.permissions = [...new Set([...adminRole.permissions, ...missingPermissions])];
-      await adminRole.save();
-    } else {
-    }
+  if (existing === null) {
+    await RoleModel.create({ name, permissions })
+    return
   }
 
-  // Crear usuario admin
-  const adminUser = await UserModel.findOne({ nickname: 'admin' });
-  if (!adminUser) {
-    const passHash = await encrypt(process.env.ADMIN_PASSWORD! as string)
-    const currentAdminRole = await RoleModel.findOne({ name: 'admin' });
+  const missing = permissions.filter((permission) => !existing.permissions.includes(permission))
+  if (missing.length > 0) {
+    existing.permissions = [...new Set([...existing.permissions, ...missing])]
+    await existing.save()
+  }
+}
 
-    if (!currentAdminRole) {
-      throw new Error('No se pudo encontrar el rol de administrador');
+export const seedDatabase = async (): Promise<void> => {
+  console.log('Iniciando seed de la base de datos')
+
+  await upsertRole('admin', BASE_PERMISSIONS)
+
+  for (const grant of PHASE_0_ROLE_GRANTS) {
+    await upsertRole(grant.name, grant.permissions)
+  }
+
+  const adminUser = await UserModel.findOne({ nickname: 'admin' })
+
+  if (adminUser === null) {
+    const adminPassword = process.env.ADMIN_PASSWORD
+    if (adminPassword === undefined || adminPassword === '') {
+      throw new Error('ADMIN_PASSWORD environment variable is required to seed the admin user')
+    }
+
+    const passHash = await encrypt(adminPassword)
+    const adminRole = await RoleModel.findOne({ name: 'admin' })
+    if (adminRole === null) {
+      throw new Error('No se pudo encontrar el rol de administrador')
     }
 
     await UserModel.create({
       nickname: 'admin',
       password: passHash,
-      role: currentAdminRole._id
-    });
+      role: adminRole._id
+    })
   } else {
-    // Verificar si el usuario admin tiene el rol correcto
-    const currentAdminRole = await RoleModel.findOne({ name: 'admin' });
-    if (currentAdminRole && adminUser.role?.toString() !== currentAdminRole._id.toString()) {
-      adminUser.role = currentAdminRole;
-      await adminUser.save();
+    const adminRole = await RoleModel.findOne({ name: 'admin' })
+    if (adminRole !== null && String(adminUser.role) !== String(adminRole._id)) {
+      adminUser.role = adminRole
+      await adminUser.save()
     }
   }
-};
+}

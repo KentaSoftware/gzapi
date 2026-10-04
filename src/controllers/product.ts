@@ -135,11 +135,11 @@ const uptdateItems = async ({ body }: Request, res: Response): Promise<void> => 
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   try {
     // Eliminar _id si existe y está vacío o es inválido
-    if (body._id && (body._id === "" || body._id === null || body._id === undefined)) {
+    if (body._id != null && body._id !== '' && (body._id === '' || body._id === null || body._id === undefined)) {
       delete body._id
     }
     // También eliminar _id si existe pero no es válido para ObjectId
-    if (body._id && typeof body._id === 'string' && body._id.trim() === '') {
+    if (body._id != null && body._id !== '' && typeof body._id === 'string' && body._id.trim() === '') {
       delete body._id
     }
     const response = await insertProduct({ ...body, categoria: new Types.ObjectId(body.categoria), marca: new Types.ObjectId(body.marca), proveedor: new Types.ObjectId(body.proveedor) })
@@ -149,7 +149,7 @@ const postItem = async ({ body }: Request, res: Response): Promise<void> => {
     })
     res.send(response)
   } catch (e) {
-    console.log("error", e)
+    console.log('error', e)
     handleHttp(res, 'ERROR_CREATE_PRODUCT', e)
   }
 }
@@ -207,7 +207,7 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
     let categorieActive: (string | undefined) = ''
 
     // Agregar el listener solo una vez
-    doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
+    doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }))
 
     products.forEach((itemProduct: Product) => {
       if ((itemProduct.precioUnitario) <= 1) {
@@ -216,39 +216,40 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
-          .text(`${categorieActive}`, 25)
+          .text(`${String(categorieActive)}`, 25)
       }
 
-      const yPosition = doc.y;
+      const yPosition = doc.y
 
       // Escribir la descripción del producto
       doc.fontSize(14).font('Helvetica').fillColor('black')
-        .text(`${itemProduct.descripcion}`, 50, yPosition);
+        .text(`${itemProduct.descripcion}`, 50, yPosition)
 
       // Escribir el precio del producto en la misma posición Y
       if (itemProduct.precioDescuento !== undefined && itemProduct.precioDescuento > 1) {
-        if (isPrecioUnitario || isPrecioUnitario === undefined) {
+        const showUnitPrice = isPrecioUnitario === undefined ? true : Boolean(isPrecioUnitario)
+        if (showUnitPrice) {
           doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
-            .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition);
+            .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition)
         } else {
           doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
-            .text(`$ ${itemProduct.precioDescuento}`, 440, yPosition);
+            .text(`$ ${itemProduct.precioDescuento}`, 440, yPosition)
         }
       } else {
         doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
-          .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition);
+          .text(`$ ${itemProduct.precioUnitario}`, 440, yPosition)
       }
 
-      doc.moveDown(0.1);
+      doc.moveDown(0.1)
 
-      doc.lineWidth(0.5);
-      doc.strokeColor('#d9d9d9');
+      doc.lineWidth(0.5)
+      doc.strokeColor('#d9d9d9')
 
       doc.moveTo(20, doc.y)
         .lineTo(550, doc.y)
-        .stroke();
+        .stroke()
 
-      doc.moveDown(0.3);
+      doc.moveDown(0.3)
 
       if (yPosition > 680) {
         doc.addPage()
@@ -264,8 +265,8 @@ const printList = async ({ body }: RequestExt, res: Response): Promise<void> => 
 
 const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
-    const { categories, discount }: { categories: { conDescuento: { _id: string, descripcion: string }[], sinDescuento: { _id: string, descripcion: string }[] }, discount: number } = body
-    let categoriesArray: string[] = []
+    const { categories, discount }: { categories: { conDescuento: Array<{ _id: string, descripcion: string }>, sinDescuento: Array<{ _id: string, descripcion: string }> }, discount: number } = body
+    const categoriesArray: string[] = []
     categories.conDescuento.forEach(item => {
       categoriesArray.push(item.descripcion)
     })
@@ -287,7 +288,7 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
     let categorieActive: (string | undefined) = ''
 
     // Agregar el listener solo una vez
-    doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }));
+    doc.on('pageAdded', () => doc.image(logoPath, 450, 5, { width: 100 }))
 
     products.forEach((itemProduct: Product) => {
       if (itemProduct.precioUnitario <= 1) return
@@ -295,38 +296,38 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
       if (itemProduct.NameCategoria !== categorieActive) {
         categorieActive = itemProduct.NameCategoria
         doc.fontSize(18).font('Helvetica-Bold').fillColor('#3764A0')
-          .text(`${categorieActive}`, 25)
+          .text(`${String(categorieActive)}`, 25)
       }
 
-      const yPosition = doc.y;
+      const yPosition = doc.y
 
       // Escribir la descripción del producto
       doc.fontSize(14).font('Helvetica').fillColor('black')
-        .text(`${itemProduct.descripcion}`, 50, yPosition);
+        .text(`${itemProduct.descripcion}`, 50, yPosition)
 
       // Calcular el precio con descuento si el producto pertenece a una categoría seleccionada
-      let precioFinal = itemProduct.precioUnitario;
-      let isDescuento = categories.conDescuento.find(elem => elem.descripcion === itemProduct.NameCategoria) ? true : false
-      let isNormal = categories.sinDescuento.find(elem => elem.descripcion === itemProduct.NameCategoria) ? true : false
+      let precioFinal = itemProduct.precioUnitario
+      const isDescuento = (categories.conDescuento.find(elem => elem.descripcion === itemProduct.NameCategoria) != null)
+      const isNormal = (categories.sinDescuento.find(elem => elem.descripcion === itemProduct.NameCategoria) != null)
       if (isDescuento) {
-        precioFinal = itemProduct.precioUnitario * (1 - discount);
+        precioFinal = itemProduct.precioUnitario * (1 - discount)
       } else if (isNormal) {
         precioFinal = itemProduct.precioUnitario
       }
       // Escribir el precio del producto en la misma posición Y
       doc.fontSize(14).font('Helvetica-Bold').fillColor('#FA9B50')
-        .text(`$ ${precioFinal.toFixed(2)}`, 440, yPosition);
+        .text(`$ ${precioFinal.toFixed(2)}`, 440, yPosition)
 
-      doc.moveDown(0.1);
+      doc.moveDown(0.1)
 
-      doc.lineWidth(0.5);
-      doc.strokeColor('#d9d9d9');
+      doc.lineWidth(0.5)
+      doc.strokeColor('#d9d9d9')
 
       doc.moveTo(20, doc.y)
         .lineTo(550, doc.y)
-        .stroke();
+        .stroke()
 
-      doc.moveDown(0.3);
+      doc.moveDown(0.3)
 
       if (yPosition > 680) {
         doc.addPage()
@@ -335,7 +336,6 @@ const printListWithDiscount = async ({ body }: RequestExt, res: Response): Promi
 
     // Finalizar el documento
     doc.end()
-
   } catch (e) {
     handleHttp(res, 'ERROR_PRINT_LIST')
   }

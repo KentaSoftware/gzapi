@@ -20,7 +20,7 @@ const ClientSchema = new Schema<Client>(
     },
     lng: {
       type: Number
-    },
+    }
   },
   {
     timestamps: true,
@@ -30,4 +30,3 @@ const ClientSchema = new Schema<Client>(
 
 const ClientModel = model('client', ClientSchema)
 export default ClientModel
-

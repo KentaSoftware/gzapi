@@ -48,7 +48,7 @@ export const checkForDuplicates = async (
   const criteriaTriggered: DuplicateCriteria[] = []
 
   // 1. Búsqueda por docNumber exacto
-  if (dto.docNumber) {
+  if (dto.docNumber != null && dto.docNumber !== '') {
     const docNumberCandidates = await findByDocNumber(
       dto.providerId,
       dto.docNumber
@@ -60,7 +60,7 @@ export const checkForDuplicates = async (
   }
 
   // 2. Búsqueda por fingerprint exacto
-  if (dto.fingerprint) {
+  if (dto.fingerprint != null && dto.fingerprint !== '') {
     const fingerprintCandidates = await findByFingerprint(
       dto.providerId,
       dto.fingerprint
@@ -100,7 +100,7 @@ export const checkForDuplicates = async (
 
   // 7. Persistir el check en la BD
   const checkRecord = await PurchaseDocDuplicateCheckModel.create({
-    draftId: draftId ? new Types.ObjectId(draftId) : undefined,
+    draftId: draftId != null && draftId !== '' ? new Types.ObjectId(draftId) : undefined,
     providerId: new Types.ObjectId(dto.providerId),
     date: new Date(dto.date),
     total: dto.total,
@@ -124,7 +124,7 @@ export const checkForDuplicates = async (
 
   // 8. Registrar en logs de auditoría
   await insertLog({
-    userId: userId ? new Types.ObjectId(userId) : undefined,
+    userId: userId != null && userId !== '' ? new Types.ObjectId(userId) : undefined,
     accion: 'DUPLICATE_CHECK_RUN',
     coleccion: 'purchase_doc_duplicate_check',
     idColeccion: checkRecord._id,
@@ -170,7 +170,7 @@ export const recordDecision = async (
     { new: true }
   )
 
-  if (!checkRecord) {
+  if (checkRecord == null) {
     throw new Error('CHECK_NOT_FOUND')
   }
 
@@ -193,7 +193,7 @@ export const recordDecision = async (
 /**
  * Busca compras por número de documento exacto
  */
-async function findByDocNumber(
+async function findByDocNumber (
   providerId: string,
   docNumber: string
 ): Promise<DuplicateCandidate[]> {
@@ -206,7 +206,7 @@ async function findByDocNumber(
     .lean()
 
   return buys.map((buy) => ({
-    existingBuyId: buy._id!.toString(),
+    existingBuyId: buy._id.toString(),
     existingDate: buy.fecha,
     existingTotal: buy.total as number,
     existingDocNumber: buy.docNumber,
@@ -224,7 +224,7 @@ async function findByDocNumber(
 /**
  * Busca compras por fingerprint exacto
  */
-async function findByFingerprint(
+async function findByFingerprint (
   providerId: string,
   fingerprint: string
 ): Promise<DuplicateCandidate[]> {
@@ -237,7 +237,7 @@ async function findByFingerprint(
     .lean()
 
   return buys.map((buy) => ({
-    existingBuyId: buy._id!.toString(),
+    existingBuyId: buy._id.toString(),
     existingDate: buy.fecha,
     existingTotal: buy.total as number,
     existingDocNumber: buy.docNumber,
@@ -255,7 +255,7 @@ async function findByFingerprint(
 /**
  * Busca compras por proveedor + fecha + total con tolerancias
  */
-async function findByProviderDateTotal(
+async function findByProviderDateTotal (
   providerId: string,
   date: Date,
   total: number,
@@ -295,7 +295,7 @@ async function findByProviderDateTotal(
     }
 
     return {
-      existingBuyId: buy._id!.toString(),
+      existingBuyId: buy._id.toString(),
       existingDate: buy.fecha,
       existingTotal: buy.total as number,
       existingDocNumber: buy.docNumber,
@@ -314,7 +314,7 @@ async function findByProviderDateTotal(
 /**
  * Deduplicar candidatos que aparecen por múltiples criterios
  */
-function deduplicateCandidates(
+function deduplicateCandidates (
   candidates: DuplicateCandidate[]
 ): DuplicateCandidate[] {
   const candidateMap = new Map<string, DuplicateCandidate>()
@@ -322,18 +322,24 @@ function deduplicateCandidates(
   for (const candidate of candidates) {
     const existing = candidateMap.get(candidate.existingBuyId)
 
-    if (existing) {
+    if (existing != null) {
       // Merge: combinar reasons y matchedOn
       existing.reasons = Array.from(
         new Set([...existing.reasons, ...candidate.reasons])
       )
       existing.matchedOn = {
-        docNumber: existing.matchedOn.docNumber || candidate.matchedOn.docNumber,
+        docNumber:
+          existing.matchedOn.docNumber === true
+            ? true
+            : candidate.matchedOn.docNumber,
         providerDateTotal:
-          existing.matchedOn.providerDateTotal ||
-          candidate.matchedOn.providerDateTotal,
+          existing.matchedOn.providerDateTotal === true
+            ? true
+            : candidate.matchedOn.providerDateTotal,
         fingerprint:
-          existing.matchedOn.fingerprint || candidate.matchedOn.fingerprint
+          existing.matchedOn.fingerprint === true
+            ? true
+            : candidate.matchedOn.fingerprint
       }
       // Tomar el score más alto
       existing.score = Math.max(existing.score, candidate.score)
@@ -348,7 +354,7 @@ function deduplicateCandidates(
 /**
  * Calcular scores finales y aplicar boost por múltiples criterios
  */
-function calculateFinalScores(
+function calculateFinalScores (
   candidates: DuplicateCandidate[]
 ): DuplicateCandidate[] {
   return candidates.map((candidate) => {
@@ -356,9 +362,9 @@ function calculateFinalScores(
 
     // Boost si coinciden 2 o más criterios
     const matchCount =
-      (candidate.matchedOn.docNumber ? 1 : 0) +
-      (candidate.matchedOn.providerDateTotal ? 1 : 0) +
-      (candidate.matchedOn.fingerprint ? 1 : 0)
+      (candidate.matchedOn.docNumber === true ? 1 : 0) +
+      (candidate.matchedOn.providerDateTotal === true ? 1 : 0) +
+      (candidate.matchedOn.fingerprint === true ? 1 : 0)
 
     if (matchCount >= 2) {
       finalScore += 0.1

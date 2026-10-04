@@ -6,20 +6,19 @@ import { checkPermission } from '../middleware/checkPermission'
 
 const router = Router()
 
-router.get('/:id', checkJwt, checkPermission('read_product'), getItem)
-router.get('/', checkJwt, checkPermission('read_product'), getAllItems)
-router.post('/skip', checkJwt, checkPermission('read_product'), getItems)
-router.post('/search', checkJwt, checkPermission('read_product'), getItems)
-router.post('/', checkJwt, checkPermission('create_product'), postItem) //este
+router.get('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void getItem(req, res) })
+router.get('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void getAllItems(req, res) })
+router.post('/skip', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.post('/search', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void getItems(req, res) })
+router.post('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_product')(req, res, next) }, (req, res) => { void postItem(req, res) }) // este
 /* router.post('/uploadImage', multerMiddleware.single('myfile'), compressImage, uploadImage) */
-router.get('/image/:image', getImage)
-router.get('/active', getNothing)
-router.patch('/:id', checkJwt, checkPermission('update_product'), uptdateItem) //este
-router.patch('/', checkJwt, checkPermission('update_product'), uptdateItems)
-router.delete('/:id', checkJwt, checkPermission('delete_product'), deleteItem)
-router.post('/print/print', checkJwt, checkPermission('read_product'), printList)
-router.post('/print/print-with-discount', checkJwt, checkPermission('read_product'), printListWithDiscount)
-router.get('/get/ultimas-fechas', checkJwt, checkPermission('read_product'), getUltimasFechasProducto)
-
+router.get('/image/:image', (req, res) => { void getImage(req, res) })
+router.get('/active', (req, res) => { void getNothing(req, res) })
+router.patch('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('update_product')(req, res, next) }, (req, res) => { void uptdateItem(req, res) }) // este
+router.patch('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('update_product')(req, res, next) }, (req, res) => { void uptdateItems(req, res) })
+router.delete('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('delete_product')(req, res, next) }, deleteItem)
+router.post('/print/print', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void printList(req, res) })
+router.post('/print/print-with-discount', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void printListWithDiscount(req, res) })
+router.get('/get/ultimas-fechas', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_product')(req, res, next) }, (req, res) => { void getUltimasFechasProducto(req, res) })
 
 export { router }

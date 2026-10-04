@@ -73,4 +73,4 @@ const deleteItem = async ({ params }: Request, res: Response): Promise<void> => 
   }
 }
 
-export { getItem, getItems, updateItem, deleteItem, getAllItems } 
+export { getItem, getItems, updateItem, deleteItem, getAllItems }

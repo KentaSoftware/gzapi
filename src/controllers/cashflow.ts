@@ -30,9 +30,9 @@ interface RequestExt extends Request {
 function parseDateRange (
   query: Record<string, any>,
   res: Response
-): { startDate: Date; endDate: Date } | null {
+): { startDate: Date, endDate: Date } | null {
   const { startDate: s, endDate: e } = query
-  if (!s || !e) {
+  if (s == null || s === '' || e == null || e === '') {
     res.status(400).json({ error: 'startDate and endDate query params are required' })
     return null
   }
@@ -54,7 +54,7 @@ function parseDateRange (
 export const getSummary = async ({ query }: RequestExt, res: Response): Promise<void> => {
   try {
     const dates = parseDateRange(query as Record<string, any>, res)
-    if (!dates) return
+    if (dates == null) return
 
     const summary = await cashflowService.computeSummary(dates.startDate, dates.endDate)
     res.json({ summary })
@@ -70,7 +70,7 @@ export const getSummary = async ({ query }: RequestExt, res: Response): Promise<
 export const getTimeline = async ({ query }: RequestExt, res: Response): Promise<void> => {
   try {
     const dates = parseDateRange(query as Record<string, any>, res)
-    if (!dates) return
+    if (dates == null) return
 
     const movements = await cashflowService.computeMovements(dates.startDate, dates.endDate)
     // Sort ascending by cashDate (spec: "entries ordered by cash date ascending")
@@ -89,7 +89,7 @@ export const getTimeline = async ({ query }: RequestExt, res: Response): Promise
 export const getMovements = async ({ query }: RequestExt, res: Response): Promise<void> => {
   try {
     const dates = parseDateRange(query as Record<string, any>, res)
-    if (!dates) return
+    if (dates == null) return
 
     const movements = await cashflowService.computeMovements(dates.startDate, dates.endDate)
     res.json({ movements })

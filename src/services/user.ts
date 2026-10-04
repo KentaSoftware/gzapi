@@ -1,24 +1,23 @@
 import { Types } from 'mongoose'
 import { User } from '../interfaces/auth.interface'
 import UserModel from '../models/user'
-import { encrypt } from '../utils/bcrypt.handle';
+import { encrypt } from '../utils/bcrypt.handle'
 
 interface UserResponse {
-  nickname: string;
-  role: string;
-  nameRole: string;
-  isActive?: boolean;
+  nickname: string
+  role: string
+  nameRole: string
+  isActive?: boolean
 }
 
 const getAllUsers = async (): Promise<any[]> => {
   // Excluimos los campos 'password' y 'role' usando la proyección de Mongoose
-  const response = await UserModel.find({}, { password: 0, role: 0 });
-  return response;
+  const response = await UserModel.find({}, { password: 0, role: 0 })
+  return response
 }
 
 const getUserSearch = async (input: string): Promise<UserResponse[]> => {
-
-  let query: any = {
+  const query: any = {
   }
 
   if (input !== '') {
@@ -112,7 +111,6 @@ const getUserSearch = async (input: string): Promise<UserResponse[]> => {
 }
 
 const getUsers = async (skip: number, limit: number): Promise<UserResponse[]> => {
-
   const response = await UserModel.aggregate(
     [
       {
@@ -205,7 +203,7 @@ const qtyUsers = async (): Promise<any> => {
 
 const getUser = async (id: Types.ObjectId): Promise<UserResponse | null> => {
   const response = await UserModel.findById(id, { nickname: 1, role: 1, _id: 0, isActive: 1 }).populate('role')
-  if (!response) return null
+  if (response == null) return null
   return {
     nickname: response.nickname,
     role: response.role._id,
@@ -215,21 +213,21 @@ const getUser = async (id: Types.ObjectId): Promise<UserResponse | null> => {
 }
 
 const updateUser = async (id: Types.ObjectId, item: Partial<User>): Promise<any> => {
-  let updateData = { ...item };
+  let updateData = { ...item }
 
-  if (item.password && item.password !== '') {
-    updateData.password = await encrypt(item.password);
+  if (item.password != null && item.password !== '') {
+    updateData.password = await encrypt(item.password)
   } else {
-    const { password, ...updateDataWithoutPassword } = updateData;
-    updateData = updateDataWithoutPassword;
+    const { password, ...updateDataWithoutPassword } = updateData
+    updateData = updateDataWithoutPassword
   }
   const response: any = await UserModel.findByIdAndUpdate(
     id,
     updateData,
     { new: true }
-  );
+  )
 
-  if (!response) return null;
+  if (response == null) return null
 
   const user = {
     ...response._doc,
@@ -240,9 +238,9 @@ const updateUser = async (id: Types.ObjectId, item: Partial<User>): Promise<any>
     isActive: item.isActive,
     nickname: item.nickname,
     email: ''
-  };
+  }
 
-  return user;
+  return user
 }
 
 const deleteUser = async (id: Types.ObjectId): Promise<any> => {
@@ -250,4 +248,4 @@ const deleteUser = async (id: Types.ObjectId): Promise<any> => {
   return response
 }
 
-export { getUser, getUsers, updateUser, deleteUser, getUserSearch, qtyUsers, getAllUsers } 
+export { getUser, getUsers, updateUser, deleteUser, getUserSearch, qtyUsers, getAllUsers }

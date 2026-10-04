@@ -7,7 +7,7 @@
  * Design constraints (design.md):
  *  - Amount unit: plain decimal. Expense.amountCents ÷ 100 here; never reuse getSimpleResult().
  *  - Cash-date priority chain: paidAt > fecha > createdAt
- *  - Inflow filter: Sale.estado !== 'Cancelado'
+ *  - Inflow filter: Sale has paidAt (a confirmed SALE_PAYMENT projection) AND estado !== 'Cancelado'
  *  - Outflow filter Buy: Buy.estado === 'paid'
  *  - Outflow filter Expense: isDeleted is falsy
  *  - CashflowConfig singleton: upserted with openingBalance = 0 if missing
@@ -56,13 +56,16 @@ export function buildMovements (
     buys: any[]
     expenses: any[]
   },
-  period: { startDate: Date; endDate: Date }
+  period: { startDate: Date, endDate: Date }
 ): CashflowMovement[] {
   const movements: CashflowMovement[] = []
 
-  // ── Sales → inflows (exclude Cancelado) ──
+  // ── Sales → inflows (only paid sales, exclude Cancelado) ──
+  // TD-01: a registered-but-unpaid sale is not cash; only a confirmed payment
+  // writes `paidAt`, which is the single signal that a sale becomes an inflow.
   for (const sale of docs.sales) {
     if (sale.estado === 'Cancelado') continue
+    if (sale.paidAt === undefined || sale.paidAt === null) continue
     const date = resolveCashDate(sale)
     if (date < period.startDate || date > period.endDate) continue
     movements.push({
@@ -92,7 +95,7 @@ export function buildMovements (
 
   // ── Expenses → outflows (exclude soft-deleted) ──
   for (const expense of docs.expenses) {
-    if (expense.isDeleted) continue
+    if (expense.isDeleted === true) continue
     const date = resolveCashDate(expense)
     if (date < period.startDate || date > period.endDate) continue
     movements.push({
@@ -173,7 +176,7 @@ class CashflowService {
       { $setOnInsert: { openingBalance: 0 } },
       { upsert: true, new: true }
     ).lean()
-    return { openingBalance: doc!.openingBalance }
+    return { openingBalance: doc.openingBalance }
   }
 
   /**
@@ -185,7 +188,7 @@ class CashflowService {
       { $set: { openingBalance } },
       { upsert: true, new: true }
     ).lean()
-    return { openingBalance: doc!.openingBalance }
+    return { openingBalance: doc.openingBalance }
   }
 }
 

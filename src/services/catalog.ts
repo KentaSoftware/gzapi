@@ -11,7 +11,19 @@ import {
   ProductSearchQuery,
   SnapshotProduct,
   SnapshotAlias
+  ,
+  BatchCatalogSearchRequest,
+  BatchCatalogSearchResponse,
+  CatalogQuery,
+  CatalogSearchResult,
+  CatalogSearchScope,
+  ProductSummary,
+  RetrievalMethod
 } from '../interfaces/catalog.interface'
+
+// ============================================
+// BATCH CATALOG SEARCH
+// ============================================
 
 /**
  * Obtener versión del catálogo de un proveedor
@@ -19,7 +31,7 @@ import {
 export const getCatalogVersionService = async (providerId: string): Promise<CatalogVersionResponse> => {
   // Validar que el proveedor existe
   const provider = await ProviderModel.findById(providerId).lean()
-  if (!provider) {
+  if (provider == null) {
     throw new Error('PROVIDER_NOT_FOUND')
   }
 
@@ -28,7 +40,7 @@ export const getCatalogVersionService = async (providerId: string): Promise<Cata
     providerId: new Types.ObjectId(providerId)
   }).lean()
 
-  if (storedVersion) {
+  if (storedVersion != null) {
     return {
       providerId,
       version: storedVersion.version,
@@ -81,7 +93,7 @@ export const getCatalogSnapshotService = async (
 
   // Validar que el proveedor existe
   const provider = await ProviderModel.findById(providerId).lean()
-  if (!provider) {
+  if (provider == null) {
     throw new Error('PROVIDER_NOT_FOUND')
   }
 
@@ -94,7 +106,7 @@ export const getCatalogSnapshotService = async (
   }
 
   // Si hay cursor, usarlo para paginación (cursor = último _id)
-  if (cursor) {
+  if (cursor != null && cursor !== '') {
     productQuery._id = { $gt: new Types.ObjectId(cursor) }
   }
 
@@ -119,14 +131,14 @@ export const getCatalogSnapshotService = async (
     brandId: p.marca.toString(),
     categoryId: p.categoria.toString(),
     active: true, // No existe isActive en schema actual
-    barcodes: p.codigoBarra ? [p.codigoBarra] : [],
+    barcodes: p.codigoBarra != null && p.codigoBarra !== '' ? [p.codigoBarra] : [],
     skus: [], // No existe SKU en schema actual
     updatedAt: p.updatedAt
   }))
 
   // Obtener aliases del proveedor (solo si es primera página)
   let snapshotAliases: SnapshotAlias[] = []
-  if (!cursor) {
+  if (cursor == null || cursor === '') {
     const aliases = await ProductAliasModel.find({
       providerId: new Types.ObjectId(providerId),
       isActive: true
@@ -144,14 +156,14 @@ export const getCatalogSnapshotService = async (
 
   // Contar total de productos (solo si es primera página)
   let totalProducts = 0
-  if (!cursor) {
+  if (cursor == null || cursor === '') {
     totalProducts = await ProductModel.countDocuments({
       proveedor: new Types.ObjectId(providerId)
     })
   }
 
   const lastProduct = products[products.length - 1]
-  const nextCursor = hasMore && lastProduct ? lastProduct._id.toString() : null
+  const nextCursor = hasMore && lastProduct != null ? lastProduct._id.toString() : null
 
   return {
     providerId,
@@ -176,18 +188,18 @@ export const searchProductsService = async (
   const { q, providerId, barcode, sku, limit = 20 } = query
 
   // Validar que hay al menos un criterio de búsqueda
-  if (!q && !barcode && !sku) {
+  if ((q == null || q === '') && (barcode == null || barcode === '') && (sku == null || sku === '')) {
     throw new Error('SEARCH_CRITERIA_REQUIRED')
   }
 
   const results: ProductSearchResult[] = []
 
   // 1. Búsqueda por código de barras (exacta)
-  if (barcode) {
+  if (barcode != null && barcode !== '') {
     const normalizedBarcode = normalizeBarcode(barcode)
-    
+
     const matchQuery: any = { codigoBarra: normalizedBarcode }
-    if (providerId) {
+    if (providerId != null && providerId !== '') {
       matchQuery.proveedor = new Types.ObjectId(providerId)
     }
 
@@ -241,13 +253,13 @@ export const searchProductsService = async (
         productId: match.productId.toString(),
         name: match.name,
         normalizedName: normalizeText(match.name),
-        barcode: match.barcode || null,
+        barcode: match.barcode != null && match.barcode !== '' ? match.barcode : null,
         providerId: match.providerId.toString(),
-        providerName: match.providerName || '',
+        providerName: match.providerName != null && match.providerName !== '' ? match.providerName : '',
         brandId: match.brandId.toString(),
-        brandName: match.brandName || '',
+        brandName: match.brandName != null && match.brandName !== '' ? match.brandName : '',
         categoryId: match.categoryId.toString(),
-        categoryName: match.categoryName || '',
+        categoryName: match.categoryName != null && match.categoryName !== '' ? match.categoryName : '',
         matchScore: 1.0,
         matchSource: 'BARCODE'
       })
@@ -260,21 +272,21 @@ export const searchProductsService = async (
   }
 
   // 2. Búsqueda por texto (descripción)
-  if (q) {
+  if (q != null && q !== '') {
     const normalizedQuery = normalizeText(q)
-    
+
     // Primero buscar en aliases
     const aliasQuery: any = {
       aliasValueNormalized: normalizedQuery,
       isActive: true
     }
-    if (providerId) {
+    if (providerId != null && providerId !== '') {
       aliasQuery.providerId = new Types.ObjectId(providerId)
     }
 
     const aliasMatch = await ProductAliasModel.findOne(aliasQuery).lean()
-    
-    if (aliasMatch) {
+
+    if (aliasMatch != null) {
       // Encontramos alias exacto, buscar el producto
       const product = await ProductModel.aggregate([
         { $match: { _id: aliasMatch.productId } },
@@ -320,18 +332,18 @@ export const searchProductsService = async (
         }
       ])
 
-      if (product[0]) {
+      if (product[0] != null) {
         results.push({
           productId: product[0].productId.toString(),
           name: product[0].name,
           normalizedName: normalizeText(product[0].name),
-          barcode: product[0].barcode || null,
+          barcode: product[0].barcode != null && product[0].barcode !== '' ? product[0].barcode : null,
           providerId: product[0].providerId.toString(),
-          providerName: product[0].providerName || '',
+          providerName: product[0].providerName != null && product[0].providerName !== '' ? product[0].providerName : '',
           brandId: product[0].brandId.toString(),
-          brandName: product[0].brandName || '',
+          brandName: product[0].brandName != null && product[0].brandName !== '' ? product[0].brandName : '',
           categoryId: product[0].categoryId.toString(),
-          categoryName: product[0].categoryName || '',
+          categoryName: product[0].categoryName != null && product[0].categoryName !== '' ? product[0].categoryName : '',
           matchScore: aliasMatch.confidence,
           matchSource: 'ALIAS'
         })
@@ -341,11 +353,11 @@ export const searchProductsService = async (
     // Búsqueda regex en descripción
     // Escapar caracteres especiales de regex
     const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    
+
     const descQuery: any = {
       descripcion: { $regex: escapedQ, $options: 'i' }
     }
-    if (providerId) {
+    if (providerId != null && providerId !== '') {
       descQuery.proveedor = new Types.ObjectId(providerId)
     }
 
@@ -402,13 +414,13 @@ export const searchProductsService = async (
           productId: match.productId.toString(),
           name: match.name,
           normalizedName: normalizeText(match.name),
-          barcode: match.barcode || null,
+          barcode: match.barcode != null && match.barcode !== '' ? match.barcode : null,
           providerId: match.providerId.toString(),
-          providerName: match.providerName || '',
+          providerName: match.providerName != null && match.providerName !== '' ? match.providerName : '',
           brandId: match.brandId.toString(),
-          brandName: match.brandName || '',
+          brandName: match.brandName != null && match.brandName !== '' ? match.brandName : '',
           categoryId: match.categoryId.toString(),
-          categoryName: match.categoryName || '',
+          categoryName: match.categoryName != null && match.categoryName !== '' ? match.categoryName : '',
           matchScore: 0.5, // Score menor para regex
           matchSource: 'DESCRIPTION'
         })
@@ -433,7 +445,7 @@ export const getAllProvidersWithVersionService = async (): Promise<Array<{
   productCount: number
 }>> => {
   const providers = await ProviderModel.find({}).lean()
-  
+
   const results = await Promise.all(
     providers.map(async (provider) => {
       const [versionInfo, productCount] = await Promise.all([
@@ -454,59 +466,50 @@ export const getAllProvidersWithVersionService = async (): Promise<Array<{
   return results
 }
 
-// ============================================
-// BATCH CATALOG SEARCH
-// ============================================
-
-import {
-  BatchCatalogSearchRequest,
-  BatchCatalogSearchResponse,
-  CatalogQuery,
-  CatalogSearchResult,
-  CatalogSearchScope,
-  ProductSummary,
-  RetrievalMethod
-} from '../interfaces/catalog.interface'
-
 /**
  * Mapea Product de MongoDB a ProductSummary (payload liviano)
  */
-function mapToProductSummary(product: any): ProductSummary {
+function mapToProductSummary (product: any): ProductSummary {
+  const proveedor = product.proveedor?.toString()
+  const categoria = product.categoria?.toString()
+  const marca = product.marca?.toString()
   return {
     productId: product._id.toString(),
-    description: product.descripcion || product.description || '',
-    codigoBarra: product.codigoBarra || undefined,
-    proveedor: product.proveedor?.toString() || undefined,
-    categoria: product.categoria?.toString() || undefined,
-    marca: product.marca?.toString() || undefined,
-    unidad: product.unidad || undefined,
-    pack: product.pack || 1
+    description: product.descripcion != null && product.descripcion !== ''
+      ? product.descripcion
+      : (product.description != null && product.description !== '' ? product.description : ''),
+    codigoBarra: product.codigoBarra != null && product.codigoBarra !== '' ? product.codigoBarra : undefined,
+    proveedor: proveedor != null && proveedor !== '' ? proveedor : undefined,
+    categoria: categoria != null && categoria !== '' ? categoria : undefined,
+    marca: marca != null && marca !== '' ? marca : undefined,
+    unidad: product.unidad != null && product.unidad !== '' ? product.unidad : undefined,
+    pack: product.pack != null && product.pack !== 0 ? product.pack : 1
   }
 }
 
 /**
  * Búsqueda de candidatos por barcode exacto
  */
-async function searchByBarcode(
+async function searchByBarcode (
   barcode: string,
   providerId?: string,
   limit: number = 20
 ): Promise<ProductSummary[]> {
   const normalizedBarcode = normalizeBarcode(barcode)
-  
+
   const filter: any = {
     codigoBarra: normalizedBarcode
   }
-  
-  if (providerId) {
+
+  if (providerId != null && providerId !== '') {
     filter.proveedor = new Types.ObjectId(providerId)
   }
-  
+
   const products = await ProductModel.find(filter)
     .select('_id descripcion description codigoBarra proveedor categoria marca unidad pack')
     .limit(limit)
     .lean()
-  
+
   return products.map(mapToProductSummary)
 }
 
@@ -514,106 +517,106 @@ async function searchByBarcode(
  * Búsqueda de candidatos por texto
  * Estrategia: Regex con tokens normalizados
  */
-async function searchByText(
+async function searchByText (
   q: string,
   providerId?: string,
   limit: number = 20
 ): Promise<ProductSummary[]> {
   const normalized = normalizeText(q)
-  
+
   // Tokenizar query (split por espacios)
   const tokens = normalized.split(/\s+/).filter(t => t.length >= 2)
-  
+
   if (tokens.length === 0) {
     return []
   }
-  
+
   // Crear regex: buscar todos los tokens (orden independiente)
   const regexPattern = tokens.map(t => `(?=.*${t})`).join('')
   const regex = new RegExp(regexPattern, 'i')
-  
+
   const filter: any = {
     $or: [
       { descripcion: regex },
       { description: regex }
     ]
   }
-  
-  if (providerId) {
+
+  if (providerId != null && providerId !== '') {
     filter.proveedor = new Types.ObjectId(providerId)
   }
-  
+
   const products = await ProductModel.find(filter)
     .select('_id descripcion description codigoBarra proveedor categoria marca unidad pack')
     .limit(limit)
     .lean()
-  
+
   return products.map(mapToProductSummary)
 }
 
 /**
  * Procesa una query individual con scope PROVIDER_FIRST
  */
-async function processQueryProviderFirst(
+async function processQueryProviderFirst (
   query: CatalogQuery,
   providerId: string,
   topK: number,
   minCandidates: number
 ): Promise<CatalogSearchResult> {
   const methods: RetrievalMethod[] = []
-  
+
   let providerCandidates: ProductSummary[] = []
   let globalCandidates: ProductSummary[] = []
-  
+
   // 1. Búsqueda por provider
-  if (query.barcode) {
+  if (query.barcode != null && query.barcode !== '') {
     providerCandidates = await searchByBarcode(query.barcode, providerId, topK)
     methods.push(RetrievalMethod.BARCODE_EXACT)
-  } else if (query.q && query.q.length >= 2) {
+  } else if (query.q != null && query.q.length >= 2) {
     providerCandidates = await searchByText(query.q, providerId, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
-  
+
   const providerCount = providerCandidates.length
-  
+
   // 2. Si no hay suficientes, buscar global
   if (providerCount < minCandidates) {
-    if (query.barcode) {
+    if (query.barcode != null && query.barcode !== '') {
       globalCandidates = await searchByBarcode(query.barcode, undefined, topK)
-    } else if (query.q && query.q.length >= 2) {
+    } else if (query.q != null && query.q.length >= 2) {
       globalCandidates = await searchByText(query.q, undefined, topK)
     }
     methods.push(RetrievalMethod.GLOBAL_FALLBACK)
   }
-  
+
   // 3. Merge y dedup (priorizar provider)
   const allCandidates = [...providerCandidates, ...globalCandidates]
   const seen = new Set<string>()
   const unique: ProductSummary[] = []
-  
+
   for (const candidate of allCandidates) {
     if (!seen.has(candidate.productId)) {
       seen.add(candidate.productId)
       unique.push(candidate)
     }
   }
-  
+
   // 4. Limitar a topK
   const finalCandidates = unique.slice(0, topK)
-  
+
   return {
     queryId: query.queryId,
     query: {
-      q: query.q || null,
-      barcode: query.barcode || null
+      q: query.q != null && query.q !== '' ? query.q : null,
+      barcode: query.barcode != null && query.barcode !== '' ? query.barcode : null
     },
     candidates: finalCandidates,
     meta: {
       providerCount,
       globalCount: globalCandidates.length,
       totalReturned: finalCandidates.length,
-      usedScope: providerCount >= minCandidates 
-        ? CatalogSearchScope.PROVIDER_ONLY 
+      usedScope: providerCount >= minCandidates
+        ? CatalogSearchScope.PROVIDER_ONLY
         : CatalogSearchScope.PROVIDER_FIRST,
       retrievalMethods: methods,
       noCandidates: finalCandidates.length === 0
@@ -624,27 +627,27 @@ async function processQueryProviderFirst(
 /**
  * Procesa una query individual con scope PROVIDER_ONLY
  */
-async function processQueryProviderOnly(
+async function processQueryProviderOnly (
   query: CatalogQuery,
   providerId: string,
   topK: number
 ): Promise<CatalogSearchResult> {
   const methods: RetrievalMethod[] = []
   let candidates: ProductSummary[] = []
-  
-  if (query.barcode) {
+
+  if (query.barcode != null && query.barcode !== '') {
     candidates = await searchByBarcode(query.barcode, providerId, topK)
     methods.push(RetrievalMethod.BARCODE_EXACT)
-  } else if (query.q && query.q.length >= 2) {
+  } else if (query.q != null && query.q.length >= 2) {
     candidates = await searchByText(query.q, providerId, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
-  
+
   return {
     queryId: query.queryId,
     query: {
-      q: query.q || null,
-      barcode: query.barcode || null
+      q: query.q != null && query.q !== '' ? query.q : null,
+      barcode: query.barcode != null && query.barcode !== '' ? query.barcode : null
     },
     candidates,
     meta: {
@@ -661,26 +664,26 @@ async function processQueryProviderOnly(
 /**
  * Procesa una query individual con scope GLOBAL_ONLY
  */
-async function processQueryGlobalOnly(
+async function processQueryGlobalOnly (
   query: CatalogQuery,
   topK: number
 ): Promise<CatalogSearchResult> {
   const methods: RetrievalMethod[] = []
   let candidates: ProductSummary[] = []
-  
-  if (query.barcode) {
+
+  if (query.barcode != null && query.barcode !== '') {
     candidates = await searchByBarcode(query.barcode, undefined, topK)
     methods.push(RetrievalMethod.BARCODE_EXACT)
-  } else if (query.q && query.q.length >= 2) {
+  } else if (query.q != null && query.q.length >= 2) {
     candidates = await searchByText(query.q, undefined, topK)
     methods.push(RetrievalMethod.TEXT_REGEX)
   }
-  
+
   return {
     queryId: query.queryId,
     query: {
-      q: query.q || null,
-      barcode: query.barcode || null
+      q: query.q != null && query.q !== '' ? query.q : null,
+      barcode: query.barcode != null && query.barcode !== '' ? query.barcode : null
     },
     candidates,
     meta: {
@@ -701,7 +704,7 @@ export const batchCatalogSearchService = async (
   request: BatchCatalogSearchRequest
 ): Promise<BatchCatalogSearchResponse> => {
   const startTime = Date.now()
-  
+
   const {
     queries,
     providerId,
@@ -709,44 +712,44 @@ export const batchCatalogSearchService = async (
     topK = 20,
     minCandidates = 10
   } = request
-  
+
   // Procesar cada query según el scope
   const results: CatalogSearchResult[] = []
-  
+
   for (const query of queries) {
     let result: CatalogSearchResult
-    
+
     switch (scope) {
       case CatalogSearchScope.PROVIDER_ONLY:
-        if (!providerId) {
+        if (providerId == null || providerId === '') {
           throw new Error('providerId is required for PROVIDER_ONLY scope')
         }
         result = await processQueryProviderOnly(query, providerId, topK)
         break
-        
+
       case CatalogSearchScope.GLOBAL_ONLY:
         result = await processQueryGlobalOnly(query, topK)
         break
-        
+
       case CatalogSearchScope.PROVIDER_FIRST:
-        if (!providerId) {
+        if (providerId == null || providerId === '') {
           // Si no hay providerId, actuar como GLOBAL_ONLY
           result = await processQueryGlobalOnly(query, topK)
         } else {
           result = await processQueryProviderFirst(query, providerId, topK, minCandidates)
         }
         break
-        
+
       default:
         result = await processQueryGlobalOnly(query, topK)
     }
-    
+
     results.push(result)
   }
-  
+
   const executionTimeMs = Date.now() - startTime
   const avgCandidates = results.reduce((sum, r) => sum + r.candidates.length, 0) / results.length
-  
+
   return {
     success: true,
     results,

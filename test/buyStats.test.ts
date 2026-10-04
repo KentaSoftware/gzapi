@@ -184,7 +184,7 @@ describe('Phase 2 — buyStats Service', () => {
       expect(result.summary.totalAmount).to.equal(2500)
       expect(result.summary.activeSellersCount).to.equal(2)
       expect(result.summary.averageTicket).to.equal(500)
-      expect(aggregateStub.calledOnce).to.be.true
+      expect(aggregateStub.calledOnce).to.equal(true)
 
       // Verify the pipeline has $match and $group stages
       const pipeline = aggregateStub.firstCall.args[0]
@@ -259,7 +259,7 @@ describe('Phase 2 — buyStats Service', () => {
 
       expect(result.summary.totalSalesCount).to.equal(0)
       expect(result.summary.totalAmount).to.equal(0)
-      expect(result.items).to.be.an('array').that.is.empty
+      expect(result.items).to.be.an('array').with.length(0)
     })
   })
 })

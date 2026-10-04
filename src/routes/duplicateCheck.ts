@@ -12,7 +12,7 @@ const router = Router()
 /**
  * NOTA: Este router se monta en /duplicateCheck por el sistema de auto-carga
  * Para acceder: POST /duplicateCheck/drafts/:draftId/check
- * 
+ *
  * Si se requiere el path /purchase-docs/*, registrar manualmente en routes/index.ts
  */
 
@@ -36,9 +36,9 @@ const router = Router()
  */
 router.post(
   '/drafts/:draftId/check',
-  checkJwt,
-  checkPermission('read_buy'),
-  checkDuplicate
+  (req, res, next) => { void checkJwt(req, res, next) },
+  (req, res, next) => { void checkPermission('read_buy')(req, res, next) },
+  (req, res) => { void checkDuplicate(req, res) }
 )
 
 /**
@@ -57,9 +57,9 @@ router.post(
  */
 router.post(
   '/drafts/:draftId/decision',
-  checkJwt,
-  checkPermission('create_buy'),
-  registerDecision
+  (req, res, next) => { void checkJwt(req, res, next) },
+  (req, res, next) => { void checkPermission('create_buy')(req, res, next) },
+  (req, res) => { void registerDecision(req, res) }
 )
 
 /**
@@ -73,9 +73,9 @@ router.post(
  */
 router.get(
   '/drafts/:draftId/checks',
-  checkJwt,
-  checkPermission('read_buy'),
-  getCheckHistory
+  (req, res, next) => { void checkJwt(req, res, next) },
+  (req, res, next) => { void checkPermission('read_buy')(req, res, next) },
+  (req, res) => { void getCheckHistory(req, res) }
 )
 
 export { router }

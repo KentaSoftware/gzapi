@@ -5,18 +5,18 @@
 
 /**
  * Normaliza texto para matching de productos
- * 
+ *
  * Operaciones:
  * 1. Uppercase
  * 2. Remover tildes/diacríticos
  * 3. Trim + colapsar espacios múltiples
  * 4. Normalizar patrones comunes (cantidades, unidades)
- * 
+ *
  * @param input - Texto a normalizar
  * @returns Texto normalizado
  */
 export const normalizeText = (input: string | null | undefined): string => {
-  if (!input) return ''
+  if (input == null || input === '') return ''
 
   let normalized = input
     // 1. Trim inicial
@@ -39,7 +39,7 @@ export const normalizeText = (input: string | null | undefined): string => {
 
 /**
  * Normaliza patrones comunes de cantidades y unidades
- * 
+ *
  * Ejemplos:
  * - "1kg" -> "1 KG"
  * - "x12" -> "X 12"
@@ -62,7 +62,7 @@ const normalizeQuantityPatterns = (text: string): string => {
     { pattern: /(\d+(?:[.,]\d+)?)\s*(UN|UNI|UNID|UNIDADES?)/gi, replacement: '$1 UN' },
     // Multiplicador X (ej: x12, X 12)
     { pattern: /\bX\s*(\d+)/gi, replacement: 'X $1' },
-    { pattern: /(\d+)\s*X\b/gi, replacement: '$1 X' },
+    { pattern: /(\d+)\s*X\b/gi, replacement: '$1 X' }
   ]
 
   let result = text
@@ -80,8 +80,8 @@ const normalizeQuantityPatterns = (text: string): string => {
  * - Solo deja dígitos
  */
 export const normalizeBarcode = (barcode: string | null | undefined): string => {
-  if (!barcode) return ''
-  return barcode.replace(/[\s\-]/g, '').replace(/\D/g, '')
+  if (barcode == null || barcode === '') return ''
+  return barcode.replace(/[\s-]/g, '').replace(/\D/g, '')
 }
 
 /**
@@ -100,6 +100,6 @@ export const generateVersion = (): string => {
  * Valida si un string es un ObjectId válido de MongoDB
  */
 export const isValidObjectId = (id: string | null | undefined): boolean => {
-  if (!id) return false
+  if (id == null || id === '') return false
   return /^[a-fA-F0-9]{24}$/.test(id)
 }

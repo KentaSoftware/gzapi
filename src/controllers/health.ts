@@ -15,7 +15,7 @@ export const healthCheck = (_req: Request, res: Response): void => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     mongodb: {
-      status: mongoStates[mongoStatus] || 'unknown',
+      status: mongoStates[mongoStatus] ?? 'unknown',
       readyState: mongoStatus
     },
     memory: {

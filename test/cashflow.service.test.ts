@@ -80,7 +80,7 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     ]
     const result = buildMovements({ sales: [], buys: [], expenses }, period)
     const exp = result.find((m: any) => m.source === 'expense')
-    expect(exp).to.exist
+    expect(exp).to.not.equal(undefined)
     expect(exp.amount).to.equal(1500.00)
   })
 
@@ -91,12 +91,13 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
         total: 2000.50,
         estado: 'Entregado',
         cliente: 'Test Client',
+        paidAt: makeDate('2026-03-05'),
         createdAt: makeDate('2026-03-05')
       }
     ]
     const result = buildMovements({ sales, buys: [], expenses: [] }, period)
     const sale = result.find((m: any) => m.source === 'sale')
-    expect(sale).to.exist
+    expect(sale).to.not.equal(undefined)
     expect(sale.amount).to.equal(2000.50)
   })
 
@@ -112,15 +113,15 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     ]
     const result = buildMovements({ sales: [], buys, expenses: [] }, period)
     const buy = result.find((m: any) => m.source === 'buy')
-    expect(buy).to.exist
+    expect(buy).to.not.equal(undefined)
     expect(buy.amount).to.equal(800.00)
   })
 
   // ── Inflow Filter (Sale) ──
 
-  it('includes Sale with estado != Cancelado as inflow', () => {
+  it('includes a PAID sale as inflow', () => {
     const sales = [
-      { _id: 's1', total: 100, estado: 'Entregado', cliente: 'C1', createdAt: makeDate('2026-03-05') }
+      { _id: 's1', total: 100, estado: 'Entregado', cliente: 'C1', paidAt: makeDate('2026-03-05'), createdAt: makeDate('2026-03-05') }
     ]
     const result = buildMovements({ sales, buys: [], expenses: [] }, period)
     expect(result.some((m: any) => m.source === 'sale' && m.type === 'inflow')).to.equal(true)
@@ -128,7 +129,15 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
 
   it('excludes Sale with estado = Cancelado', () => {
     const sales = [
-      { _id: 's2', total: 200, estado: 'Cancelado', cliente: 'C2', createdAt: makeDate('2026-03-05') }
+      { _id: 's2', total: 200, estado: 'Cancelado', cliente: 'C2', paidAt: makeDate('2026-03-05'), createdAt: makeDate('2026-03-05') }
+    ]
+    const result = buildMovements({ sales, buys: [], expenses: [] }, period)
+    expect(result.some((m: any) => m.source === 'sale')).to.equal(false)
+  })
+
+  it('T-B.7 regression: a registered sale without a confirmed payment is not an inflow', () => {
+    const sales = [
+      { _id: 's3', total: 100, estado: 'Entregado', cliente: 'C3', createdAt: makeDate('2026-03-05') }
     ]
     const result = buildMovements({ sales, buys: [], expenses: [] }, period)
     expect(result.some((m: any) => m.source === 'sale')).to.equal(false)

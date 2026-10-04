@@ -19,13 +19,16 @@ import * as path from 'path'
 import axios from 'axios'
 
 // Configuración de Document AI
-const DOCUMENT_AI_URL = process.env.DOCUMENT_AI_URL || 'http://localhost:8000'
-const DOCUMENT_AI_TIMEOUT = parseInt(process.env.DOCUMENT_AI_TIMEOUT || '240000', 10)
-const DOCUMENT_AI_DEBUG = parseInt(process.env.DOCUMENT_AI_DEBUG || '1', 10) // 0=off, 1=on (Document AI solo acepta bool)
+const DOCUMENT_AI_URL_ENV = process.env.DOCUMENT_AI_URL
+const DOCUMENT_AI_URL = DOCUMENT_AI_URL_ENV != null && DOCUMENT_AI_URL_ENV !== '' ? DOCUMENT_AI_URL_ENV : 'http://localhost:8000'
+const DOCUMENT_AI_TIMEOUT_ENV = process.env.DOCUMENT_AI_TIMEOUT
+const DOCUMENT_AI_TIMEOUT = parseInt(DOCUMENT_AI_TIMEOUT_ENV != null && DOCUMENT_AI_TIMEOUT_ENV !== '' ? DOCUMENT_AI_TIMEOUT_ENV : '240000', 10)
+const DOCUMENT_AI_DEBUG_ENV = process.env.DOCUMENT_AI_DEBUG
+const DOCUMENT_AI_DEBUG = parseInt(DOCUMENT_AI_DEBUG_ENV != null && DOCUMENT_AI_DEBUG_ENV !== '' ? DOCUMENT_AI_DEBUG_ENV : '1', 10) // 0=off, 1=on (Document AI solo acepta bool)
 /**
  * Delay con exponential backoff
  */
-const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+const delay = async (ms: number): Promise<void> => await new Promise(resolve => setTimeout(resolve, ms))
 
 /**
  * Transforma el resultado de Document AI al formato esperado por DraftPurchaseDoc
@@ -35,51 +38,69 @@ const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
 const transformDocumentAIResult = (aiResult: any): AnalyzeResult => {
   // Helper para extraer valor de objeto estructurado o devolver el valor directo
   const extractValue = (field: any): any => {
-    if (field && typeof field === 'object' && 'value' in field) {
+    if (field != null && typeof field === 'object' && 'value' in field) {
       return field.value
     }
     return field
   }
 
+  const header = aiResult.header
+  const providerNameExtracted = header != null ? extractValue(header.provider?.name) : undefined
+  const providerNameHas = Boolean(providerNameExtracted)
+  const providerIdExtracted = header != null ? extractValue(header.provider?.id) : undefined
+  const providerIdHas = Boolean(providerIdExtracted)
+  const totalConfidence = header?.total?.confidence
+  const totalConfidenceHas = Boolean(totalConfidence)
+  const globalConfidence = aiResult.confidenceGlobal
+  const globalConfidenceHas = Boolean(globalConfidence)
+
   return {
     header: {
-      documentNumber: aiResult.header ? extractValue(aiResult.header.documentNumber) : undefined,
-      documentDate: aiResult.header ? extractValue(aiResult.header.date) : undefined,
-      providerName: aiResult.header ? (extractValue(aiResult.header.provider?.name) || aiResult.header.provider?.name) : undefined,
-      providerId: aiResult.header ? (extractValue(aiResult.header.provider?.id) || aiResult.header.provider?.id) : undefined,
-      total: aiResult.header ? extractValue(aiResult.header.total) : undefined,
-      confidence: aiResult.header ? (aiResult.header.total?.confidence || aiResult.confidenceGlobal || 0) : 0
+      documentNumber: header != null ? extractValue(header.documentNumber) : undefined,
+      documentDate: header != null ? extractValue(header.date) : undefined,
+      providerName: header != null
+        ? (providerNameHas ? providerNameExtracted : header.provider?.name)
+        : undefined,
+      providerId: header != null
+        ? (providerIdHas ? providerIdExtracted : header.provider?.id)
+        : undefined,
+      total: header != null ? extractValue(header.total) : undefined,
+      confidence: header != null
+        ? (totalConfidenceHas ? totalConfidence : (globalConfidenceHas ? globalConfidence : 0))
+        : 0
     },
     items: aiResult.items?.map((item: any, index: number) => {
       // Construir catalogMatch con sugerencias si existen
-      let catalogMatch: any = undefined
-      
-      if (item.catalogLink) {
+      let catalogMatch: any
+      const catalogLink = item.catalogLink
+
+      if (catalogLink != null) {
+        const linkedProductId = catalogLink.linkedProductId
+        const linkedProductIdHas = Boolean(linkedProductId)
         // Si hay producto vinculado, crear match completo
-        if (item.catalogLink.linkedProductId) {
+        if (linkedProductIdHas) {
           catalogMatch = {
-            productId: item.catalogLink.linkedProductId,
+            productId: linkedProductId,
             description: item.normalizedDescription,
             confidence: 1.0,
             method: 'AI_LINKED',
             source: 'DOCUMENT_AI',
-            candidates: item.catalogLink.suggestions?.map((sug: any) => ({
+            candidates: catalogLink.suggestions?.map((sug: any) => ({
               productId: sug.productId,
               description: sug.description,
               score: sug.score
-            })) || []
+            })) ?? []
           }
-        } 
         // Si hay sugerencias pero no match, crear solo con candidates
-        else if (item.catalogLink.suggestions && item.catalogLink.suggestions.length > 0) {
-          const topSuggestion = item.catalogLink.suggestions[0]
+        } else if (catalogLink.suggestions != null && catalogLink.suggestions.length > 0) {
+          const topSuggestion = catalogLink.suggestions[0]
           catalogMatch = {
             productId: topSuggestion.productId,
             description: topSuggestion.description,
             confidence: topSuggestion.score,
-            method: topSuggestion.reason || 'FUZZY_MATCH',
-            source: topSuggestion.source || 'CATALOG_SEARCH',
-            candidates: item.catalogLink.suggestions.map((sug: any) => ({
+            method: topSuggestion.reason != null && topSuggestion.reason !== '' ? topSuggestion.reason : 'FUZZY_MATCH',
+            source: topSuggestion.source != null && topSuggestion.source !== '' ? topSuggestion.source : 'CATALOG_SEARCH',
+            candidates: catalogLink.suggestions.map((sug: any) => ({
               productId: sug.productId,
               description: sug.description,
               score: sug.score
@@ -88,21 +109,36 @@ const transformDocumentAIResult = (aiResult: any): AnalyzeResult => {
         }
       }
 
+      const lineId = item.lineId
+      const lineIdHas = Boolean(lineId)
+      const normalizedDescription = item.normalizedDescription
+      const normalizedDescriptionHas = Boolean(normalizedDescription)
+      const rawDescription = item.rawDescription
+      const rawDescriptionHas = Boolean(rawDescription)
+      const quantity = extractValue(item.quantity)
+      const quantityHas = Boolean(quantity)
+      const unitPrice = extractValue(item.unitPrice)
+      const unitPriceHas = Boolean(unitPrice)
+      const subtotal = extractValue(item.subtotal)
+      const subtotalHas = Boolean(subtotal)
+
       return {
-        itemId: item.lineId || `L${index + 1}`,
-        description: item.normalizedDescription || item.rawDescription || '',
-        quantity: extractValue(item.quantity) || 0,
-        unitPrice: extractValue(item.unitPrice) || 0,
-        subtotal: extractValue(item.subtotal) || 0,
+        itemId: lineIdHas ? lineId : `L${index + 1}`,
+        description: normalizedDescriptionHas
+          ? normalizedDescription
+          : (rawDescriptionHas ? rawDescription : ''),
+        quantity: quantityHas ? quantity : 0,
+        unitPrice: unitPriceHas ? unitPrice : 0,
+        subtotal: subtotalHas ? subtotal : 0,
         barcode: extractValue(item.productCode),
         catalogMatch
       }
-    }) || [],
+    }) ?? [],
     meta: {
-      itemsProcessed: aiResult.items?.length || 0,
-      itemsWithMatch: aiResult.items?.filter((i: any) => i.catalogLink?.linkedProductId).length || 0,
-      itemsWithoutMatch: aiResult.items?.filter((i: any) => !i.catalogLink?.linkedProductId).length || 0,
-      avgConfidence: aiResult.confidenceGlobal || 0
+      itemsProcessed: aiResult.items?.length ?? 0,
+      itemsWithMatch: aiResult.items?.filter((i: any) => i.catalogLink?.linkedProductId).length ?? 0,
+      itemsWithoutMatch: aiResult.items?.filter((i: any) => (i.catalogLink?.linkedProductId == null || i.catalogLink?.linkedProductId === '')).length ?? 0,
+      avgConfidence: globalConfidenceHas ? globalConfidence : 0
     }
   }
 }
@@ -143,8 +179,8 @@ export const updateDraft = async (
  */
 export const listUserDrafts = async (
   userId: Types.ObjectId,
-  options: { skip?: number; limit?: number; status?: DraftStatus } = {}
-): Promise<{ drafts: DraftPurchaseDoc[]; total: number }> => {
+  options: { skip?: number, limit?: number, status?: DraftStatus } = {}
+): Promise<{ drafts: DraftPurchaseDoc[], total: number }> => {
   const { skip = 0, limit = 50, status } = options
   const filter: any = { userId }
   if (status) {
@@ -171,30 +207,30 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`[Document AI] Intento ${attempt}/${maxRetries} para draft ${draft._id} DebugMode=${DOCUMENT_AI_DEBUG > 0 ? 'ON' : 'OFF'}`)
+      console.log(`[Document AI] Intento ${attempt}/${maxRetries} para draft ${String(draft._id)} DebugMode=${DOCUMENT_AI_DEBUG > 0 ? 'ON' : 'OFF'}`)
 
       // Construir ruta absoluta del archivo desde la raíz del proyecto
       // draft.file.path viene como "/uploads/purchase-docs/filename.jpg"
       const absolutePath = path.join(process.cwd(), 'public', draft.file.path)
-      
+
       console.log(`[Document AI] Verificando archivo: ${absolutePath}`)
-      
+
       if (!fs.existsSync(absolutePath)) {
         throw new Error(`Archivo no encontrado: ${absolutePath}`)
       }
-      
-      console.log(`[Document AI] Archivo encontrado, enviando a Document AI...`)
+
+      console.log('[Document AI] Archivo encontrado, enviando a Document AI...')
 
       // Preparar FormData para multipart/form-data
       const FormData = (await import('form-data')).default
       const formData = new FormData()
-      
+
       // Agregar archivo
       formData.append('file', fs.createReadStream(absolutePath), {
         filename: draft.file.filename,
         contentType: draft.file.mimeType
       })
-      
+
       // Agregar context como JSON string en Form
       const contextData = {
         draftId: draft._id?.toString(),
@@ -210,13 +246,13 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
 
       // Preparar headers
       const headers: any = formData.getHeaders() // Incluir headers con boundary
-      
+
       // Agregar Authorization header si está disponible
-      if (authToken) {
-        headers['Authorization'] = authToken // Ya incluye "Bearer "
-        console.log(`[Document AI] Enviando con token de autenticación`)
+      if (authToken != null && authToken !== '') {
+        headers.Authorization = authToken // Ya incluye "Bearer "
+        console.log('[Document AI] Enviando con token de autenticación')
       } else {
-        console.log(`[Document AI] Enviando sin token de autenticación`)
+        console.log('[Document AI] Enviando sin token de autenticación')
       }
 
       // Llamar a Document AI usando axios con FormData
@@ -229,25 +265,25 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
 
       // Document AI devuelve el resultado directamente (no tiene wrapper success/data)
       const aiResult = response.data
-      
+
       // Transformar resultado de Document AI al formato esperado por DraftPurchaseDoc
       const result: AnalyzeResult = transformDocumentAIResult(aiResult)
 
-      console.log(`[Document AI] Análisis exitoso para draft ${draft._id}`)
+      console.log(`[Document AI] Análisis exitoso para draft ${String(draft._id)}`)
       return result
     } catch (error) {
       // Manejar errores de axios
       if (axios.isAxiosError(error)) {
-        const status = error.response?.status || 'Unknown'
-        const statusText = error.response?.statusText || ''
-        const errorData = error.response?.data ? JSON.stringify(error.response.data) : error.message
-        
+        const status = error.response?.status ?? 'Unknown'
+        const statusText = error.response?.statusText ?? ''
+        const errorData = error.response?.data != null ? JSON.stringify(error.response.data) : error.message
+
         console.error(`[Document AI] Error ${status}:`, errorData)
         lastError = new Error(`Document AI error: ${status} ${statusText} - ${errorData}`)
       } else {
         lastError = error as Error
       }
-      
+
       console.error(`[Document AI] Error en intento ${attempt}:`, lastError)
 
       // Si es un error de timeout o red, reintentar con backoff
@@ -260,7 +296,7 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
   }
 
   // Si llegamos aquí, todos los intentos fallaron
-  const errorMessage = lastError
+  const errorMessage = (lastError != null)
     ? `Document AI no responde: ${lastError.message}`
     : 'Error desconocido en Document AI'
 
@@ -276,20 +312,20 @@ export const runDuplicateCheck = async (
 ): Promise<PossibleDuplicate | null> => {
   try {
     // Si no hay header o datos mínimos, no podemos verificar duplicados
-    if (!analysis.header || !analysis.header.total) {
-      console.log(`[Duplicate Check] Sin datos suficientes en draft ${draftId}`)
+    if (analysis.header == null || analysis.header.total == null || analysis.header.total === 0) {
+      console.log(`[Duplicate Check] Sin datos suficientes en draft ${String(draftId)}`)
       return null
     }
 
     // Validar que hay providerId (requerido por CheckDuplicateRequestDTO)
-    if (!analysis.header.providerId) {
-      console.log(`[Duplicate Check] Sin providerId en draft ${draftId}, omitiendo verificación`)
+    if (analysis.header.providerId == null || analysis.header.providerId === '') {
+      console.log(`[Duplicate Check] Sin providerId en draft ${String(draftId)}, omitiendo verificación`)
       return null
     }
 
     // Validar que hay fecha
-    if (!analysis.header.documentDate) {
-      console.log(`[Duplicate Check] Sin fecha en draft ${draftId}, omitiendo verificación`)
+    if (analysis.header.documentDate == null || analysis.header.documentDate === '') {
+      console.log(`[Duplicate Check] Sin fecha en draft ${String(draftId)}, omitiendo verificación`)
       return null
     }
 
@@ -307,21 +343,21 @@ export const runDuplicateCheck = async (
 
     // Mapear respuesta al formato PossibleDuplicate
     const possibleDuplicate: PossibleDuplicate = {
-      checkId: duplicateResult.checkId || draftId.toString(),
+      checkId: duplicateResult.checkId != null && duplicateResult.checkId !== '' ? duplicateResult.checkId : draftId.toString(),
       status: duplicateResult.isPossibleDuplicate ? 'SUSPECTED_DUPLICATE' : 'CLEAN',
       duplicates: duplicateResult.candidates.map(candidate => ({
         purchaseId: candidate.existingBuyId,
         documentNumber: candidate.existingDocNumber,
-        documentDate: candidate.existingDate ? new Date(candidate.existingDate).toISOString().split('T')[0] : undefined,
+        documentDate: candidate.existingDate != null && candidate.existingDate !== '' ? new Date(candidate.existingDate).toISOString().split('T')[0] : undefined,
         providerId: analysis.header.providerId,
-        total: candidate.existingTotal || 0,
-        createdAt: candidate.existingDate ? new Date(candidate.existingDate) : new Date(),
+        total: candidate.existingTotal ?? 0,
+        createdAt: candidate.existingDate != null && candidate.existingDate !== '' ? new Date(candidate.existingDate) : new Date(),
         score: candidate.score * 100, // Convertir a porcentaje
         reasons: candidate.reasons.map(reason => ({
           strategy: reason,
           match: true,
           score: 100,
-          boost: candidate.matchedOn.docNumber ? 3 : candidate.matchedOn.fingerprint ? 2 : 1
+          boost: candidate.matchedOn.docNumber === true ? 3 : (candidate.matchedOn.fingerprint === true ? 2 : 1)
         }))
       })),
       canProceed: !duplicateResult.isPossibleDuplicate || duplicateResult.recommendation !== 'PROMPT_USER',
@@ -331,7 +367,7 @@ export const runDuplicateCheck = async (
         : 'No se encontraron duplicados'
     }
 
-    console.log(`[Duplicate Check] Resultado para draft ${draftId}: ${possibleDuplicate.status}`)
+    console.log(`[Duplicate Check] Resultado para draft ${String(draftId)}: ${possibleDuplicate.status}`)
     return possibleDuplicate
   } catch (error) {
     console.error('[Duplicate Check] Error:', error)
@@ -345,32 +381,32 @@ export const runDuplicateCheck = async (
  */
 export const processDraft = async (draftId: Types.ObjectId, authToken?: string): Promise<DraftPurchaseDoc> => {
   const draft = await getDraftById(draftId)
-  if (!draft) {
+  if (draft == null) {
     throw new Error('Draft no encontrado')
   }
 
   try {
     // 1. Analizar con Document AI
-    console.log(`[Process Draft] Iniciando análisis para draft ${draftId}`)
+    console.log(`[Process Draft] Iniciando análisis para draft ${String(draftId)}`)
     const analysisResult = await analyzeDraftWithAI(draft, authToken)
 
     // 2. Ejecutar duplicate check
-    console.log(`[Process Draft] Ejecutando duplicate check para draft ${draftId}`)
+    console.log(`[Process Draft] Ejecutando duplicate check para draft ${String(draftId)}`)
     const possibleDuplicate = await runDuplicateCheck(draftId, analysisResult)
 
     // 3. Actualizar draft con resultados
     const updatedDraft = await updateDraft(draftId, {
       status: DraftStatus.READY,
       analysisResult,
-      possibleDuplicate: possibleDuplicate || undefined,
+      possibleDuplicate: possibleDuplicate ?? undefined,
       error: undefined
     })
 
-    if (!updatedDraft) {
+    if (updatedDraft == null) {
       throw new Error('Error actualizando draft')
     }
 
-    console.log(`[Process Draft] Draft ${draftId} procesado exitosamente`)
+    console.log(`[Process Draft] Draft ${String(draftId)} procesado exitosamente`)
     return updatedDraft
   } catch (error) {
     // Guardar error en draft
@@ -385,7 +421,7 @@ export const processDraft = async (draftId: Types.ObjectId, authToken?: string):
       error: errorObj
     })
 
-    console.error(`[Process Draft] Error procesando draft ${draftId}:`, error)
+    console.error(`[Process Draft] Error procesando draft ${String(draftId)}:`, error)
     throw error
   }
 }
@@ -400,17 +436,17 @@ const createProduct = async (productData: NewProductData, userId: Types.ObjectId
     marca: productData.marca,
     proveedor: productData.proveedor,
     codigoBarra: productData.codigoBarra,
-    precioCompra: productData.precioCompra || 0,
-    precioUnitario: productData.precioUnitario || 0,
-    stock: productData.stock || 0,
+    precioCompra: productData.precioCompra ?? 0,
+    precioUnitario: productData.precioUnitario ?? 0,
+    stock: productData.stock ?? 0,
     bulto: productData.bulto,
     precioBulto: productData.precioBulto,
     estado: 'activo',
     user: userId
   })
 
-  console.log(`[Create Product] Producto creado: ${product._id} - ${productData.descripcion}`)
-  return product._id as Types.ObjectId
+  console.log(`[Create Product] Producto creado: ${String(product._id)} - ${productData.descripcion}`)
+  return product._id
 }
 
 /**
@@ -421,11 +457,11 @@ export const confirmDraft = async (
   userId: Types.ObjectId,
   headerEdits?: HeaderEdits,
   items?: ConfirmItem[],
-  duplicateDecision?: { checkId?: string; decision?: 'CANCEL' | 'PROCEED'; reason?: string }
-): Promise<{ buyId: Types.ObjectId; draftId: Types.ObjectId }> => {
+  duplicateDecision?: { checkId?: string, decision?: 'CANCEL' | 'PROCEED', reason?: string }
+): Promise<{ buyId: Types.ObjectId, draftId: Types.ObjectId }> => {
   // 1. Validar que draft existe y está READY
   const draft = await getDraftById(draftId)
-  if (!draft) {
+  if (draft == null) {
     throw new Error('Draft no encontrado')
   }
 
@@ -433,12 +469,12 @@ export const confirmDraft = async (
     throw new Error(`Draft no está listo para confirmar. Estado actual: ${draft.status}`)
   }
 
-  if (!draft.analysisResult) {
+  if (draft.analysisResult == null) {
     throw new Error('Draft no tiene resultado de análisis')
   }
 
   // 2. Validar decisión sobre duplicados si es necesario
-  if (draft.possibleDuplicate?.requiresDecision && !duplicateDecision?.decision) {
+  if (draft.possibleDuplicate?.requiresDecision === true && duplicateDecision?.decision == null) {
     throw new Error('Se requiere decisión sobre duplicados detectados')
   }
 
@@ -448,51 +484,53 @@ export const confirmDraft = async (
 
   // 3. Preparar header de la compra (usar ediciones o análisis)
   const header = {
-    providerId: headerEdits?.providerId || draft.analysisResult.header.providerId,
-    documentDate: headerEdits?.documentDate || draft.analysisResult.header.documentDate,
-    documentNumber: headerEdits?.documentNumber || draft.analysisResult.header.documentNumber,
-    total: headerEdits?.total || draft.analysisResult.header.total
+    providerId: headerEdits?.providerId != null && headerEdits?.providerId !== '' ? headerEdits.providerId : draft.analysisResult.header.providerId,
+    documentDate: headerEdits?.documentDate != null && headerEdits?.documentDate !== '' ? headerEdits.documentDate : draft.analysisResult.header.documentDate,
+    documentNumber: headerEdits?.documentNumber != null && headerEdits?.documentNumber !== '' ? headerEdits.documentNumber : draft.analysisResult.header.documentNumber,
+    total: headerEdits?.total ?? draft.analysisResult.header.total
   }
 
   // Validar header mínimo
-  if (!header.providerId || !header.total) {
+  if (header.providerId == null || header.providerId === '' || header.total == null || header.total === 0) {
     throw new Error('Header incompleto: se requiere providerId y total')
   }
 
   // 4. Procesar items
-  const processedItems: Array<{ productId: Types.ObjectId; quantity: number; unitPrice: number; subtotal: number }> = []
+  const processedItems: Array<{ productId: Types.ObjectId, quantity: number, unitPrice: number, subtotal: number }> = []
 
   // Si no se envían items, usar los del análisis
-  const itemsToProcess: ConfirmItem[] = items && items.length > 0 ? items : draft.analysisResult.items.map(item => ({
-    lineId: item.itemId,
-    chosenProductId: item.catalogMatch?.productId,
-    quantity: item.quantity,
-    unitPrice: item.unitPrice,
-    subtotal: item.subtotal
-  }))
+  const itemsToProcess: ConfirmItem[] = (items != null) && items.length > 0
+    ? items
+    : draft.analysisResult.items.map(item => ({
+      lineId: item.itemId,
+      chosenProductId: item.catalogMatch?.productId,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      subtotal: item.subtotal
+    }))
 
   for (const item of itemsToProcess) {
     let productId: Types.ObjectId
 
-    if (item.chosenProductId) {
+    if (item.chosenProductId != null && item.chosenProductId !== '') {
       // Usar producto existente
       productId = new Types.ObjectId(item.chosenProductId)
-    } else if (item.newProduct) {
+    } else if (item.newProduct != null) {
       // Crear producto nuevo
       productId = await createProduct(item.newProduct, userId)
     } else {
       // Política estricta: cada item debe tener producto asignado
       const analysisItem = draft.analysisResult.items.find(ai => ai.itemId === item.lineId)
       throw new Error(
-        `Item sin producto asignado: ${item.lineId} (${analysisItem?.description || 'descripción desconocida'})`
+        `Item sin producto asignado: ${item.lineId} (${analysisItem?.description != null && analysisItem?.description !== '' ? analysisItem.description : 'descripción desconocida'})`
       )
     }
 
     processedItems.push({
       productId,
-      quantity: item.quantity || 0,
-      unitPrice: item.unitPrice || 0,
-      subtotal: item.subtotal || 0
+      quantity: item.quantity ?? 0,
+      unitPrice: item.unitPrice ?? 0,
+      subtotal: item.subtotal ?? 0
     })
   }
 
@@ -506,22 +544,22 @@ export const confirmDraft = async (
     total: header.total,
     user: userId,
     proveedor: header.providerId,
-    fecha: header.documentDate ? new Date(header.documentDate) : new Date(),
+    fecha: header.documentDate != null && header.documentDate !== '' ? new Date(header.documentDate) : new Date(),
     docNumber: header.documentNumber,
-    fingerprint: `${header.providerId}-${header.documentDate}-${header.total}` // Simple fingerprint
+    fingerprint: `${header.providerId ?? ''}-${header.documentDate ?? ''}-${String(header.total ?? '')}` // Simple fingerprint
   })
 
-  console.log(`[Confirm Draft] Compra creada: ${buy._id}`)
+  console.log(`[Confirm Draft] Compra creada: ${String(buy._id)}`)
 
   // 6. Crear items de compra (ItemBuy)
   await Promise.all(
-    processedItems.map(item =>
-      insertItemBuy({
+    processedItems.map(async item =>
+      await insertItemBuy({
         idProducto: item.productId,
         total: item.subtotal,
         cantidad: item.quantity,
         precio: item.unitPrice,
-        idBuy: buy._id as Types.ObjectId,
+        idBuy: buy._id,
         estado: true
       })
     )
@@ -541,14 +579,14 @@ export const confirmDraft = async (
   // 8. Actualizar draft como confirmado
   await updateDraft(draftId, {
     status: DraftStatus.CONFIRMED,
-    confirmedBuyId: buy._id as Types.ObjectId,
+    confirmedBuyId: buy._id,
     confirmedAt: new Date()
   })
 
-  console.log(`[Confirm Draft] Draft ${draftId} confirmado exitosamente`)
+  console.log(`[Confirm Draft] Draft ${String(draftId)} confirmado exitosamente`)
 
   return {
-    buyId: buy._id as Types.ObjectId,
+    buyId: buy._id,
     draftId
   }
 }

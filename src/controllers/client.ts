@@ -28,7 +28,6 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
     }
     const response = await getClients(parseInt(skip), parseInt(limit))
     res.send(response)
-    return
   } catch (e) {
     handleHttp(res, 'ERROR_GET_CLIENTS_LIST', e)
   }

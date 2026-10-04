@@ -26,7 +26,7 @@ describe('TICKET-002: Sale interface', () => {
   it('module loads without error (retrocompatible — no required paidAt)', () => {
     // If ISale required paidAt, existing code using Sale without it would fail tsc.
     // At runtime, just assert the module loaded cleanly.
-    expect(SaleModel).to.exist
+    expect(SaleModel).to.not.equal(undefined)
   })
 })
 
@@ -44,7 +44,7 @@ describe('TICKET-002: Buy interface', () => {
   })
 
   it('module loads without error (retrocompatible — no required paidAt)', () => {
-    expect(BuyModel).to.exist
+    expect(BuyModel).to.not.equal(undefined)
   })
 })
 
@@ -77,4 +77,3 @@ describe('TICKET-002: cashflow.interface types', () => {
     expect(iface).to.be.an('object')
   })
 })
-

@@ -11,30 +11,18 @@
  * the frozen clock, and structural presence of period in controller responses.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { expect } = require('chai')
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const sinon = require('sinon')
-
-// ── Load models before service/controller (so stubs work on the cached module) ─
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const BuyModel = require('../src/models/buy').default
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const SaleModel = require('../src/models/sale').default
-
-// Lazy-load modules after potential stub setup
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const dataset = require('../src/services/dataset')
-
-let datasetController: any
-function getController (): any {
-  if (!datasetController) {
-    datasetController = require('../src/controllers/dataset')
-  }
-  return datasetController
-}
+import { expect } from 'chai'
+import sinon from 'sinon'
+import BuyModel from '../src/models/buy'
+import SaleModel from '../src/models/sale'
+import * as dataset from '../src/services/dataset'
+import * as datasetControllerModule from '../src/controllers/dataset'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function getController (): typeof datasetControllerModule {
+  return datasetControllerModule
+}
 
 function makeRes (): any {
   const res: any = {}
@@ -53,10 +41,10 @@ const FROZEN_UTC = new Date('2026-06-11T15:00:00.000Z').getTime()
 // ─── Phase 1: resolveDatasetPeriod unit tests ──────────────────────────────────
 
 describe('P5 — resolveDatasetPeriod', () => {
-  let clock: any
+  let clock: sinon.SinonFakeTimers | null = null
 
   afterEach(() => {
-    if (clock) {
+    if (clock !== null) {
       clock.restore()
       clock = null
     }

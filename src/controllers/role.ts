@@ -60,7 +60,7 @@ const updateItem = async ({ params, body }: Request, res: Response): Promise<voi
   try {
     const { id } = params
     const response = await updateRole(new Types.ObjectId(id), body)
-    if (!response) {
+    if (response == null) {
       res.status(404).send({ error: 'Role not found' })
       return
     }
@@ -78,7 +78,7 @@ const deleteItem = async ({ params }: Request, res: Response): Promise<void> => 
   try {
     const { id } = params
     const response = await deleteRole(new Types.ObjectId(id))
-    if (!response) {
+    if (response == null) {
       res.status(404).send({ error: 'Role not found' })
       return
     }
@@ -92,4 +92,4 @@ const deleteItem = async ({ params }: Request, res: Response): Promise<void> => 
   }
 }
 
-export { getItem, getItems, updateItem, deleteItem, createItem } 
+export { getItem, getItems, updateItem, deleteItem, createItem }

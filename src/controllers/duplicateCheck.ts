@@ -16,21 +16,21 @@ interface RequestExt extends Request {
  * POST /api/purchase-docs/drafts/:draftId/check-duplicate
  * Verifica si existe un posible duplicado en el sistema
  */
-export const checkDuplicate = async (req: RequestExt, res: Response) => {
+export const checkDuplicate = async (req: RequestExt, res: Response): Promise<any> => {
   try {
     const { draftId } = req.params
     const dto: CheckDuplicateRequestDTO = req.body
     const userId = req.user?.id
 
     // Validaciones
-    if (!dto.providerId) {
+    if (dto.providerId == null || dto.providerId === '') {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'providerId is required'
       })
     }
 
-    if (!dto.date) {
+    if (dto.date == null || dto.date === '') {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'date is required (format: YYYY-MM-DD)'
@@ -59,7 +59,7 @@ export const checkDuplicate = async (req: RequestExt, res: Response) => {
     return res.status(200).json(result)
   } catch (error) {
     console.error('[DUPLICATE_CHECK] Error:', error)
-    return handleHttp(res, 'ERROR_CHECK_DUPLICATE', error)
+    handleHttp(res, 'ERROR_CHECK_DUPLICATE', error)
   }
 }
 
@@ -67,13 +67,13 @@ export const checkDuplicate = async (req: RequestExt, res: Response) => {
  * POST /api/purchase-docs/drafts/:draftId/duplicate-decision
  * Registra la decisión del usuario ante una advertencia de duplicado
  */
-export const registerDecision = async (req: RequestExt, res: Response) => {
+export const registerDecision = async (req: RequestExt, res: Response): Promise<any> => {
   try {
     const { draftId } = req.params
     const dto: DuplicateDecisionRequestDTO = req.body
     const userId = req.user?.id
 
-    if (!userId) {
+    if (userId == null || userId === '') {
       return res.status(401).json({
         error: 'UNAUTHORIZED',
         message: 'User not authenticated'
@@ -81,7 +81,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
     }
 
     // Validaciones
-    if (!dto.decision) {
+    if (dto.decision == null || String(dto.decision) === '') {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'decision is required'
@@ -98,14 +98,14 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
       })
     }
 
-    if (!dto.criteriaTriggered || dto.criteriaTriggered.length === 0) {
+    if (dto.criteriaTriggered == null || dto.criteriaTriggered.length === 0) {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'criteriaTriggered is required'
       })
     }
 
-    if (!dto.candidates || dto.candidates.length === 0) {
+    if (dto.candidates == null || dto.candidates.length === 0) {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
         message: 'candidates is required'
@@ -121,7 +121,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
       draftId
     }).sort({ createdAt: -1 })
 
-    if (!checkRecord) {
+    if (checkRecord == null) {
       return res.status(404).json({
         error: 'CHECK_NOT_FOUND',
         message: 'No duplicate check found for this draft'
@@ -130,7 +130,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
 
     // Registrar decisión
     await recordDecision(
-      checkRecord._id!.toString(),
+      checkRecord._id.toString(),
       dto.decision,
       userId,
       dto.selectedExistingBuyId
@@ -139,11 +139,11 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
     return res.status(200).json({
       success: true,
       message: 'Decision recorded successfully',
-      checkId: checkRecord._id!.toString()
+      checkId: checkRecord._id.toString()
     })
   } catch (error) {
     console.error('[DUPLICATE_DECISION] Error:', error)
-    return handleHttp(res, 'ERROR_REGISTER_DECISION', error)
+    handleHttp(res, 'ERROR_REGISTER_DECISION', error)
   }
 }
 
@@ -151,7 +151,7 @@ export const registerDecision = async (req: RequestExt, res: Response) => {
  * GET /api/purchase-docs/drafts/:draftId/duplicate-checks
  * Obtiene el historial de checks de duplicado para un draft
  */
-export const getCheckHistory = async (req: RequestExt, res: Response) => {
+export const getCheckHistory = async (req: RequestExt, res: Response): Promise<any> => {
   try {
     const { draftId } = req.params
 
@@ -173,6 +173,6 @@ export const getCheckHistory = async (req: RequestExt, res: Response) => {
     })
   } catch (error) {
     console.error('[DUPLICATE_CHECK_HISTORY] Error:', error)
-    return handleHttp(res, 'ERROR_GET_CHECK_HISTORY', error)
+    handleHttp(res, 'ERROR_GET_CHECK_HISTORY', error)
   }
 }

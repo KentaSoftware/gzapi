@@ -2,66 +2,70 @@ import { NextFunction, Request, Response } from 'express'
 import { JwtPayload } from 'jsonwebtoken'
 import UserModel from '../models/user'
 import mongoose from 'mongoose'
+import { sendErrorEnvelope } from '../utils/error.handle'
+
+interface UserRole {
+  permissions?: string[]
+}
+
+interface AuthenticatedUser extends JwtPayload {
+  id?: string
+  role?: UserRole
+}
 
 interface RequestExt extends Request {
-  user?: string | JwtPayload | any
+  user?: string | AuthenticatedUser
 }
 
 const checkPermission = (action: string) => {
   return async (req: RequestExt, res: Response, next: NextFunction): Promise<void> => {
     try {
-      // Verificar estado de conexión a MongoDB
       if (mongoose.connection.readyState !== 1) {
-        console.error('❌ [checkPermission] MongoDB no conectado. Estado:', mongoose.connection.readyState)
-        res.status(503)
-        res.send('BASE_DE_DATOS_NO_DISPONIBLE')
+        console.warn(JSON.stringify({ event: 'authorization_unavailable', correlationId: res.locals.correlationId }))
+        sendErrorEnvelope(res, 503, 'DATABASE_UNAVAILABLE', 'Authorization service is unavailable')
         return
       }
 
-      const user = req.user as any
+      const user = typeof req.user === 'string' ? undefined : req.user
 
-      if (!user || !user.role || !user.role.permissions) {
-        res.status(403)
-        res.send('TOKEN_NO_VALIDO_O_SIN_PERMISOS')
+      if (user === undefined || user.role === undefined || user.role.permissions === undefined) {
+        console.warn(JSON.stringify({ event: 'authorization_denied', correlationId: res.locals.correlationId, reason: 'missing_permissions' }))
+        sendErrorEnvelope(res, 403, 'PERMISSION_DENIED', 'Permission is denied')
         return
       }
-      
-      // Verificar si el usuario tiene el permiso específico
+
       const hasPermission = user.role.permissions.includes(action)
 
       if (!hasPermission) {
-        res.status(403)
-        res.send('PERMISO_NO_ENCONTRADO')
+        console.warn(JSON.stringify({ event: 'authorization_denied', correlationId: res.locals.correlationId, reason: 'missing_permission' }))
+        sendErrorEnvelope(res, 403, 'PERMISSION_DENIED', 'Permission is denied')
         return
       }
 
-      // Agregar el ID del usuario a la respuesta
       res.locals.userId = user.id
 
       const usuarioDB = await UserModel.findById(user.id)
         .maxTimeMS(5000) // Timeout de 5 segundos para la query
         .lean()
 
-      if (!usuarioDB || usuarioDB.isActive !== true) {
-        res.status(403)
-        res.send('USUARIO_NO_ACTIVO')
+      if (usuarioDB === null || usuarioDB === undefined || !usuarioDB.isActive) {
+        console.warn(JSON.stringify({ event: 'authorization_denied', correlationId: res.locals.correlationId, reason: 'inactive_user' }))
+        sendErrorEnvelope(res, 403, 'PERMISSION_DENIED', 'Permission is denied')
         return
       }
 
       next()
-    } catch (e: any) {
-      console.error('❌ [checkPermission] Error verificando permisos:', e.message)
-      console.error('❌ [checkPermission] Stack:', e.stack)
-      
-      if (e.name === 'MongooseError' || e.name === 'MongoError') {
-        res.status(503)
-        res.send('ERROR_BASE_DE_DATOS')
+    } catch (error: unknown) {
+      const errorName = error instanceof Error ? error.name : ''
+      if (errorName === 'MongooseError' || errorName === 'MongoError') {
+        console.warn(JSON.stringify({ event: 'authorization_unavailable', correlationId: res.locals.correlationId }))
+        sendErrorEnvelope(res, 503, 'DATABASE_UNAVAILABLE', 'Authorization service is unavailable')
       } else {
-        res.status(403)
-        res.send('ERROR_VERIFICANDO_PERMISOS')
+        console.warn(JSON.stringify({ event: 'authorization_denied', correlationId: res.locals.correlationId, reason: 'verification_failed' }))
+        sendErrorEnvelope(res, 403, 'PERMISSION_DENIED', 'Permission is denied')
       }
     }
   }
 }
 
-export { checkPermission } 
+export { checkPermission }

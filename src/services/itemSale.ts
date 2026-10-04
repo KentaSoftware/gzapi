@@ -85,7 +85,7 @@ const getItemSale = async (id: Types.ObjectId): Promise<any> => {
         $sort: { descripcion: 1 } // Ordena alfabéticamente por el campo 'descripcion' (1 = ascendente, -1 = descendente)
       }
     ]
-  );
+  )
 }
 
 const updateItemsSale = async (id: Types.ObjectId, item: Partial<ItemSale>): Promise<any> => {
@@ -107,10 +107,9 @@ const deleteItemsSale = async (id: Types.ObjectId): Promise<any> => {
 }
 
 const getListBuyAvg = async (prov: string): Promise<any> => {
-
-  const hoy = new Date();
-  const startDate = startOfWeek(subWeeks(hoy, 4));
-  const endDate = endOfWeek(subWeeks(hoy, 1));
+  const hoy = new Date()
+  const startDate = startOfWeek(subWeeks(hoy, 4))
+  const endDate = endOfWeek(subWeeks(hoy, 1))
 
   try {
     const result = await ItemSaleModel.aggregate([
@@ -129,20 +128,20 @@ const getListBuyAvg = async (prov: string): Promise<any> => {
       {
         $group: {
           _id: {
-            week: { $week: "$createdAt" },
-            productId: "$idProducto"
+            week: { $week: '$createdAt' },
+            productId: '$idProducto'
           },
-          weeklySales: { $sum: "$cantidad" },
-          createdAt: { $first: "$createdAt" },
-          precioCompra: { $first: "$precioCompra" }
+          weeklySales: { $sum: '$cantidad' },
+          createdAt: { $first: '$createdAt' },
+          precioCompra: { $first: '$precioCompra' }
         }
       },
       {
         $group: {
-          _id: "$_id.productId",
-          totalSales: { $sum: "$weeklySales" },
-          weeklyAverages: { $avg: "$weeklySales" },
-          productDetails: { $first: "$productData" }
+          _id: '$_id.productId',
+          totalSales: { $sum: '$weeklySales' },
+          weeklyAverages: { $avg: '$weeklySales' },
+          productDetails: { $first: '$productData' }
         }
       },
       {
@@ -181,25 +180,24 @@ const getListBuyAvg = async (prov: string): Promise<any> => {
       },
       {
         $match: {
-          proveedor: prov,
+          proveedor: prov
         }
       },
       {
         $sort: { descripcion: -1 }
       }
-    ]);
+    ])
 
-    return result;
+    return result
   } catch (error) {
-    console.error('Error en la consulta:', error);
-    throw error;
+    console.error('Error en la consulta:', error)
+    throw error
   }
-};
+}
 
 const getListBuyByDateRange = async (start: string, end: string, prov: string): Promise<any> => {
-
-  const startDate = new Date(start);
-  const endDate = new Date(end);
+  const startDate = new Date(start)
+  const endDate = new Date(end)
 
   const response = await ItemSaleModel.aggregate([
     {
@@ -240,9 +238,9 @@ const getListBuyByDateRange = async (start: string, end: string, prov: string): 
     },
     {
       $group: {
-        _id: "$idProducto",
-        cantidad: { $sum: "$cantidad" },
-        createdAt: { $first: "$createdAt" }
+        _id: '$idProducto',
+        cantidad: { $sum: '$cantidad' },
+        createdAt: { $first: '$createdAt' }
       }
     },
     {
@@ -276,14 +274,14 @@ const getListBuyByDateRange = async (start: string, end: string, prov: string): 
         precio: { $ifNull: ['$producto.precioCompra', '$producto.precioUnitario'] },
         proveedor: '$proveedor.descripcion',
         cantidad: 1,
-        createdAt: "$createdAt",
+        createdAt: '$createdAt',
         total: { $multiply: [{ $ifNull: ['$producto.precioCompra', '$producto.precioUnitario'] }, '$cantidad'] },
-        fechaVenta: 1,
+        fechaVenta: 1
       }
     },
     {
       $match: {
-        proveedor: prov,
+        proveedor: prov
       }
     },
     {

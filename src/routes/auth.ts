@@ -5,9 +5,7 @@ import { checkPermission } from '../middleware/checkPermission'
 
 const router = Router()
 
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/register', checkJwt, checkPermission('create_user'), registerCtrl)
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
-router.post('/login', loginCtrl)
+router.post('/register', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_user')(req, res, next) }, (req, res) => { void registerCtrl(req, res) })
+router.post('/login', (req, res) => { void loginCtrl(req, res) })
 
 export { router }

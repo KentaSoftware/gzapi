@@ -1,5 +1,5 @@
-import { model, Schema } from "mongoose"
-import { City } from "../interfaces/client.interface"
+import { model, Schema } from 'mongoose'
+import { City } from '../interfaces/client.interface'
 
 const CitySchema = new Schema<City>(
   {

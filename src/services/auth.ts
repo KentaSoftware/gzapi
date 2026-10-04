@@ -1,9 +1,7 @@
-import { Auth, AuthWithToken } from '../interfaces/auth.interface'
+import { Auth, AuthWithToken, User } from '../interfaces/auth.interface'
 import UserModel from '../models/user'
 import { encrypt, verified } from '../utils/bcrypt.handle'
 import { generateToken } from '../utils/jwt.handle'
-import _ from 'lodash'
-import { User } from '../interfaces/auth.interface'
 
 const registerNewUser = async ({ nickname, password, role, nameRole }: Partial<User>): Promise<Auth | string> => {
   const checkIs = await UserModel.findOne({ nickname })
@@ -12,10 +10,10 @@ const registerNewUser = async ({ nickname, password, role, nameRole }: Partial<U
   const registerNewUser: any = await UserModel.create({
     nickname,
     password: passHash,
-    role: role ? role : '',
+    role: (role != null) ? role : '',
     isActive: true
   })
-  const user = { ...registerNewUser._doc, password: undefined, nameRole: nameRole, role: role }
+  const user = { ...registerNewUser._doc, password: undefined, nameRole, role }
   return user
 }
 

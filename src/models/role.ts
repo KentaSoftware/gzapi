@@ -1,7 +1,6 @@
 import { Schema, model } from 'mongoose'
 import { Role } from '../interfaces/auth.interface'
 
-
 const RoleSchema = new Schema<Role>(
   {
     name: {
@@ -25,4 +24,4 @@ const RoleSchema = new Schema<Role>(
 )
 
 const RoleModel = model('role', RoleSchema)
-export default RoleModel 
+export default RoleModel

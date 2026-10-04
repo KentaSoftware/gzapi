@@ -12,10 +12,10 @@
  * - Error path: stub BuyModel.aggregate to reject → expect 500 via handleHttp
  */
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { expect } = require('chai')
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const sinon = require('sinon')
+import { expect } from 'chai'
+import sinon from 'sinon'
+import BuyModel from '../src/models/buy'
+import * as buyController from '../src/controllers/buy'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -30,21 +30,9 @@ function makeReq (overrides: object = {}): any {
   return { body: {}, params: {}, query: {}, ...overrides }
 }
 
-// ── Load modules before controller (so we can stub Mongoose) ──────────────────
-
-const BuyModel = require('../src/models/buy').default
-
-// Lazy-load controller so the first call captures stubs correctly.
-let controller: any
-
-function getController (): any {
-  if (!controller) {
-    controller = require('../src/controllers/buy')
-  }
-  return controller
-}
-
 // ── Phase 3: Controller Tests ─────────────────────────────────────────────────
+
+const getController = (): typeof buyController => buyController
 
 describe('Phase 3 — getBuyStatsByUserController', () => {
   afterEach(() => {
@@ -126,7 +114,7 @@ describe('Phase 3 — getBuyStatsByUserController', () => {
     await getController().getBuyStatsByUserController(req, res)
 
     const data = res.send.firstCall.args[0]
-    expect(data.items).to.be.an('array').that.is.empty
+    expect(data.items).to.be.an('array').with.length(0)
     expect(data.summary.totalSalesCount).to.equal(0)
   })
 

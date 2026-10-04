@@ -12,6 +12,8 @@ import { getClient } from '../services/client'
 import { getSaleStatsByUser, getSaleStatsOverview } from '../services/saleStats'
 import { parseSaleStatsRequest } from '../utils/statsDateRange'
 import { STATS_SCOPE, type StatsValidationFailure } from '../interfaces/saleStats.interface'
+import { commitSaleReference } from '../services/commercialPorts'
+import { isPhase0ContractsEnabled } from '../config/phase0'
 
 interface RequestExt extends Request {
   user?: string | JwtPayload | undefined | any
@@ -40,6 +42,13 @@ const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void
     await Promise.all(
       body.itemsSale.map(async (item: any) => await insertItemSale({ idProducto: item._id, total: item.total, cantidad: item.cantidad, idVenta: response._id, estado: true, precioUnitario: item.precio }))
     )
+    if (isPhase0ContractsEnabled()) {
+      await commitSaleReference({
+        saleId: String(response._id),
+        lines: body.itemsSale,
+        actorId: String(user.id)
+      })
+    }
     emitSocket('sale', {
       action: 'create',
       data: response
@@ -52,9 +61,8 @@ const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void
 
 const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
-    await Promise.all(
+    const created = await Promise.all(
       body.map(async (item: any) => {
-
         // Ejecutar insertSale y esperar a que termine antes de continuar con insertItemSale
         const response = await insertSale({ ...item, user: new Types.ObjectId(user.id) })
 
@@ -66,12 +74,22 @@ const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Prom
               total: item.total,
               cantidad: item.cantidad,
               idVenta: response._id,
-              estado: true, precioUnitario: item.precio
+              estado: true,
+              precioUnitario: item.precio
             })
           )
         )
+
+        return { saleId: String(response._id), lines: item.itemsSale }
       })
     )
+    if (isPhase0ContractsEnabled()) {
+      await Promise.all(
+        created.map(async ({ saleId, lines }: { saleId: string, lines: any[] }) =>
+          await commitSaleReference({ saleId, lines, actorId: String(user.id) })
+        )
+      )
+    }
     /*   */
     emitSocket('sale', {
       action: 'create',
@@ -88,7 +106,7 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const { id } = params
     const response = await getSale(new Types.ObjectId(id))
     const response2 = await getItemSale(new Types.ObjectId(id))
-    const response3 = response[0].idCliente ? await getClient(new Types.ObjectId(response[0].idCliente.toString())) : null
+    const response3 = (response[0].idCliente != null) ? await getClient(new Types.ObjectId(String(response[0].idCliente))) : null
     res.send({ r: response[0], itemsSale: response2, cliente: response3 })
   } catch (e) {
     handleHttp(res, 'ERROR_GET_SALE_BY_ID', e)
@@ -105,7 +123,7 @@ const getItems = async ({ body, user }: RequestExt, res: Response): Promise<void
     } else {
       const response = await getSalesLimit(parseInt(skip), parseInt(limit), new Types.ObjectId(user.id), user.role, filterUser)
       const cantidad = await qtySale(filterUser)
-      console.log("cantidad", cantidad)
+      console.log('cantidad', cantidad)
       res.send({ array: response, longitud: cantidad })
     }
   } catch (e) {
@@ -165,7 +183,7 @@ const updateItem = async ({ params, body }: RequestExt, res: Response): Promise<
         }
       })
     )
-    console.log("response", response)
+    console.log('response', response)
     emitSocket('sale', {
       action: 'update',
       data: response
@@ -248,7 +266,7 @@ const printSale = async (req: Request, res: Response): Promise<void> => {
       }
 
       const descripcion = item.descripcion ?? 'Sin descripción'
-      const precioUnitario = (item.precio ? item.precio : item.precioUnitario) ?? 0
+      const precioUnitario = (item.precio != null && item.precio !== 0 ? item.precio : item.precioUnitario) ?? 0
 
       // Agregar texto en las celdas
       doc.fillColor('black')
@@ -315,7 +333,6 @@ const printSales = async (req: Request, res: Response): Promise<void> => {
       let xPosition = (columna - 1) * invoiceWidth
       let yPosition = (fila - 1) * invoiceHeight
 
-
       // Encabezado de la factura
       const drawHeader = (): any => {
         doc.image(logoPath, xPosition + (invoiceWidth - logoWidth) / 2, yPosition + 20, { width: logoWidth })
@@ -365,7 +382,7 @@ const printSales = async (req: Request, res: Response): Promise<void> => {
       itemsSale.forEach((item: ItemSale, indexItemSale: number) => {
         const descripcion = item.descripcion ?? 'Sin descripción'
 
-        const precioUnitario = (item.precio ? item.precio : item.precioUnitario) ?? 0
+        const precioUnitario = (item.precio != null && item.precio !== 0 ? item.precio : item.precioUnitario) ?? 0
 
         if (itemsCount === 18) {
           currentPage++

@@ -3,7 +3,7 @@ import { connect, connection } from 'mongoose'
 
 async function dbConnect (): Promise<void> {
   const MONGODB_URI = process.env.MONGODB_URI as string
-  
+
   try {
     await connect(MONGODB_URI, {
       // Configuración simplificada para MongoDB local

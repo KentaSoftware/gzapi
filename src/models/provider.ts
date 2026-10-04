@@ -3,9 +3,9 @@ import { Provider } from '../interfaces/product.interface'
 
 const ProviderSchema = new Schema<Provider>(
   {
-    descripcion : {
-        type: String,
-        require: true
+    descripcion: {
+      type: String,
+      require: true
     }
   },
   {

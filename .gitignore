@@ -6,3 +6,4 @@ backups/
 # test/ — unignored for cash-flow-real-v1 (TICKET-003)
 public/uploads/
 openspec
+/.atl/
