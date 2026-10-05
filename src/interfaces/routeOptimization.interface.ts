@@ -150,3 +150,24 @@ export interface RouteHeuristicResult {
   distanceMeters: number
   durationSeconds: number
 }
+
+export interface RouteMatrixRequest {
+  origins: RouteLocation[]
+  destinations: RouteLocation[]
+}
+
+export interface RouteMatrix {
+  segments: RouteMatrixSegment[]
+}
+
+export interface FinalRouteRequest {
+  origin: RouteLocation
+  intermediates: RouteLocation[]
+  destination: RouteLocation
+}
+
+export interface FinalRoute {
+  encodedPolyline: string
+  distanceMeters: number
+  durationSeconds: number
+}
