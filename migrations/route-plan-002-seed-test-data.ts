@@ -118,11 +118,11 @@ interface SaleFixture {
 
 // Tucuman localities resolved at the town/locality level, not the department.
 const ZONE_FIXTURES: ZoneFixture[] = [
-  { key: 'tafi-del-valle', code: 'TAFI_DEL_VALLE', name: 'Tafí del Valle', latitude: -26.8529, longitude: -65.7089 },
-  { key: 'el-mollar', code: 'EL_MOLLAR', name: 'El Mollar', latitude: -26.9282, longitude: -65.7155 },
-  { key: 'monteros', code: 'MONTEROS', name: 'Monteros', latitude: -27.1676, longitude: -65.4992 },
-  { key: 'los-sarmientos', code: 'LOS_SARMIENTOS', name: 'Los Sarmientos', latitude: -27.1584, longitude: -65.4883 },
-  { key: 'aguilares', code: 'AGUILARES', name: 'Aguilares', latitude: -27.4312, longitude: -65.6169 }
+  { key: 'tafi-del-valle', code: 'TAFI_DEL_VALLE', name: 'Tafí del Valle', latitude: -26.8666667, longitude: -65.6833333 },
+  { key: 'el-mollar', code: 'EL_MOLLAR', name: 'El Mollar', latitude: -26.9209985, longitude: -65.6939078 },
+  { key: 'monteros', code: 'MONTEROS', name: 'Monteros', latitude: -27.1666667, longitude: -65.5 },
+  { key: 'los-sarmientos', code: 'LOS_SARMIENTOS', name: 'Los Sarmientos', latitude: -27.4138889, longitude: -65.69 },
+  { key: 'aguilares', code: 'AGUILARES', name: 'Aguilares', latitude: -27.43096, longitude: -65.61302 }
 ]
 
 // Deterministic sub-kilometer offsets keep each client inside its locality footprint.
