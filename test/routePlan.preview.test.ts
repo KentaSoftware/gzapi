@@ -112,7 +112,9 @@ describe('Route plan preview', () => {
     .set('Authorization', `Bearer ${authorizedToken}`)
     .send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String) })
 
-  it('S-25: requires authentication and create_route_plan before preview work', async () => {
+  it('S-25/TC-017: requires authentication and create_route_plan before preview work', async () => {
+    const matrix = sinon.stub(routeMatrixProvider, 'computeMatrix')
+    const finalRoute = sinon.stub(routeMatrixProvider, 'computeRoute')
     const unauthenticated = await request(app).post('/routePlan/preview').send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: [String(new Types.ObjectId())] })
     const forbidden = await request(app).post('/routePlan/preview').set('Authorization', `Bearer ${unauthorizedToken}`).send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: [String(new Types.ObjectId())] })
 
@@ -120,6 +122,9 @@ describe('Route plan preview', () => {
     expect(unauthenticated.body.code).to.equal('AUTHENTICATION_INVALID')
     expect(forbidden.status).to.equal(403)
     expect(forbidden.body.code).to.equal('PERMISSION_DENIED')
+    expect(matrix.called).to.equal(false)
+    expect(finalRoute.called).to.equal(false)
+    expect(await RoutePlanModel.countDocuments({})).to.equal(0)
   })
 
   it('S-20: rejects invalid input and duplicate selected sales', async () => {
@@ -165,7 +170,7 @@ describe('Route plan preview', () => {
     }
   })
 
-  it('S-02: groups sales by client and returns an unpersisted complete preview with fuel', async () => {
+  it('S-02/TC-011: groups sales by client and returns an unpersisted complete preview with fuel', async () => {
     const firstClientId = await createEligibleClient('First customer', -34.61, -58.41)
     const secondClientId = await createEligibleClient('Second customer', -34.62, -58.42)
     const firstSaleId = await createSale(firstClientId)
@@ -194,9 +199,10 @@ describe('Route plan preview', () => {
     expect(response.body.ruleVersion).to.equal('candidate-eligibility-v1')
     expect(await SaleModel.find({}).sort({ _id: 1 }).lean()).to.deep.equal(salesBefore)
     expect(await ClientModel.find({}).sort({ _id: 1 }).lean()).to.deep.equal(clientsBefore)
+    expect(await RoutePlanModel.countDocuments({})).to.equal(0)
   })
 
-  it('S-22: returns typed provider failure without a partial preview', async () => {
+  it('S-22/TC-032: returns typed provider failure without a partial preview', async () => {
     const clientId = await createEligibleClient('Provider customer', -34.61, -58.41)
     const saleId = await createSale(clientId)
     await configureRouting()
@@ -209,7 +215,7 @@ describe('Route plan preview', () => {
     expect(response.body.route).to.equal(undefined)
   })
 
-  it('S-21: rejects a selection that exceeds the configured stop limit before any provider call', async () => {
+  it('S-21/TC-014: rejects a selection that exceeds the configured stop limit before any provider call', async () => {
     const firstClientId = await createEligibleClient('Limit customer one', -34.61, -58.41)
     const secondClientId = await createEligibleClient('Limit customer two', -34.62, -58.42)
     const firstSaleId = await createSale(firstClientId)
@@ -301,5 +307,30 @@ describe('Route plan preview', () => {
 
     expect(previewResponse.status).to.equal(422)
     expect(previewResponse.body.code).to.equal('INVALID_CONFIGURATION')
+  })
+
+  it('TC-021: route preview logs exclude client addresses, coordinates, and request bodies', async () => {
+    const clientId = await createEligibleClient('Sensitive customer', -34.61, -58.41)
+    const saleId = await createSale(clientId)
+    await configureRouting()
+    sinon.stub(routeMatrixProvider, 'computeMatrix').callsFake(async ({ origins }) => ({
+      segments: origins.flatMap((from, fromIndex) => origins.filter((to) => to.id !== from.id).map((to, toIndex) => ({ fromId: from.id, toId: to.id, distanceMeters: (fromIndex + toIndex + 1) * 1000, durationSeconds: (fromIndex + toIndex + 1) * 60 })))
+    }))
+    sinon.stub(routeMatrixProvider, 'computeRoute').resolves({ encodedPolyline: 'encoded-route', distanceMeters: 12000, durationSeconds: 900 })
+    const log = sinon.stub(console, 'log')
+
+    try {
+      const response = await previewRequest([saleId])
+
+      expect(response.status).to.equal(200)
+      const output = log.getCalls().map((call) => call.args.join(' ')).join('\n')
+      expect(output).to.contain('route_plan_preview_completed')
+      expect(output).to.not.contain('Sensitive customer')
+      expect(output).to.not.contain('Sensitive customer address')
+      expect(output).to.not.contain('-34.61')
+      expect(output).to.not.contain('-58.41')
+    } finally {
+      log.restore()
+    }
   })
 })

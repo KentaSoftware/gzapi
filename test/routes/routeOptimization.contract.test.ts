@@ -34,7 +34,7 @@ describe('Route optimization data contracts', () => {
     expect(routingConfigIndexes.some(([keys, options]) => keys.key === 1 && options.name === 'idx_unique_routing_config_key' && options.unique === true)).to.equal(true)
   })
 
-  it('accepts complete route-plan snapshots and rejects incomplete snapshots', () => {
+  it('accepts complete route-plan snapshots and rejects incomplete snapshots (TC-032)', () => {
     const snapshot = {
       planningDate: new Date('2026-10-04T00:00:00.000Z'),
       zoneSnapshot: { code: 'NORTE', normalizedName: 'norte', name: 'Norte' },
@@ -53,7 +53,7 @@ describe('Route optimization data contracts', () => {
     expect(routePlanSnapshotSchema.safeParse({ ...snapshot, selectedSaleIds: [] }).success).to.equal(false)
   })
 
-  it('indexes route plans for zone/date and creator/date while keeping snapshots immutable', () => {
+  it('indexes route plans for zone/date and creator/date while keeping snapshots immutable (TC-031)', () => {
     const routePlanIndexes = RoutePlanModel.schema.indexes()
 
     expect(routePlanIndexes.some(([keys, options]) => keys['zoneSnapshot.code'] === 1 && keys.planningDate === 1 && options.name === 'idx_route_plan_zone_date')).to.equal(true)
@@ -72,7 +72,7 @@ describe('Route optimization data contracts', () => {
     }
   })
 
-  it('validates delivery states without defaulting historical sales into delivery workflows', async () => {
+  it('validates delivery states without defaulting historical sales into delivery workflows (TC-013)', async () => {
     const sale = {
       estado: 'Pendiente',
       total: 100,

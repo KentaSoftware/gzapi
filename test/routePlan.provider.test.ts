@@ -48,7 +48,7 @@ describe('Google Routes provider', () => {
     delete process.env.GOOGLE_MAPS_SERVER_API_KEY
   })
 
-  it('S-22: fails closed without configuration and makes no HTTP request', async () => {
+  it('S-22/TC-011: fails closed without configuration and makes no HTTP request', async () => {
     delete process.env.GOOGLE_MAPS_SERVER_API_KEY
 
     await expectProviderFailure(async () => await computeMatrix({ origins: locations, destinations: locations }), 'ROUTING_PROVIDER_UNAVAILABLE')
@@ -56,7 +56,7 @@ describe('Google Routes provider', () => {
     expect(post.called).to.equal(false)
   })
 
-  it('S-23: retries one timeout and returns normalized matrix segments', async () => {
+  it('S-23/TC-011: retries one timeout and returns normalized matrix segments', async () => {
     post.onFirstCall().rejects({ code: 'ECONNABORTED' })
     post.onSecondCall().resolves({ data: matrixResponse })
 
@@ -77,7 +77,7 @@ describe('Google Routes provider', () => {
     expect(post.callCount).to.equal(2)
   })
 
-  it('S-22: classifies 4xx request rejection and quota exhaustion without retrying', async () => {
+  it('S-22/TC-015: classifies 4xx request rejection and quota exhaustion without retrying', async () => {
     post.rejects({ response: { status: 400, data: { error: { status: 'INVALID_ARGUMENT' } } } })
 
     await expectProviderFailure(async () => await computeMatrix({ origins: locations, destinations: locations }), 'ROUTING_PROVIDER_REQUEST_REJECTED')
@@ -91,13 +91,13 @@ describe('Google Routes provider', () => {
     expect(post.callCount).to.equal(1)
   })
 
-  it('S-20: rejects a malformed matrix response instead of returning a partial matrix', async () => {
+  it('S-20/TC-014: rejects a malformed matrix response instead of returning a partial matrix', async () => {
     post.resolves({ data: [matrixResponse[0]] })
 
     await expectProviderFailure(async () => await computeMatrix({ origins: locations, destinations: locations }), 'ROUTE_MATRIX_INCOMPLETE')
   })
 
-  it('S-20: normalizes final-route geometry and metrics and rejects malformed responses', async () => {
+  it('S-20/TC-015: normalizes final-route geometry and metrics and rejects malformed responses', async () => {
     post.resolves({ data: finalRouteResponse })
 
     const route = await computeRoute({

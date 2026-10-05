@@ -97,7 +97,9 @@ describe('Route plan snapshots', () => {
     zoneId = zone._id
   })
 
-  it('requires authentication and the matching permissions for snapshot save and reads', async () => {
+  it('S-25/TC-017: requires authentication and the matching permissions for snapshot save and reads', async () => {
+    const matrix = sinon.stub(routeMatrixProvider, 'computeMatrix')
+    const finalRoute = sinon.stub(routeMatrixProvider, 'computeRoute')
     const unauthenticatedSave = await request(app).post('/routePlan').send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: [String(new Types.ObjectId())] })
     const forbiddenSave = await request(app).post('/routePlan').set('Authorization', `Bearer ${unauthorizedToken}`).send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: [String(new Types.ObjectId())] })
     const unauthenticatedRead = await request(app).get('/routePlan')
@@ -107,9 +109,12 @@ describe('Route plan snapshots', () => {
     expect(forbiddenSave.status).to.equal(403)
     expect(unauthenticatedRead.status).to.equal(401)
     expect(forbiddenRead.status).to.equal(403)
+    expect(matrix.called).to.equal(false)
+    expect(finalRoute.called).to.equal(false)
+    expect(await RoutePlanModel.countDocuments({})).to.equal(0)
   })
 
-  it('creates a new immutable grouped snapshot for every successful request and reads it without providers', async () => {
+  it('S-03/TC-013: creates a new immutable grouped snapshot for every successful request and reads it without providers', async () => {
     const firstSaleId = await createEligibleSale('First customer', -34.61, -58.41)
     const firstSale = await SaleModel.findById(firstSaleId).lean()
     const secondSale = await SaleModel.create({
@@ -142,6 +147,12 @@ describe('Route plan snapshots', () => {
     expect(await SaleModel.find({}).sort({ _id: 1 }).lean()).to.deep.equal(salesBefore)
     expect(await ClientModel.find({}).sort({ _id: 1 }).lean()).to.deep.equal(clientsBefore)
 
+    const persistedSale = await SaleModel.findById(firstSaleId).lean()
+    expect(persistedSale?.estado).to.equal('CREATED')
+    expect(persistedSale?.delivery?.status).to.equal('PENDING')
+    expect(persistedSale?.delivery?.deliveredAt).to.equal(undefined)
+    expect(await RoutePlanModel.countDocuments({})).to.equal(2)
+
     sinon.restore()
     const providerOutage = sinon.stub(routeMatrixProvider, 'computeMatrix').rejects(new Error('provider should not be called'))
     const firstSnapshotId: string = firstSave.body._id
@@ -154,5 +165,32 @@ describe('Route plan snapshots', () => {
     expect(byId.body._id).to.equal(firstSave.body._id)
     expect(byId.body).to.deep.equal(firstSave.body)
     expect(providerOutage.called).to.equal(false)
+  })
+
+  it('S-24: saving a suggestion never executes logistics or changes sale state', async () => {
+    const saleId = await createEligibleSale('Logistics customer', -34.61, -58.41)
+    await configureRoute()
+    sinon.stub(routeMatrixProvider, 'computeMatrix').callsFake(async ({ origins }) => ({
+      segments: origins.flatMap((from, fromIndex) => origins.filter((to) => to.id !== from.id).map((to, toIndex) => ({ fromId: from.id, toId: to.id, distanceMeters: (fromIndex + toIndex + 1) * 1000, durationSeconds: (fromIndex + toIndex + 1) * 60 })))
+    }))
+    sinon.stub(routeMatrixProvider, 'computeRoute').resolves({ encodedPolyline: 'encoded-route', distanceMeters: 12000, durationSeconds: 900 })
+
+    const response = await snapshotRequest([saleId])
+
+    expect(response.status).to.equal(201)
+    const sale = await SaleModel.findById(saleId).lean()
+    expect(sale?.estado).to.equal('CREATED')
+    expect(sale?.delivery?.status).to.equal('PENDING')
+    expect(sale?.delivery?.deliveredAt).to.equal(undefined)
+
+    const snapshot = await RoutePlanModel.findById(response.body._id).lean()
+    for (const executionField of ['assignedVehicle', 'assignedDriver', 'driver', 'vehicle', 'executedAt', 'startedAt', 'routeStatus']) {
+      expect(snapshot).to.not.have.property(executionField)
+    }
+
+    const startAction = await request(app)
+      .post(`/routePlan/${String(response.body._id)}/start`)
+      .set('Authorization', `Bearer ${authorizedToken}`)
+    expect(startAction.status).to.equal(404)
   })
 })

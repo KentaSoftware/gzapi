@@ -58,14 +58,14 @@ describe('Route plan candidate query', () => {
     unauthorizedToken = await generateToken(unauthorizedUser)
   })
 
-  it('S-28: rejects a candidate query without authentication before reading sales', async () => {
+  it('S-28/TC-017: rejects a candidate query without authentication before reading sales', async () => {
     const response = await request(app).get(`/routePlan/candidates?serviceDate=${SERVICE_DATE}&deliveryZoneId=507f1f77bcf86cd799439011`)
 
     expect(response.status).to.equal(401)
     expect(response.body.code).to.equal('AUTHENTICATION_INVALID')
   })
 
-  it('S-29: rejects a candidate query without read_route_plan permission', async () => {
+  it('S-29/TC-017/TC-020: rejects a candidate query without read_route_plan permission', async () => {
     const response = await request(app)
       .get(`/routePlan/candidates?serviceDate=${SERVICE_DATE}&deliveryZoneId=507f1f77bcf86cd799439011`)
       .set('Authorization', `Bearer ${unauthorizedToken}`)
@@ -151,5 +151,36 @@ describe('Route plan candidate query', () => {
 
     expect(response.status).to.equal(200)
     expect(response.body).to.deep.equal({ eligible: [], blocked: [], ruleVersion: 'candidate-eligibility-v1' })
+  })
+
+  it('S-11: excludes historical sales without delivery and never assigns a delivery default', async () => {
+    const requestedZoneId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const eligibleClient = await ClientModel.create({
+      nombreCompleto: 'Historical customer',
+      address: 'Historical address',
+      lat: -34.61,
+      lng: -58.41,
+      isActive: true,
+      deliveryZoneId: requestedZoneId,
+      geocoding: { status: 'CONFIRMED', source: 'GEOCODED', validatedAt: new Date(), validatedBy: userId }
+    })
+    const historicalSaleId = new Types.ObjectId('507f191e810c19729de86021')
+    const incompleteDeliverySaleId = new Types.ObjectId('507f191e810c19729de86022')
+    await SaleModel.collection.insertOne({ _id: historicalSaleId, estado: 'CREATED', total: 100, user: userId, cliente: 'Historical', idCliente: eligibleClient._id })
+    await SaleModel.collection.insertOne({ _id: incompleteDeliverySaleId, estado: 'CREATED', total: 100, user: userId, cliente: 'Incomplete', idCliente: eligibleClient._id, delivery: { status: 'PENDING' } })
+
+    const response = await request(app)
+      .get(`/routePlan/candidates?serviceDate=${SERVICE_DATE}&deliveryZoneId=${String(requestedZoneId)}`)
+      .set('Authorization', `Bearer ${authorizedToken}`)
+
+    expect(response.status).to.equal(200)
+    expect(response.body.eligible).to.deep.equal([])
+    expect(response.body.blocked).to.deep.equal([])
+
+    const historicalSale = await SaleModel.findById(historicalSaleId).lean()
+    expect(historicalSale?.delivery).to.equal(undefined)
+    const incompleteDeliverySale = await SaleModel.findById(incompleteDeliverySaleId).lean()
+    expect(incompleteDeliverySale?.delivery?.status).to.equal('PENDING')
+    expect(incompleteDeliverySale?.delivery?.serviceDate).to.equal(undefined)
   })
 })

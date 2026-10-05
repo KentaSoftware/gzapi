@@ -62,7 +62,7 @@ describe('Client geocoding', () => {
     sinon.restore()
   })
 
-  it('S-12: returns normalized ambiguous candidates without confirming the client', async () => {
+  it('S-12/TC-011: returns normalized ambiguous candidates without confirming the client', async () => {
     const client = await ClientModel.create({ nombreCompleto: 'Ambiguous client', address: 'Original address' })
     const geocode = sinon.stub(geocodingProvider, 'geocode').resolves([
       { formattedAddress: 'Candidate one', placeId: 'place-one', precision: 'ROOFTOP', lat: -34.6, lng: -58.4 },
@@ -85,7 +85,7 @@ describe('Client geocoding', () => {
     expect(stored?.geocoding).to.equal(undefined)
   })
 
-  it('S-12: denies geocoding to a user with update_client but without confirm_client_location', async () => {
+  it('S-12/TC-017/TC-020: denies geocoding to a user with update_client but without confirm_client_location', async () => {
     const client = await ClientModel.create({ nombreCompleto: 'Protected client', address: 'Original address' })
     const geocode = sinon.stub(geocodingProvider, 'geocode')
 
@@ -99,7 +99,7 @@ describe('Client geocoding', () => {
     expect(geocode.called).to.equal(false)
   })
 
-  it('S-12: reports an unavailable geocoding provider without making a location change', async () => {
+  it('S-12/TC-011: reports an unavailable geocoding provider without making a location change', async () => {
     const client = await ClientModel.create({ nombreCompleto: 'Unavailable client', address: 'Original address' })
     sinon.stub(geocodingProvider, 'geocode').rejects(new geocodingProvider.GeocodingProviderUnavailableError())
 
@@ -141,7 +141,7 @@ describe('Client geocoding', () => {
     expect(stored?.geocoding?.validatedAt).to.be.instanceOf(Date)
   })
 
-  it('S-14: persists a manual reference as pending and never confirms it automatically', async () => {
+  it('S-14/TC-017: persists a manual reference as pending and never confirms it automatically', async () => {
     const client = await ClientModel.create({ nombreCompleto: 'Manual client', address: 'Original address', lat: -34.6, lng: -58.4 })
 
     const response = await request(app)
@@ -160,7 +160,7 @@ describe('Client geocoding', () => {
     expect(stored?.geocoding?.validatedAt).to.equal(undefined)
   })
 
-  it('S-14: keeps manual coordinates pending and rejects incomplete coordinate input', async () => {
+  it('S-14/TC-017: keeps manual coordinates pending and rejects incomplete coordinate input', async () => {
     const client = await ClientModel.create({ nombreCompleto: 'Manual coordinates client' })
 
     const invalidResponse = await request(app)
