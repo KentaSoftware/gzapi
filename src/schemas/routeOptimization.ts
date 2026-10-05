@@ -1,6 +1,17 @@
 import { z } from 'zod'
 import { SALE_DELIVERY_STATUS } from '../interfaces/sale.interface'
 
+const isCivilDate = (value: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
+const candidateQuerySchema = z.object({
+  serviceDate: z.string().refine(isCivilDate, 'serviceDate must be a civil date'),
+  deliveryZoneId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'deliveryZoneId must be an ObjectId')
+}).strict()
+
 const coordinateSchema = z.number().finite()
 
 const saleDeliverySchema = z.object({
@@ -84,6 +95,7 @@ const routePlanSnapshotSchema = z.object({
 })
 
 export {
+  candidateQuerySchema,
   routePlanAlgorithmSchema,
   routePlanAuditSchema,
   routePlanMetricsSchema,

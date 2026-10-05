@@ -84,3 +84,35 @@ export interface RoutePlan {
   audit: RoutePlanAudit
   createdAt?: Date
 }
+
+export const CANDIDATE_BLOCK_REASONS = {
+  INVALID_CLIENT_REFERENCE: 'INVALID_CLIENT_REFERENCE',
+  CLIENT_INACTIVE: 'CLIENT_INACTIVE',
+  CLIENT_ZONE_MISMATCH: 'CLIENT_ZONE_MISMATCH',
+  CLIENT_LOCATION_MISSING: 'CLIENT_LOCATION_MISSING',
+  CLIENT_LOCATION_UNCONFIRMED: 'CLIENT_LOCATION_UNCONFIRMED'
+} as const
+
+export type CandidateBlockReason = (typeof CANDIDATE_BLOCK_REASONS)[keyof typeof CANDIDATE_BLOCK_REASONS]
+
+export interface CandidateQuery {
+  serviceDate: string
+  deliveryZoneId: string
+}
+
+export interface CandidateEntry {
+  saleId: string
+  clientId?: string
+  displayName?: string
+  addressSummary?: string
+}
+
+export interface BlockedCandidateEntry extends CandidateEntry {
+  reasons: CandidateBlockReason[]
+}
+
+export interface CandidateResult {
+  eligible: CandidateEntry[]
+  blocked: BlockedCandidateEntry[]
+  ruleVersion: string
+}
