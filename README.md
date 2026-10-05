@@ -62,6 +62,45 @@ npm start     # Producción
 npm test      # Tests (Mocha)
 ```
 
+### Datos de prueba de Optimización de Rutas
+
+El seed siguiente es **exclusivamente para pruebas locales**. Carga la base
+`test_route_plan` en MongoDB local con datos sintéticos de Tucumán:
+Tafí del Valle, El Mollar, Monteros, Los Sarmientos y Aguilares.
+
+Requisitos:
+
+- MongoDB ejecutándose en `127.0.0.1:27017`.
+- Dependencias instaladas con `npm install`.
+
+Ejecutar:
+
+```bash
+npm run seed:route-plan:test
+```
+
+El seed es idempotente y no elimina datos. Crea o actualiza 5 zonas, 26
+clientes, 26 ventas pendientes, un usuario de pruebas y la configuración
+`deposito_1`. No crea snapshots: esos se generan mediante el endpoint de
+guardado de planes.
+
+Valores opcionales:
+
+```bash
+ROUTE_PLAN_SERVICE_DATE=2026-10-05 npm run seed:route-plan:test
+ROUTE_PLAN_TEST_PASSWORD=tu-password-local npm run seed:route-plan:test
+```
+
+Usuario local predeterminado:
+
+```text
+nickname: route-plan-test
+password: route-plan-test-password
+```
+
+Por seguridad, el script solo acepta `localhost`/`127.0.0.1` y la base
+`test_route_plan`; rechaza cualquier otra URI.
+
 ---
 
 ## Licencia
