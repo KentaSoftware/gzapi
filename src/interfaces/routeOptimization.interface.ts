@@ -116,3 +116,37 @@ export interface CandidateResult {
   blocked: BlockedCandidateEntry[]
   ruleVersion: string
 }
+
+export interface RouteLocation {
+  id: string
+  name: string
+  latitude: number
+  longitude: number
+}
+
+export interface RouteStop {
+  clientId: string
+  saleIds: string[]
+  latitude: number
+  longitude: number
+}
+
+export interface RouteMatrixSegment {
+  fromId: string
+  toId: string
+  distanceMeters: number
+  durationSeconds: number
+}
+
+export interface RouteHeuristicInput {
+  depot: RouteLocation
+  stops: RouteStop[]
+  matrix: RouteMatrixSegment[]
+}
+
+export interface RouteHeuristicResult {
+  orderedStops: RouteStop[]
+  segments: RouteMatrixSegment[]
+  distanceMeters: number
+  durationSeconds: number
+}
