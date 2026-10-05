@@ -12,6 +12,7 @@ const routingConfigSchema = new Schema<RoutingConfig>(
       latitude: { type: Number, required: true },
       longitude: { type: Number, required: true }
     },
+    fuelConsumptionLitersPer100Km: { type: Number, min: 0 },
     provider: { type: String, required: true, trim: true },
     algorithm: { type: String, required: true, trim: true }
   },

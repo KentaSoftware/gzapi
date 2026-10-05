@@ -12,6 +12,14 @@ const candidateQuerySchema = z.object({
   deliveryZoneId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'deliveryZoneId must be an ObjectId')
 }).strict()
 
+const routePreviewRequestSchema = candidateQuerySchema.extend({
+  saleIds: z.array(z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'saleIds must contain ObjectIds')).min(1)
+}).superRefine((input, context) => {
+  if (new Set(input.saleIds).size !== input.saleIds.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'saleIds must not contain duplicates', path: ['saleIds'] })
+  }
+})
+
 const coordinateSchema = z.number().finite()
 
 const saleDeliverySchema = z.object({
@@ -96,6 +104,7 @@ const routePlanSnapshotSchema = z.object({
 
 export {
   candidateQuerySchema,
+  routePreviewRequestSchema,
   routePlanAlgorithmSchema,
   routePlanAuditSchema,
   routePlanMetricsSchema,

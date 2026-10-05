@@ -9,10 +9,27 @@ import {
   BlockedCandidateEntry
 } from '../interfaces/routeOptimization.interface'
 import ClientModel from '../models/client'
+import DeliveryZoneModel from '../models/deliveryZone'
+import RoutingConfigModel from '../models/routingConfig'
 import SaleModel from '../models/sale'
+import { buildClosedRoute, calculateFuelLiters, RouteInvariantError } from './routeHeuristic'
+import { computeMatrix, computeRoute, RouteProviderError } from './routeMatrixProvider'
+import type { RouteLocation, RoutePreview, RoutePreviewRequest, RouteStop } from '../interfaces/routeOptimization.interface'
 
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
+
+type RoutePreviewErrorCode = 'NO_ELIGIBLE_ORDERS' | 'CLIENT_LOCATION_MISSING' | 'CLIENT_LOCATION_AMBIGUOUS' | 'ROUTE_TECHNICAL_LIMIT_EXCEEDED' | 'ROUTE_MATRIX_INCOMPLETE' | 'ROUTING_PROVIDER_UNAVAILABLE' | 'ROUTING_PROVIDER_QUOTA_EXCEEDED' | 'INVALID_ROUTE_INPUT' | 'INVALID_CONFIGURATION'
+
+class RoutePreviewError extends Error {
+  readonly code: RoutePreviewErrorCode
+
+  constructor (code: RoutePreviewErrorCode, message: string) {
+    super(message)
+    this.name = 'RoutePreviewError'
+    this.code = code
+  }
+}
 
 const serviceDateRange = (serviceDate: string): { start: Date, end: Date } => {
   const [year, month, day] = serviceDate.split('-').map(Number)
@@ -81,4 +98,99 @@ const getCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery): P
   return { eligible, blocked, ruleVersion: CANDIDATE_RULE_VERSION }
 }
 
-export { CANDIDATE_RULE_VERSION, getCandidates }
+const hasValidCoordinates = (latitude: unknown, longitude: unknown): latitude is number => typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+
+const previewErrorForClient = (client: Client | undefined): RoutePreviewError | undefined => {
+  if (client === undefined || client.isActive !== true) return new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for route planning')
+  if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) return new RoutePreviewError('CLIENT_LOCATION_MISSING', 'A selected client is missing a confirmed location')
+  if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) return new RoutePreviewError('CLIENT_LOCATION_AMBIGUOUS', 'A selected client location is not confirmed')
+  return undefined
+}
+
+const previewProviderError = (error: unknown): RoutePreviewError => {
+  if (error instanceof RoutePreviewError) return error
+  if (error instanceof RouteInvariantError) return new RoutePreviewError(error.code, error.message)
+  if (error instanceof RouteProviderError) {
+    if (error.code === 'ROUTING_PROVIDER_QUOTA_EXCEEDED') return new RoutePreviewError(error.code, error.message)
+    if (error.code === 'ROUTE_MATRIX_INCOMPLETE') return new RoutePreviewError(error.code, error.message)
+    if (error.code === 'INVALID_ROUTE_INPUT') return new RoutePreviewError(error.code, error.message)
+    return new RoutePreviewError('ROUTING_PROVIDER_UNAVAILABLE', error.message)
+  }
+  return new RoutePreviewError('ROUTING_PROVIDER_UNAVAILABLE', 'Routing provider is unavailable')
+}
+
+const preview = async ({ serviceDate, deliveryZoneId, saleIds }: RoutePreviewRequest): Promise<RoutePreview> => {
+  const { start, end } = serviceDateRange(serviceDate)
+  const zone = await DeliveryZoneModel.findOne({ _id: deliveryZoneId, active: true }).lean()
+  if (zone === null) throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'The requested delivery zone is not active')
+
+  const config = await RoutingConfigModel.findOne({ key: 'deposito_1', enabled: true }).lean()
+  if (config === null || !hasValidCoordinates(config.depot?.latitude, config.depot?.longitude) || typeof config.fuelConsumptionLitersPer100Km !== 'number' || !Number.isFinite(config.fuelConsumptionLitersPer100Km) || config.fuelConsumptionLitersPer100Km < 0) {
+    throw new RoutePreviewError('INVALID_CONFIGURATION', 'Routing configuration is not valid for preview')
+  }
+
+  const selectedObjectIds = saleIds.map((saleId) => new Types.ObjectId(saleId))
+  const sales = await SaleModel.find({ _id: { $in: selectedObjectIds } }).sort({ _id: 1 }).lean()
+  if (sales.length !== saleIds.length) throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for route planning')
+
+  const clientIds = sales
+    .map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente))
+    .filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id))
+  const clients = await ClientModel.find({ _id: { $in: clientIds } }).lean()
+  const clientsById = new Map(clients.map((client) => [String(client._id), client]))
+  const stopsByClient = new Map<string, RouteStop>()
+
+  for (const sale of sales) {
+    if (sale.delivery?.status !== 'PENDING' || sale.delivery.serviceDate === undefined || sale.delivery.serviceDate < start || sale.delivery.serviceDate >= end || sale.idCliente === undefined) {
+      throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for route planning')
+    }
+    const client = clientsById.get(String(sale.idCliente))
+    const clientError = previewErrorForClient(client)
+    if (clientError !== undefined) throw clientError
+    if (client === undefined) throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for route planning')
+    if (client.deliveryZoneId === undefined || String(client.deliveryZoneId) !== deliveryZoneId) {
+      throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for the requested delivery zone')
+    }
+    const clientId = String(client._id)
+    const stop = stopsByClient.get(clientId)
+    if (stop === undefined) {
+      stopsByClient.set(clientId, { clientId, saleIds: [String(sale._id)], latitude: client.lat as number, longitude: client.lng as number })
+    } else {
+      stop.saleIds.push(String(sale._id))
+    }
+  }
+
+  const depot: RouteLocation = { id: 'deposito_1', name: config.depot.name, latitude: config.depot.latitude, longitude: config.depot.longitude }
+  const stops = [...stopsByClient.values()]
+  const locations: RouteLocation[] = [depot, ...stops.map((stop) => {
+    const client = clientsById.get(stop.clientId)
+    return { id: stop.clientId, name: client?.nombreCompleto ?? stop.clientId, latitude: stop.latitude, longitude: stop.longitude }
+  })]
+
+  try {
+    const matrix = await computeMatrix({ origins: locations, destinations: locations })
+    const heuristic = buildClosedRoute({ depot, stops, matrix: matrix.segments })
+    const intermediates = heuristic.orderedStops.map((stop) => {
+      const client = clientsById.get(stop.clientId)
+      return { id: stop.clientId, name: client?.nombreCompleto ?? stop.clientId, latitude: stop.latitude, longitude: stop.longitude }
+    })
+    const finalRoute = await computeRoute({
+      origin: depot,
+      intermediates,
+      destination: depot
+    })
+    return {
+      route: { depot, stops: heuristic.orderedStops, segments: heuristic.segments, encodedPolyline: finalRoute.encodedPolyline },
+      metrics: { distanceMeters: finalRoute.distanceMeters, durationSeconds: finalRoute.durationSeconds, stopCount: heuristic.orderedStops.length, fuelLiters: calculateFuelLiters(finalRoute.distanceMeters / 1000, config.fuelConsumptionLitersPer100Km) },
+      warnings: ['TIME_WINDOWS_NOT_CONSIDERED'],
+      factorsConsidered: ['DISTANCE', 'DURATION', 'FUEL_CONSUMPTION'],
+      algorithmVersion: config.algorithm,
+      routingConfigRevision: config.revision,
+      ruleVersion: CANDIDATE_RULE_VERSION
+    }
+  } catch (error) {
+    throw previewProviderError(error)
+  }
+}
+
+export { CANDIDATE_RULE_VERSION, getCandidates, preview, RoutePreviewError }

@@ -26,6 +26,7 @@ export interface RoutingConfig {
   enabled: boolean
   revision: number
   depot: RoutingDepot
+  fuelConsumptionLitersPer100Km?: number
   provider: string
   algorithm: string
   createdAt?: Date
@@ -170,4 +171,28 @@ export interface FinalRoute {
   encodedPolyline: string
   distanceMeters: number
   durationSeconds: number
+}
+
+export interface RoutePreviewRequest extends CandidateQuery {
+  saleIds: string[]
+}
+
+export interface RoutePreview {
+  route: {
+    depot: RouteLocation
+    stops: RouteStop[]
+    segments: RouteMatrixSegment[]
+    encodedPolyline: string
+  }
+  metrics: {
+    distanceMeters: number
+    durationSeconds: number
+    stopCount: number
+    fuelLiters: number
+  }
+  warnings: string[]
+  factorsConsidered: string[]
+  algorithmVersion: string
+  routingConfigRevision: number
+  ruleVersion: string
 }
