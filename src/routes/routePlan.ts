@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getCandidateItems, previewRoute } from '../controllers/routePlan'
+import { getCandidateItems, getRoutePlanById, getRoutePlans, previewRoute, saveRoutePlan } from '../controllers/routePlan'
 import { checkPermission } from '../middleware/checkPermission'
 import { checkJwt } from '../middleware/session'
 
@@ -7,5 +7,8 @@ const router = Router()
 
 router.get('/candidates', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_route_plan')(req, res, next) }, (req, res) => { void getCandidateItems(req, res) })
 router.post('/preview', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_route_plan')(req, res, next) }, (req, res) => { void previewRoute(req, res) })
+router.post('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_route_plan')(req, res, next) }, (req, res) => { void saveRoutePlan(req, res) })
+router.get('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_route_plan')(req, res, next) }, (req, res) => { void getRoutePlans(req, res) })
+router.get('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_route_plan')(req, res, next) }, (req, res) => { void getRoutePlanById(req, res) })
 
 export { router }

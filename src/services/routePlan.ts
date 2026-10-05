@@ -11,10 +11,11 @@ import {
 import ClientModel from '../models/client'
 import DeliveryZoneModel from '../models/deliveryZone'
 import RoutingConfigModel from '../models/routingConfig'
+import RoutePlanModel from '../models/routePlan'
 import SaleModel from '../models/sale'
 import { buildClosedRoute, calculateFuelLiters, RouteInvariantError } from './routeHeuristic'
 import { computeMatrix, computeRoute, RouteProviderError } from './routeMatrixProvider'
-import type { RouteLocation, RoutePreview, RoutePreviewRequest, RouteStop } from '../interfaces/routeOptimization.interface'
+import type { RouteLocation, RoutePlan, RoutePreview, RoutePreviewRequest, RouteStop } from '../interfaces/routeOptimization.interface'
 
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
@@ -185,6 +186,7 @@ const preview = async ({ serviceDate, deliveryZoneId, saleIds }: RoutePreviewReq
       warnings: ['TIME_WINDOWS_NOT_CONSIDERED'],
       factorsConsidered: ['DISTANCE', 'DURATION', 'FUEL_CONSUMPTION'],
       algorithmVersion: config.algorithm,
+      algorithmProvider: config.provider,
       routingConfigRevision: config.revision,
       ruleVersion: CANDIDATE_RULE_VERSION
     }
@@ -193,4 +195,55 @@ const preview = async ({ serviceDate, deliveryZoneId, saleIds }: RoutePreviewReq
   }
 }
 
-export { CANDIDATE_RULE_VERSION, getCandidates, preview, RoutePreviewError }
+const saveSnapshot = async (input: RoutePreviewRequest, createdBy: string): Promise<RoutePlan> => {
+  const result = await preview(input)
+  const zone = await DeliveryZoneModel.findOne({ _id: input.deliveryZoneId, active: true }).lean()
+  if (zone === null) throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'The requested delivery zone is not active')
+  const stopSequenceByClientId = new Map(result.route.stops.map((stop, index) => [stop.clientId, index + 1]))
+  const snapshot: RoutePlan = {
+    snapshotVersion: 1,
+    planningDate: serviceDateRange(input.serviceDate).start,
+    zoneSnapshot: {
+      code: zone.code,
+      normalizedName: zone.normalizedName,
+      name: zone.name
+    },
+    selectedSaleIds: [...input.saleIds],
+    depot: {
+      name: result.route.depot.name,
+      latitude: result.route.depot.latitude,
+      longitude: result.route.depot.longitude
+    },
+    stops: result.route.stops.map((stop, index) => ({
+      clientId: stop.clientId,
+      saleIds: [...stop.saleIds],
+      sequence: index + 1,
+      latitude: stop.latitude,
+      longitude: stop.longitude
+    })),
+    segments: result.route.segments.map((segment) => ({
+      fromStopSequence: segment.fromId === 'deposito_1' ? 0 : stopSequenceByClientId.get(segment.fromId) as number,
+      toStopSequence: segment.toId === 'deposito_1' ? 0 : stopSequenceByClientId.get(segment.toId) as number,
+      distanceMeters: segment.distanceMeters,
+      durationSeconds: segment.durationSeconds
+    })),
+    metrics: result.metrics,
+    algorithm: {
+      name: result.algorithmVersion,
+      version: result.algorithmVersion,
+      provider: result.algorithmProvider
+    },
+    routingConfigRevision: result.routingConfigRevision,
+    ruleVersion: result.ruleVersion,
+    encodedPolyline: result.route.encodedPolyline,
+    warnings: result.warnings,
+    audit: { createdBy, createdAt: new Date() }
+  }
+  return await RoutePlanModel.create(snapshot)
+}
+
+const listSnapshots = async (): Promise<RoutePlan[]> => await RoutePlanModel.find({}).sort({ createdAt: -1, _id: -1 }).lean()
+
+const getSnapshot = async (id: string): Promise<RoutePlan | null> => await RoutePlanModel.findById(id).lean()
+
+export { CANDIDATE_RULE_VERSION, getCandidates, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError }

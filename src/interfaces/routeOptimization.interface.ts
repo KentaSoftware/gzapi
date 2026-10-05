@@ -40,7 +40,8 @@ export interface RoutePlanZoneSnapshot {
 }
 
 export interface RoutePlanStop {
-  saleId: string
+  clientId: string
+  saleIds: string[]
   sequence: number
   latitude: number
   longitude: number
@@ -57,6 +58,7 @@ export interface RoutePlanMetrics {
   distanceMeters: number
   durationSeconds: number
   stopCount: number
+  fuelLiters: number
 }
 
 export interface RoutePlanAlgorithm {
@@ -72,6 +74,7 @@ export interface RoutePlanAudit {
 
 export interface RoutePlan {
   _id?: unknown
+  snapshotVersion: number
   planningDate: Date
   zoneSnapshot: RoutePlanZoneSnapshot
   selectedSaleIds: string[]
@@ -81,6 +84,8 @@ export interface RoutePlan {
   metrics: RoutePlanMetrics
   algorithm: RoutePlanAlgorithm
   routingConfigRevision: number
+  ruleVersion: string
+  encodedPolyline: string
   warnings: string[]
   audit: RoutePlanAudit
   createdAt?: Date
@@ -193,6 +198,7 @@ export interface RoutePreview {
   warnings: string[]
   factorsConsidered: string[]
   algorithmVersion: string
+  algorithmProvider: string
   routingConfigRevision: number
   ruleVersion: string
 }

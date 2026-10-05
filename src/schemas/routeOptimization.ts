@@ -57,16 +57,33 @@ const routePlanZoneSnapshotSchema = z.object({
   name: z.string().trim().min(1)
 })
 
-const routePlanStopSchema = z.object({
-  saleId: z.string().trim().min(1),
+const groupedRoutePlanStopSchema = z.object({
+  clientId: z.string().trim().min(1),
+  saleIds: z.array(z.string().trim().min(1)).min(1),
   sequence: z.number().int().positive(),
   latitude: coordinateSchema,
   longitude: coordinateSchema
 })
 
+const routePlanStopSchema = z.union([
+  groupedRoutePlanStopSchema,
+  z.object({
+    saleId: z.string().trim().min(1),
+    sequence: z.number().int().positive(),
+    latitude: coordinateSchema,
+    longitude: coordinateSchema
+  }).transform(({ saleId, sequence, latitude, longitude }) => ({
+    clientId: saleId,
+    saleIds: [saleId],
+    sequence,
+    latitude,
+    longitude
+  }))
+])
+
 const routePlanSegmentSchema = z.object({
   fromStopSequence: z.number().int().nonnegative(),
-  toStopSequence: z.number().int().positive(),
+  toStopSequence: z.number().int().nonnegative(),
   distanceMeters: z.number().nonnegative(),
   durationSeconds: z.number().nonnegative()
 })
@@ -74,7 +91,8 @@ const routePlanSegmentSchema = z.object({
 const routePlanMetricsSchema = z.object({
   distanceMeters: z.number().nonnegative(),
   durationSeconds: z.number().nonnegative(),
-  stopCount: z.number().int().nonnegative()
+  stopCount: z.number().int().nonnegative(),
+  fuelLiters: z.number().nonnegative().default(0)
 })
 
 const routePlanAlgorithmSchema = z.object({
@@ -89,6 +107,7 @@ const routePlanAuditSchema = z.object({
 })
 
 const routePlanSnapshotSchema = z.object({
+  snapshotVersion: z.number().int().positive().default(1),
   planningDate: z.date(),
   zoneSnapshot: routePlanZoneSnapshotSchema,
   selectedSaleIds: z.array(z.string().trim().min(1)).min(1),
@@ -98,6 +117,8 @@ const routePlanSnapshotSchema = z.object({
   metrics: routePlanMetricsSchema,
   algorithm: routePlanAlgorithmSchema,
   routingConfigRevision: z.number().int().positive(),
+  ruleVersion: z.string().trim().min(1).default('candidate-eligibility-v1'),
+  encodedPolyline: z.string().default(''),
   warnings: z.array(z.string()),
   audit: routePlanAuditSchema
 })

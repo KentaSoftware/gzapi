@@ -3,7 +3,8 @@ import type { RoutePlan } from '../interfaces/routeOptimization.interface'
 
 const routePlanStopSchema = new Schema(
   {
-    saleId: { type: String, required: true, immutable: true },
+    clientId: { type: String, required: true, immutable: true },
+    saleIds: { type: [String], required: true, immutable: true },
     sequence: { type: Number, required: true, immutable: true },
     latitude: { type: Number, required: true, immutable: true },
     longitude: { type: Number, required: true, immutable: true }
@@ -23,6 +24,7 @@ const routePlanSegmentSchema = new Schema(
 
 const routePlanSchema = new Schema<RoutePlan>(
   {
+    snapshotVersion: { type: Number, required: true, immutable: true },
     planningDate: { type: Date, required: true, immutable: true },
     zoneSnapshot: {
       code: { type: String, required: true, immutable: true },
@@ -40,7 +42,8 @@ const routePlanSchema = new Schema<RoutePlan>(
     metrics: {
       distanceMeters: { type: Number, required: true, immutable: true },
       durationSeconds: { type: Number, required: true, immutable: true },
-      stopCount: { type: Number, required: true, immutable: true }
+      stopCount: { type: Number, required: true, immutable: true },
+      fuelLiters: { type: Number, required: true, immutable: true }
     },
     algorithm: {
       name: { type: String, required: true, immutable: true },
@@ -48,6 +51,8 @@ const routePlanSchema = new Schema<RoutePlan>(
       provider: { type: String, required: true, immutable: true }
     },
     routingConfigRevision: { type: Number, required: true, immutable: true },
+    ruleVersion: { type: String, required: true, immutable: true },
+    encodedPolyline: { type: String, required: true, immutable: true },
     warnings: { type: [String], required: true, immutable: true },
     audit: {
       createdBy: { type: String, required: true, immutable: true },
