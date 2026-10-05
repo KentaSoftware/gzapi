@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ROUTE_MODES } from '../interfaces/routeOptimization.interface'
 import { SALE_DELIVERY_STATUS } from '../interfaces/sale.interface'
 
 const isCivilDate = (value: string): boolean => {
@@ -21,6 +22,8 @@ const routePreviewRequestSchema = candidateQuerySchema.extend({
 })
 
 const coordinateSchema = z.number().finite()
+const latitudeSchema = z.number().finite().min(-90).max(90)
+const longitudeSchema = z.number().finite().min(-180).max(180)
 
 const saleDeliverySchema = z.object({
   status: z.enum([SALE_DELIVERY_STATUS.PENDING, SALE_DELIVERY_STATUS.DELIVERED]),
@@ -46,10 +49,36 @@ const saleDeliverySchema = z.object({
 })
 
 const routingDepotSchema = z.object({
-  name: z.string().trim().min(1),
-  latitude: coordinateSchema,
-  longitude: coordinateSchema
+  name: z.string().trim().min(1).max(200),
+  latitude: latitudeSchema,
+  longitude: longitudeSchema
+}).strict()
+
+const routingConfigUpdateSchema = z.object({
+  depot: routingDepotSchema,
+  fuelConsumptionLitersPer100Km: z.number().finite().min(0).optional(),
+  routeMode: z.enum([ROUTE_MODES.GOOGLE_ROUTES]),
+  algorithm: z.string().trim().min(1).max(100).optional(),
+  maxStops: z.number().int().positive().optional(),
+  enabled: z.boolean().optional()
+}).strict()
+
+const deliveryZoneCreateSchema = z.object({
+  code: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
+  name: z.string().trim().min(1).max(120),
+  active: z.boolean().optional()
+}).strict()
+
+const deliveryZoneUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  active: z.boolean().optional()
+}).strict().refine((input) => input.name !== undefined || input.active !== undefined, {
+  message: 'At least one delivery zone field is required'
 })
+
+const deliveryZoneQuerySchema = z.object({
+  active: z.enum(['true', 'false']).optional()
+}).strict()
 
 const routePlanZoneSnapshotSchema = z.object({
   code: z.string().trim().min(1),
@@ -125,6 +154,9 @@ const routePlanSnapshotSchema = z.object({
 
 export {
   candidateQuerySchema,
+  deliveryZoneCreateSchema,
+  deliveryZoneQuerySchema,
+  deliveryZoneUpdateSchema,
   routePreviewRequestSchema,
   routePlanAlgorithmSchema,
   routePlanAuditSchema,
@@ -133,6 +165,7 @@ export {
   routePlanSnapshotSchema,
   routePlanStopSchema,
   routePlanZoneSnapshotSchema,
+  routingConfigUpdateSchema,
   routingDepotSchema,
   saleDeliverySchema
 }

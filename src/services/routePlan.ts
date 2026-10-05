@@ -3,10 +3,19 @@ import { Types } from 'mongoose'
 import { Client, GEOCODING_STATUS } from '../interfaces/client.interface'
 import {
   CANDIDATE_BLOCK_REASONS,
-  CandidateEntry,
-  CandidateQuery,
-  CandidateResult,
-  BlockedCandidateEntry
+  DEFAULT_ROUTE_ALGORITHM,
+  ROUTING_CONFIG_KEYS,
+  type BlockedCandidateEntry,
+  type CandidateEntry,
+  type CandidateQuery,
+  type CandidateResult,
+  type RouteLocation,
+  type RoutePlan,
+  type RoutePreview,
+  type RoutePreviewRequest,
+  type RouteStop,
+  type RoutingConfig,
+  type RoutingConfigUpdateInput
 } from '../interfaces/routeOptimization.interface'
 import ClientModel from '../models/client'
 import DeliveryZoneModel from '../models/deliveryZone'
@@ -15,7 +24,6 @@ import RoutePlanModel from '../models/routePlan'
 import SaleModel from '../models/sale'
 import { buildClosedRoute, calculateFuelLiters, RouteInvariantError } from './routeHeuristic'
 import { computeMatrix, computeRoute, RouteProviderError } from './routeMatrixProvider'
-import type { RouteLocation, RoutePlan, RoutePreview, RoutePreviewRequest, RouteStop } from '../interfaces/routeOptimization.interface'
 
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
@@ -27,7 +35,7 @@ interface RoutePlanRequestContext {
 }
 
 interface RoutePlanEvent {
-  event: 'route_plan_candidates_read_completed' | 'route_plan_candidates_read_failed' | 'route_plan_preview_completed' | 'route_plan_preview_failed' | 'route_plan_snapshot_saved' | 'route_plan_snapshot_save_failed' | 'route_plan_snapshot_read_completed' | 'route_plan_snapshot_read_failed' | 'route_plan_provider_completed' | 'route_plan_provider_failed'
+  event: 'route_plan_candidates_read_completed' | 'route_plan_candidates_read_failed' | 'route_plan_preview_completed' | 'route_plan_preview_failed' | 'route_plan_snapshot_saved' | 'route_plan_snapshot_save_failed' | 'route_plan_snapshot_read_completed' | 'route_plan_snapshot_read_failed' | 'route_plan_provider_completed' | 'route_plan_provider_failed' | 'route_plan_config_read_completed' | 'route_plan_config_read_failed' | 'route_plan_config_updated' | 'route_plan_config_update_failed'
   correlationId?: string
   latencyMs: number
   provider?: string
@@ -141,6 +149,47 @@ const getCandidates = async (input: CandidateQuery, context: RoutePlanRequestCon
   }
 }
 
+const getRoutingConfig = async (context: RoutePlanRequestContext = {}): Promise<RoutingConfig | null> => {
+  const start = Date.now()
+  try {
+    const config = await RoutingConfigModel.findOne({ key: ROUTING_CONFIG_KEYS.DEPOSITO_1 })
+    logRoutePlanEvent({ event: 'route_plan_config_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, routingConfigRevision: config?.revision, resultCode: config === null ? 'ROUTE_CONFIG_NOT_FOUND' : 'SUCCESS' })
+    return config
+  } catch (error) {
+    logRoutePlanEvent({ event: 'route_plan_config_read_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: 'INTERNAL_ERROR' })
+    throw error
+  }
+}
+
+const updateRoutingConfig = async (input: RoutingConfigUpdateInput, updatedBy: string, context: RoutePlanRequestContext = {}): Promise<RoutingConfig> => {
+  const start = Date.now()
+  try {
+    const existing = await RoutingConfigModel.findOne({ key: ROUTING_CONFIG_KEYS.DEPOSITO_1 })
+    const revision = existing === null ? 1 : existing.revision + 1
+    const fields: Record<string, unknown> = {
+      enabled: input.enabled ?? true,
+      revision,
+      depot: input.depot,
+      provider: input.routeMode,
+      algorithm: input.algorithm ?? existing?.algorithm ?? DEFAULT_ROUTE_ALGORITHM,
+      updatedBy
+    }
+    if (input.fuelConsumptionLitersPer100Km !== undefined) fields.fuelConsumptionLitersPer100Km = input.fuelConsumptionLitersPer100Km
+    if (input.maxStops !== undefined) fields.maxStops = input.maxStops
+    const config = await RoutingConfigModel.findOneAndUpdate(
+      { key: ROUTING_CONFIG_KEYS.DEPOSITO_1 },
+      { $set: fields },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    )
+    if (config === null) throw new Error('Routing configuration could not be persisted')
+    logRoutePlanEvent({ event: 'route_plan_config_updated', correlationId: context.correlationId, latencyMs: Date.now() - start, provider: config.provider, algorithmVersion: config.algorithm, routingConfigRevision: config.revision, resultCode: 'SUCCESS' })
+    return config
+  } catch (error) {
+    logRoutePlanEvent({ event: 'route_plan_config_update_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: 'INTERNAL_ERROR' })
+    throw error
+  }
+}
+
 const hasValidCoordinates = (latitude: unknown, longitude: unknown): latitude is number => typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
 
 const previewErrorForClient = (client: Client | undefined): RoutePreviewError | undefined => {
@@ -207,6 +256,9 @@ const previewRoute = async ({ serviceDate, deliveryZoneId, saleIds }: RoutePrevi
 
   const depot: RouteLocation = { id: 'deposito_1', name: config.depot.name, latitude: config.depot.latitude, longitude: config.depot.longitude }
   const stops = [...stopsByClient.values()]
+  if (typeof config.maxStops === 'number' && Number.isFinite(config.maxStops) && stops.length > config.maxStops) {
+    throw new RoutePreviewError('ROUTE_TECHNICAL_LIMIT_EXCEEDED', `Route preview exceeds the configured maximum of ${config.maxStops} stops`)
+  }
   const locations: RouteLocation[] = [depot, ...stops.map((stop) => {
     const client = clientsById.get(stop.clientId)
     return { id: stop.clientId, name: client?.nombreCompleto ?? stop.clientId, latitude: stop.latitude, longitude: stop.longitude }
@@ -346,4 +398,4 @@ const getSnapshot = async (id: string, context: RoutePlanRequestContext = {}): P
   }
 }
 
-export { CANDIDATE_RULE_VERSION, getCandidates, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }
+export { CANDIDATE_RULE_VERSION, getCandidates, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }

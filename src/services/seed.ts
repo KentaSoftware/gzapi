@@ -22,14 +22,16 @@ const PHASE_0_ROLE_GRANTS = [
     name: 'Propietario',
     permissions: [
       'confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment',
-      'receive_purchase', 'adjust_stock', 'read_route_plan', 'confirm_client_location'
+      'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan',
+      'confirm_client_location', 'manage_route_config', 'manage_delivery_zone'
     ]
   },
   {
     name: 'Administración',
     permissions: [
       'confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment',
-      'receive_purchase', 'adjust_stock', 'read_route_plan', 'confirm_client_location'
+      'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan',
+      'confirm_client_location', 'manage_route_config', 'manage_delivery_zone'
     ]
   },
   {

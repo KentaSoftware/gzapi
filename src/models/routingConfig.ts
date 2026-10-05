@@ -13,6 +13,8 @@ const routingConfigSchema = new Schema<RoutingConfig>(
       longitude: { type: Number, required: true }
     },
     fuelConsumptionLitersPer100Km: { type: Number, min: 0 },
+    maxStops: { type: Number, min: 1 },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'user' },
     provider: { type: String, required: true, trim: true },
     algorithm: { type: String, required: true, trim: true }
   },

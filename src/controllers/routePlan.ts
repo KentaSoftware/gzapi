@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
-import { getCandidates, getSnapshot, listSnapshots, logRoutePlanEvent, preview, RoutePreviewError, saveSnapshot } from '../services/routePlan'
-import { candidateQuerySchema, routePreviewRequestSchema } from '../schemas/routeOptimization'
+import { getCandidates, getRoutingConfig, getSnapshot, listSnapshots, logRoutePlanEvent, preview, RoutePreviewError, saveSnapshot, updateRoutingConfig } from '../services/routePlan'
+import { candidateQuerySchema, routePreviewRequestSchema, routingConfigUpdateSchema } from '../schemas/routeOptimization'
 import { handleHttp, sendErrorEnvelope } from '../utils/error.handle'
 
 const getCandidateItems = async (req: Request, res: Response): Promise<void> => {
@@ -74,6 +74,34 @@ const saveRoutePlan = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
+const getRouteConfig = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const config = await getRoutingConfig({ correlationId: res.locals.correlationId })
+    if (config === null) {
+      sendErrorEnvelope(res, 404, 'INVALID_CONFIGURATION', 'Routing configuration is not available')
+      return
+    }
+    res.send(config)
+  } catch (error) {
+    handleHttp(res, 'ERROR_GET_ROUTE_CONFIG', error)
+  }
+}
+
+const patchRouteConfig = async (req: Request, res: Response): Promise<void> => {
+  const input = routingConfigUpdateSchema.safeParse(req.body)
+  if (!input.success) {
+    logRoutePlanEvent({ event: 'route_plan_config_update_failed', correlationId: res.locals.correlationId, latencyMs: 0, resultCode: 'INVALID_CONFIGURATION' })
+    sendErrorEnvelope(res, 400, 'INVALID_CONFIGURATION', 'Routing configuration input is invalid')
+    return
+  }
+
+  try {
+    res.send(await updateRoutingConfig(input.data, res.locals.userId, { correlationId: res.locals.correlationId }))
+  } catch (error) {
+    handleHttp(res, 'ERROR_UPDATE_ROUTE_CONFIG', error)
+  }
+}
+
 const getRoutePlans = async (_req: Request, res: Response): Promise<void> => {
   try {
     res.send(await listSnapshots({ correlationId: res.locals.correlationId }))
@@ -101,4 +129,4 @@ const getRoutePlanById = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
-export { getCandidateItems, previewRoute, saveRoutePlan, getRoutePlans, getRoutePlanById }
+export { getCandidateItems, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById }

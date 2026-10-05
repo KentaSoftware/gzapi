@@ -4,6 +4,14 @@ export const ROUTING_CONFIG_KEYS = {
 
 export type RoutingConfigKey = (typeof ROUTING_CONFIG_KEYS)[keyof typeof ROUTING_CONFIG_KEYS]
 
+export const ROUTE_MODES = {
+  GOOGLE_ROUTES: 'google-routes'
+} as const
+
+export type RouteMode = (typeof ROUTE_MODES)[keyof typeof ROUTE_MODES]
+
+export const DEFAULT_ROUTE_ALGORITHM = 'nearest-neighbor-2opt-v1'
+
 export interface DeliveryZone {
   _id?: unknown
   code: string
@@ -27,11 +35,45 @@ export interface RoutingConfig {
   revision: number
   depot: RoutingDepot
   fuelConsumptionLitersPer100Km?: number
+  maxStops?: number
   provider: string
   algorithm: string
+  updatedBy?: string
   createdAt?: Date
   updatedAt?: Date
 }
+
+export interface RoutingConfigUpdateInput {
+  depot: RoutingDepot
+  fuelConsumptionLitersPer100Km?: number
+  routeMode: RouteMode
+  algorithm?: string
+  maxStops?: number
+  enabled?: boolean
+}
+
+export interface DeliveryZoneCreateInput {
+  code: string
+  name: string
+  active?: boolean
+}
+
+export interface DeliveryZoneUpdateInput {
+  name?: string
+  active?: boolean
+}
+
+export interface DeliveryZoneListFilter {
+  active?: boolean
+}
+
+export const DELIVERY_ZONE_ERROR_CODES = {
+  DUPLICATE_DELIVERY_ZONE_CODE: 'DUPLICATE_DELIVERY_ZONE_CODE',
+  DUPLICATE_DELIVERY_ZONE_NAME: 'DUPLICATE_DELIVERY_ZONE_NAME',
+  DELIVERY_ZONE_NOT_FOUND: 'DELIVERY_ZONE_NOT_FOUND'
+} as const
+
+export type DeliveryZoneErrorCode = (typeof DELIVERY_ZONE_ERROR_CODES)[keyof typeof DELIVERY_ZONE_ERROR_CODES]
 
 export interface RoutePlanZoneSnapshot {
   code: string

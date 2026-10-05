@@ -6,6 +6,7 @@ import sinon from 'sinon'
 import ClientModel from '../src/models/client'
 import DeliveryZoneModel from '../src/models/deliveryZone'
 import RoleModel from '../src/models/role'
+import RoutePlanModel from '../src/models/routePlan'
 import RoutingConfigModel from '../src/models/routingConfig'
 import SaleModel from '../src/models/sale'
 import UserModel from '../src/models/user'
@@ -20,6 +21,8 @@ describe('Route plan preview', () => {
   let app: Awaited<ReturnType<typeof import('../src/app').createApp>>
   let authorizedToken: string
   let unauthorizedToken: string
+  let configAdminToken: string
+  let configAdminUserId: string
   let userId: Types.ObjectId
   let zoneId: Types.ObjectId
 
@@ -60,6 +63,10 @@ describe('Route plan preview', () => {
     })
   }
 
+  const setMaxStops = async (maxStops: number): Promise<void> => {
+    await RoutingConfigModel.updateOne({ key: 'deposito_1' }, { $set: { maxStops } })
+  }
+
   before(async () => {
     await mongoose.connect(TEST_DB_URI)
     const { createApp } = await import('../src/app')
@@ -76,6 +83,7 @@ describe('Route plan preview', () => {
   beforeEach(async () => {
     sinon.restore()
     await Promise.all([
+      RoutePlanModel.deleteMany({}),
       SaleModel.deleteMany({}),
       ClientModel.deleteMany({}),
       DeliveryZoneModel.deleteMany({}),
@@ -86,11 +94,15 @@ describe('Route plan preview', () => {
 
     const authorizedRole = await RoleModel.create({ name: 'Route planner', permissions: ['create_route_plan'] })
     const unauthorizedRole = await RoleModel.create({ name: 'Sales reader', permissions: ['read_sale'] })
+    const configAdminRole = await RoleModel.create({ name: 'Route config manager', permissions: ['manage_route_config', 'read_route_plan'] })
     const authorizedUser = await UserModel.create({ nickname: 'route-planner', password: 'not-a-real-password', role: authorizedRole._id })
     const unauthorizedUser = await UserModel.create({ nickname: 'sales-reader', password: 'not-a-real-password', role: unauthorizedRole._id })
+    const configAdminUser = await UserModel.create({ nickname: 'route-config-manager', password: 'not-a-real-password', role: configAdminRole._id })
     userId = authorizedUser._id
     authorizedToken = await generateToken(authorizedUser)
     unauthorizedToken = await generateToken(unauthorizedUser)
+    configAdminToken = await generateToken(configAdminUser)
+    configAdminUserId = String(configAdminUser._id)
     const zone = await DeliveryZoneModel.create({ code: 'NORTE', normalizedName: 'norte', name: 'Norte', active: true })
     zoneId = zone._id
   })
@@ -142,9 +154,9 @@ describe('Route plan preview', () => {
     const saleId = await createSale(clientId)
     const missingConfig = await previewRequest([saleId])
     await configureRouting()
-    await RoutingConfigModel.collection.updateOne({ key: 'deposito_1' }, { $unset: { fuelConsumptionLitersPer100Km: 1 } })
+    await RoutingConfigModel.updateOne({ key: 'deposito_1' }, { $unset: { fuelConsumptionLitersPer100Km: 1 } })
     const missingFuel = await previewRequest([saleId])
-    await RoutingConfigModel.collection.updateOne({ key: 'deposito_1' }, { $set: { fuelConsumptionLitersPer100Km: 8.5 }, $unset: { 'depot.latitude': 1 } })
+    await RoutingConfigModel.updateOne({ key: 'deposito_1' }, { $set: { fuelConsumptionLitersPer100Km: 8.5 }, $unset: { 'depot.latitude': 1 } })
     const missingDepot = await previewRequest([saleId])
 
     for (const response of [missingConfig, missingFuel, missingDepot]) {
@@ -195,5 +207,99 @@ describe('Route plan preview', () => {
     expect(response.status).to.equal(503)
     expect(response.body.code).to.equal('ROUTING_PROVIDER_UNAVAILABLE')
     expect(response.body.route).to.equal(undefined)
+  })
+
+  it('S-21: rejects a selection that exceeds the configured stop limit before any provider call', async () => {
+    const firstClientId = await createEligibleClient('Limit customer one', -34.61, -58.41)
+    const secondClientId = await createEligibleClient('Limit customer two', -34.62, -58.42)
+    const firstSaleId = await createSale(firstClientId)
+    const secondSaleId = await createSale(secondClientId)
+    await configureRouting()
+    await setMaxStops(1)
+    const matrix = sinon.stub(routeMatrixProvider, 'computeMatrix')
+    const finalRoute = sinon.stub(routeMatrixProvider, 'computeRoute')
+
+    const response = await previewRequest([firstSaleId, secondSaleId])
+
+    expect(response.status).to.equal(422)
+    expect(response.body.code).to.equal('ROUTE_TECHNICAL_LIMIT_EXCEEDED')
+    expect(matrix.called).to.equal(false)
+    expect(finalRoute.called).to.equal(false)
+    expect(await RoutePlanModel.countDocuments({})).to.equal(0)
+  })
+
+  it('S-26: protects routing configuration reads and updates with manage_route_config', async () => {
+    const payload = { depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 }, routeMode: 'google-routes' }
+    const unauthGet = await request(app).get('/routePlan/config')
+    const forbiddenGet = await request(app).get('/routePlan/config').set('Authorization', `Bearer ${authorizedToken}`)
+    const unauthPatch = await request(app).patch('/routePlan/config').send(payload)
+    const forbiddenPatch = await request(app).patch('/routePlan/config').set('Authorization', `Bearer ${authorizedToken}`).send(payload)
+
+    expect(unauthGet.status).to.equal(401)
+    expect(unauthGet.body.code).to.equal('AUTHENTICATION_INVALID')
+    expect(forbiddenGet.status).to.equal(403)
+    expect(forbiddenGet.body.code).to.equal('PERMISSION_DENIED')
+    expect(unauthPatch.status).to.equal(401)
+    expect(unauthPatch.body.code).to.equal('AUTHENTICATION_INVALID')
+    expect(forbiddenPatch.status).to.equal(403)
+    expect(forbiddenPatch.body.code).to.equal('PERMISSION_DENIED')
+  })
+
+  it('S-26: configures deposito_1, bumps the revision and records the authenticated actor', async () => {
+    await configureRouting()
+
+    const patch = await request(app)
+      .patch('/routePlan/config')
+      .set('Authorization', `Bearer ${configAdminToken}`)
+      .send({
+        depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 },
+        fuelConsumptionLitersPer100Km: 9.2,
+        routeMode: 'google-routes',
+        maxStops: 12
+      })
+
+    expect(patch.status).to.equal(200)
+    expect(patch.body.revision).to.equal(4)
+    expect(patch.body.provider).to.equal('google-routes')
+    expect(patch.body.updatedBy).to.equal(configAdminUserId)
+    expect(patch.body.maxStops).to.equal(12)
+    expect(patch.body.fuelConsumptionLitersPer100Km).to.equal(9.2)
+    expect(patch.body.enabled).to.equal(true)
+
+    const read = await request(app).get('/routePlan/config').set('Authorization', `Bearer ${configAdminToken}`)
+
+    expect(read.status).to.equal(200)
+    expect(read.body.revision).to.equal(4)
+    expect(read.body.updatedBy).to.equal(configAdminUserId)
+  })
+
+  it('S-26: rejects invalid depot coordinates and keeps preview generation disabled', async () => {
+    const outOfRange = await request(app)
+      .patch('/routePlan/config')
+      .set('Authorization', `Bearer ${configAdminToken}`)
+      .send({ depot: { name: 'Deposito 1', latitude: -34.6, longitude: 200 }, routeMode: 'google-routes' })
+    const missingAddress = await request(app)
+      .patch('/routePlan/config')
+      .set('Authorization', `Bearer ${configAdminToken}`)
+      .send({ depot: { name: '   ', latitude: -34.6, longitude: -58.4 }, routeMode: 'google-routes' })
+    const unknownMode = await request(app)
+      .patch('/routePlan/config')
+      .set('Authorization', `Bearer ${configAdminToken}`)
+      .send({ depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 }, routeMode: 'unknown-mode' })
+
+    for (const response of [outOfRange, missingAddress, unknownMode]) {
+      expect(response.status).to.equal(400)
+      expect(response.body.code).to.equal('INVALID_CONFIGURATION')
+    }
+
+    const read = await request(app).get('/routePlan/config').set('Authorization', `Bearer ${configAdminToken}`)
+    expect(read.status).to.equal(404)
+
+    const clientId = await createEligibleClient('Unconfigured customer', -34.61, -58.41)
+    const saleId = await createSale(clientId)
+    const previewResponse = await previewRequest([saleId])
+
+    expect(previewResponse.status).to.equal(422)
+    expect(previewResponse.body.code).to.equal('INVALID_CONFIGURATION')
   })
 })
