@@ -23,7 +23,7 @@ import RoutingConfigModel from '../models/routingConfig'
 import RoutePlanModel from '../models/routePlan'
 import SaleModel from '../models/sale'
 import { buildClosedRoute, calculateFuelLiters, RouteInvariantError } from './routeHeuristic'
-import { computeMatrix, computeRoute, RouteProviderError } from './routeMatrixProvider'
+import { computeMatrix, computeRoute, RouteProviderError, type RouteMatrixDiagnostic } from './routeMatrixProvider'
 
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
@@ -44,9 +44,10 @@ interface RoutePlanEvent {
   ruleVersion?: string
   routingConfigRevision?: number
   resultCode: string
+  diagnostic?: RouteMatrixDiagnostic
 }
 
-const logRoutePlanEvent = ({ event, correlationId, latencyMs, provider, providerOperation, algorithmVersion, ruleVersion, routingConfigRevision, resultCode }: RoutePlanEvent): void => {
+const logRoutePlanEvent = ({ event, correlationId, latencyMs, provider, providerOperation, algorithmVersion, ruleVersion, routingConfigRevision, resultCode, diagnostic }: RoutePlanEvent): void => {
   console.log(JSON.stringify({
     event,
     correlationId,
@@ -56,17 +57,20 @@ const logRoutePlanEvent = ({ event, correlationId, latencyMs, provider, provider
     algorithmVersion,
     ruleVersion,
     routingConfigRevision,
-    resultCode
+    resultCode,
+    diagnostic
   }))
 }
 
 class RoutePreviewError extends Error {
   readonly code: RoutePreviewErrorCode
+  readonly diagnostic?: RouteMatrixDiagnostic
 
-  constructor (code: RoutePreviewErrorCode, message: string) {
+  constructor (code: RoutePreviewErrorCode, message: string, diagnostic?: RouteMatrixDiagnostic) {
     super(message)
     this.name = 'RoutePreviewError'
     this.code = code
+    this.diagnostic = diagnostic
   }
 }
 
@@ -203,12 +207,18 @@ const previewProviderError = (error: unknown): RoutePreviewError => {
   if (error instanceof RoutePreviewError) return error
   if (error instanceof RouteInvariantError) return new RoutePreviewError(error.code, error.message)
   if (error instanceof RouteProviderError) {
-    if (error.code === 'ROUTING_PROVIDER_QUOTA_EXCEEDED') return new RoutePreviewError(error.code, error.message)
-    if (error.code === 'ROUTE_MATRIX_INCOMPLETE') return new RoutePreviewError(error.code, error.message)
-    if (error.code === 'INVALID_ROUTE_INPUT') return new RoutePreviewError(error.code, error.message)
-    return new RoutePreviewError('ROUTING_PROVIDER_UNAVAILABLE', error.message)
+    if (error.code === 'ROUTING_PROVIDER_QUOTA_EXCEEDED') return new RoutePreviewError(error.code, error.message, error.diagnostic)
+    if (error.code === 'ROUTE_MATRIX_INCOMPLETE') return new RoutePreviewError(error.code, error.message, error.diagnostic)
+    if (error.code === 'INVALID_ROUTE_INPUT') return new RoutePreviewError(error.code, error.message, error.diagnostic)
+    return new RoutePreviewError('ROUTING_PROVIDER_UNAVAILABLE', error.message, error.diagnostic)
   }
   return new RoutePreviewError('ROUTING_PROVIDER_UNAVAILABLE', 'Routing provider is unavailable')
+}
+
+const providerDiagnostic = (error: unknown): RouteMatrixDiagnostic | undefined => {
+  if (error instanceof RouteProviderError) return error.diagnostic
+  if (error instanceof RoutePreviewError) return error.diagnostic
+  return undefined
 }
 
 const errorCode = (error: unknown): string => error instanceof RoutePreviewError ? error.code : 'INTERNAL_ERROR'
@@ -271,7 +281,8 @@ const previewRoute = async ({ serviceDate, deliveryZoneId, saleIds }: RoutePrevi
       matrix = await computeMatrix({ origins: locations, destinations: locations })
       logRoutePlanEvent({ event: 'route_plan_provider_completed', correlationId: context.correlationId, latencyMs: Date.now() - matrixStart, provider: config.provider, providerOperation: 'matrix', algorithmVersion: config.algorithm, ruleVersion: CANDIDATE_RULE_VERSION, routingConfigRevision: config.revision, resultCode: 'SUCCESS' })
     } catch (error) {
-      logRoutePlanEvent({ event: 'route_plan_provider_failed', correlationId: context.correlationId, latencyMs: Date.now() - matrixStart, provider: config.provider, providerOperation: 'matrix', algorithmVersion: config.algorithm, ruleVersion: CANDIDATE_RULE_VERSION, routingConfigRevision: config.revision, resultCode: errorCode(previewProviderError(error)) })
+      const mapped = previewProviderError(error)
+      logRoutePlanEvent({ event: 'route_plan_provider_failed', correlationId: context.correlationId, latencyMs: Date.now() - matrixStart, provider: config.provider, providerOperation: 'matrix', algorithmVersion: config.algorithm, ruleVersion: CANDIDATE_RULE_VERSION, routingConfigRevision: config.revision, resultCode: errorCode(mapped), diagnostic: providerDiagnostic(mapped) })
       throw error
     }
     const heuristic = buildClosedRoute({ depot, stops, matrix: matrix.segments })
@@ -289,7 +300,8 @@ const previewRoute = async ({ serviceDate, deliveryZoneId, saleIds }: RoutePrevi
       })
       logRoutePlanEvent({ event: 'route_plan_provider_completed', correlationId: context.correlationId, latencyMs: Date.now() - routeStart, provider: config.provider, providerOperation: 'route', algorithmVersion: config.algorithm, ruleVersion: CANDIDATE_RULE_VERSION, routingConfigRevision: config.revision, resultCode: 'SUCCESS' })
     } catch (error) {
-      logRoutePlanEvent({ event: 'route_plan_provider_failed', correlationId: context.correlationId, latencyMs: Date.now() - routeStart, provider: config.provider, providerOperation: 'route', algorithmVersion: config.algorithm, ruleVersion: CANDIDATE_RULE_VERSION, routingConfigRevision: config.revision, resultCode: errorCode(previewProviderError(error)) })
+      const mapped = previewProviderError(error)
+      logRoutePlanEvent({ event: 'route_plan_provider_failed', correlationId: context.correlationId, latencyMs: Date.now() - routeStart, provider: config.provider, providerOperation: 'route', algorithmVersion: config.algorithm, ruleVersion: CANDIDATE_RULE_VERSION, routingConfigRevision: config.revision, resultCode: errorCode(mapped), diagnostic: providerDiagnostic(mapped) })
       throw error
     }
     return {
@@ -314,7 +326,8 @@ const preview = async (input: RoutePreviewRequest, context: RoutePlanRequestCont
     logRoutePlanEvent({ event: 'route_plan_preview_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, provider: result.algorithmProvider, algorithmVersion: result.algorithmVersion, ruleVersion: result.ruleVersion, routingConfigRevision: result.routingConfigRevision, resultCode: 'SUCCESS' })
     return result
   } catch (error) {
-    logRoutePlanEvent({ event: 'route_plan_preview_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: CANDIDATE_RULE_VERSION, resultCode: errorCode(previewProviderError(error)) })
+    const mapped = previewProviderError(error)
+    logRoutePlanEvent({ event: 'route_plan_preview_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: CANDIDATE_RULE_VERSION, resultCode: errorCode(mapped), diagnostic: providerDiagnostic(mapped) })
     throw error
   }
 }

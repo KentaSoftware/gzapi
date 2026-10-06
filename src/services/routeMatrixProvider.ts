@@ -16,10 +16,23 @@ type RouteProviderErrorCode =
   | 'ROUTING_PROVIDER_REQUEST_REJECTED'
   | 'ROUTING_PROVIDER_UNAVAILABLE'
 
+type RouteMatrixDiagnosticReason = 'INVALID_SHAPE' | 'INCOMPLETE_COVERAGE'
+
+interface RouteMatrixDiagnostic {
+  reason: RouteMatrixDiagnosticReason
+  expectedElements: number
+  receivedElements: number
+  validRoutes: number
+  conditionCounts: Record<string, number>
+  statusCodeCounts: Record<string, number>
+  responseShape?: string
+}
+
 interface GoogleMatrixElement {
   originIndex?: unknown
   destinationIndex?: unknown
   condition?: unknown
+  status?: unknown
   distanceMeters?: unknown
   duration?: unknown
 }
@@ -49,17 +62,69 @@ interface GoogleWaypoint {
 
 class RouteProviderError extends Error {
   readonly code: RouteProviderErrorCode
+  readonly diagnostic?: RouteMatrixDiagnostic
 
-  constructor (code: RouteProviderErrorCode, message: string) {
+  constructor (code: RouteProviderErrorCode, message: string, diagnostic?: RouteMatrixDiagnostic) {
     super(message)
     this.name = 'RouteProviderError'
     this.code = code
+    this.diagnostic = diagnostic
   }
 }
 
 const MATRIX_URL = 'https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix'
 const ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes'
 const DEFAULT_TIMEOUT_MS = 5000
+const MAX_DIAGNOSTIC_KEYS = 6
+const MAX_DIAGNOSTIC_LABEL_LENGTH = 32
+const MAX_SHAPE_LENGTH = 160
+
+const KNOWN_CONDITIONS = new Set(['ROUTE_EXISTS', 'ROUTE_NOT_FOUND'])
+const SAFE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,31}$/
+const SAFE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,31}$/
+
+const incrementCount = (counts: Record<string, number>, label: string): void => {
+  const current = counts[label]
+  if (current !== undefined) {
+    counts[label] = current + 1
+    return
+  }
+  if (Object.keys(counts).length >= MAX_DIAGNOSTIC_KEYS) {
+    counts.OTHER = (counts.OTHER ?? 0) + 1
+    return
+  }
+  counts[label] = 1
+}
+
+const conditionLabel = (condition: unknown): string => {
+  if (condition === undefined) return 'MISSING'
+  return typeof condition === 'string' && KNOWN_CONDITIONS.has(condition) ? condition : 'UNKNOWN'
+}
+
+const statusCodeLabel = (status: unknown): string => {
+  if (status === undefined) return 'MISSING'
+  if (typeof status !== 'object' || status === null) return 'UNKNOWN'
+  const code = (status as { code?: unknown }).code
+  if (typeof code === 'number') return Number.isInteger(code) ? String(code) : 'UNKNOWN'
+  if (typeof code === 'string' && SAFE_CODE_PATTERN.test(code)) return code.slice(0, MAX_DIAGNOSTIC_LABEL_LENGTH)
+  return 'UNKNOWN'
+}
+
+const shapeLabel = (value: unknown): string => {
+  if (value === null) return 'NULL'
+  if (Array.isArray(value)) return 'ARRAY'
+  const type = typeof value
+  if (type !== 'object') return type.toUpperCase()
+  const keys = Object.keys(value as Record<string, unknown>).sort().slice(0, MAX_DIAGNOSTIC_KEYS).map((key) => SAFE_KEY_PATTERN.test(key) ? key : 'UNKNOWN')
+  const label = `OBJECT(${keys.join(',')})`
+  return label.length > MAX_SHAPE_LENGTH ? `${label.slice(0, MAX_SHAPE_LENGTH)}...` : label
+}
+
+const sortCounts = (counts: Record<string, number>): Record<string, number> => {
+  const sorted: Record<string, number> = {}
+  for (const key of Object.keys(counts).sort()) sorted[key] = counts[key]
+  return sorted
+}
 
 const timeoutMs = (): number => {
   const configured = Number(process.env.GOOGLE_ROUTES_TIMEOUT_MS)
@@ -152,7 +217,6 @@ const postWithRetry = async <T>(url: string, data: object, fieldMask: string): P
 }
 
 const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinations: RouteLocation[]): RouteMatrix => {
-  if (!Array.isArray(elements)) throw new RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is invalid')
   const expected = new Set<string>()
   for (const origin of origins) {
     for (const destination of destinations) {
@@ -160,11 +224,31 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
     }
   }
 
+  if (!Array.isArray(elements)) {
+    throw new RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is invalid', {
+      reason: 'INVALID_SHAPE',
+      expectedElements: expected.size,
+      receivedElements: 0,
+      validRoutes: 0,
+      conditionCounts: {},
+      statusCodeCounts: {},
+      responseShape: shapeLabel(elements)
+    })
+  }
+
   const segments: RouteMatrixSegment[] = []
   const received = new Set<string>()
+  const conditionCounts: Record<string, number> = {}
+  const statusCodeCounts: Record<string, number> = {}
   for (const element of elements) {
-    if (typeof element !== 'object' || element === null) continue
-    const { originIndex, destinationIndex, condition, distanceMeters, duration } = element as GoogleMatrixElement
+    if (typeof element !== 'object' || element === null) {
+      incrementCount(conditionCounts, 'MISSING')
+      incrementCount(statusCodeCounts, 'MISSING')
+      continue
+    }
+    const { originIndex, destinationIndex, condition, status, distanceMeters, duration } = element as GoogleMatrixElement
+    incrementCount(conditionCounts, conditionLabel(condition))
+    incrementCount(statusCodeCounts, statusCodeLabel(status))
     if (typeof originIndex !== 'number' || typeof destinationIndex !== 'number' || !Number.isInteger(originIndex) || !Number.isInteger(destinationIndex) || originIndex < 0 || destinationIndex < 0 || originIndex >= origins.length || destinationIndex >= destinations.length) continue
     const origin = origins[originIndex]
     const destination = destinations[destinationIndex]
@@ -177,7 +261,14 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
   }
 
   if (received.size !== expected.size || [...expected].some((key) => !received.has(key))) {
-    throw new RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is incomplete')
+    throw new RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is incomplete', {
+      reason: 'INCOMPLETE_COVERAGE',
+      expectedElements: expected.size,
+      receivedElements: elements.length,
+      validRoutes: received.size,
+      conditionCounts: sortCounts(conditionCounts),
+      statusCodeCounts: sortCounts(statusCodeCounts)
+    })
   }
   return { segments }
 }
@@ -223,3 +314,4 @@ export {
   computeRoute,
   RouteProviderError
 }
+export type { RouteMatrixDiagnostic }

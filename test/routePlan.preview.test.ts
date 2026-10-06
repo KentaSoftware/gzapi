@@ -215,6 +215,40 @@ describe('Route plan preview', () => {
     expect(response.body.route).to.equal(undefined)
   })
 
+  it('S-22/TC-021: provider and preview failure logs carry a bounded diagnostic without sensitive payload fields', async () => {
+    const clientId = await createEligibleClient('Diagnostic customer', -34.61, -58.41)
+    const saleId = await createSale(clientId)
+    await configureRouting()
+    sinon.stub(routeMatrixProvider, 'computeMatrix').rejects(new routeMatrixProvider.RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is incomplete', {
+      reason: 'INCOMPLETE_COVERAGE',
+      expectedElements: 2,
+      receivedElements: 1,
+      validRoutes: 1,
+      conditionCounts: { ROUTE_EXISTS: 1 },
+      statusCodeCounts: { MISSING: 1 }
+    }))
+    const log = sinon.stub(console, 'log')
+
+    try {
+      const response = await previewRequest([saleId])
+
+      expect(response.status).to.equal(422)
+      expect(response.body.code).to.equal('ROUTE_MATRIX_INCOMPLETE')
+      const output = log.getCalls().map((call) => call.args.join(' ')).join('\n')
+      expect(output).to.contain('route_plan_provider_failed')
+      expect(output).to.contain('route_plan_preview_failed')
+      expect(output).to.contain('"expectedElements":2')
+      expect(output).to.contain('"receivedElements":1')
+      expect(output).to.contain('"validRoutes":1')
+      expect(output).to.contain('"ROUTE_EXISTS":1')
+      expect(output).to.not.contain('Diagnostic customer')
+      expect(output).to.not.contain('-34.61')
+      expect(output).to.not.contain('-58.41')
+    } finally {
+      log.restore()
+    }
+  })
+
   it('S-21/TC-014: rejects a selection that exceeds the configured stop limit before any provider call', async () => {
     const firstClientId = await createEligibleClient('Limit customer one', -34.61, -58.41)
     const secondClientId = await createEligibleClient('Limit customer two', -34.62, -58.42)
