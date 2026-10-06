@@ -141,6 +141,59 @@ describe('Google Routes provider', () => {
     }
   })
 
+  it('S-20/TC-014: requests element status so rejections can be attributed', async () => {
+    post.resolves({ data: matrixResponse })
+
+    await computeMatrix({ origins: locations, destinations: locations })
+
+    const headers = post.firstCall.args[2].headers as Record<string, string>
+    const fieldMask = headers['X-Goog-FieldMask']
+    for (const field of ['originIndex', 'destinationIndex', 'condition', 'status', 'distanceMeters', 'duration']) {
+      expect(fieldMask).to.contain(field)
+    }
+  })
+
+  it('S-20/TC-014: attributes the rejected non-self elements with whitelisted, non-sensitive buckets', async () => {
+    const threeLocations = [
+      { id: 'depot', name: 'Depot', latitude: -34.6, longitude: -58.4 },
+      { id: 'client-1', name: 'Client 1', latitude: -34.61, longitude: -58.41 },
+      { id: 'client-2', name: 'Client 2', latitude: -34.62, longitude: -58.42 }
+    ]
+    post.resolves({
+      data: [
+        { originIndex: 0, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: 0, duration: '0s' },
+        { originIndex: 1, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: 0, duration: '0s' },
+        { originIndex: 2, destinationIndex: 2, condition: 'ROUTE_EXISTS', distanceMeters: 0, duration: '0s' },
+        { originIndex: 0, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: 1200, duration: '120s', status: { code: 0 } },
+        { originIndex: 1, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: 1300, duration: '130s', status: { code: 0 } },
+        { originIndex: 0, destinationIndex: 2, condition: 'ROUTE_EXISTS', distanceMeters: 1400, duration: '140s', status: { code: 0 } },
+        { originIndex: 2, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: 1500, duration: '150s', status: { code: 0 } },
+        { originIndex: 1, destinationIndex: 2, condition: 'ROUTE_EXISTS', distanceMeters: 'raw-provider-distance', duration: '160s', address: 'Sensitive customer address', apiKey: 'super-secret-key' },
+        { originIndex: 2, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: 1700, duration: 'not-a-duration', latitude: -34.61, longitude: -58.41 }
+      ]
+    })
+
+    try {
+      await computeMatrix({ origins: threeLocations, destinations: threeLocations })
+      expect.fail('Expected provider request to fail')
+    } catch (error) {
+      expect(error).to.be.instanceOf(RouteProviderError)
+      const providerError = error as RouteProviderError
+      expect(providerError.code).to.equal('ROUTE_MATRIX_INCOMPLETE')
+      expect(providerError.diagnostic?.expectedElements).to.equal(6)
+      expect(providerError.diagnostic?.receivedElements).to.equal(9)
+      expect(providerError.diagnostic?.validRoutes).to.equal(4)
+      expect(providerError.diagnostic?.rejectionCounts).to.deep.equal({ INVALID_DURATION: 1, INVALID_DISTANCE: 1, SELF_PAIR: 3 })
+      const text = JSON.stringify(providerError.diagnostic)
+      expect(text).to.not.contain('Sensitive customer address')
+      expect(text).to.not.contain('-34.61')
+      expect(text).to.not.contain('-58.41')
+      expect(text).to.not.contain('super-secret-key')
+      expect(text).to.not.contain('raw-provider-distance')
+      expect(text).to.not.contain('not-a-duration')
+    }
+  })
+
   it('S-22/TC-021: the diagnostic excludes provider payload values and sensitive fields', async () => {
     post.resolves({
       data: [

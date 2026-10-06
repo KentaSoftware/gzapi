@@ -18,6 +18,15 @@ type RouteProviderErrorCode =
 
 type RouteMatrixDiagnosticReason = 'INVALID_SHAPE' | 'INCOMPLETE_COVERAGE'
 
+type RouteMatrixRejectionReason =
+  | 'INVALID_ELEMENT'
+  | 'INVALID_INDEXES'
+  | 'SELF_PAIR'
+  | 'INVALID_DISTANCE'
+  | 'INVALID_DURATION'
+  | 'DUPLICATE_PAIR'
+  | 'OTHER'
+
 interface RouteMatrixDiagnostic {
   reason: RouteMatrixDiagnosticReason
   expectedElements: number
@@ -25,6 +34,7 @@ interface RouteMatrixDiagnostic {
   validRoutes: number
   conditionCounts: Record<string, number>
   statusCodeCounts: Record<string, number>
+  rejectionCounts?: Record<string, number>
   responseShape?: string
 }
 
@@ -94,6 +104,10 @@ const incrementCount = (counts: Record<string, number>, label: string): void => 
     return
   }
   counts[label] = 1
+}
+
+const recordRejection = (counts: Record<string, number>, reason: RouteMatrixRejectionReason): void => {
+  counts[reason] = (counts[reason] ?? 0) + 1
 }
 
 const conditionLabel = (condition: unknown): string => {
@@ -240,35 +254,60 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
   const received = new Set<string>()
   const conditionCounts: Record<string, number> = {}
   const statusCodeCounts: Record<string, number> = {}
+  const rejectionCounts: Record<string, number> = {}
   for (const element of elements) {
     if (typeof element !== 'object' || element === null) {
       incrementCount(conditionCounts, 'MISSING')
       incrementCount(statusCodeCounts, 'MISSING')
+      recordRejection(rejectionCounts, 'INVALID_ELEMENT')
       continue
     }
     const { originIndex, destinationIndex, condition, status, distanceMeters, duration } = element as GoogleMatrixElement
     incrementCount(conditionCounts, conditionLabel(condition))
     incrementCount(statusCodeCounts, statusCodeLabel(status))
-    if (typeof originIndex !== 'number' || typeof destinationIndex !== 'number' || !Number.isInteger(originIndex) || !Number.isInteger(destinationIndex) || originIndex < 0 || destinationIndex < 0 || originIndex >= origins.length || destinationIndex >= destinations.length) continue
+    if (typeof originIndex !== 'number' || typeof destinationIndex !== 'number' || !Number.isInteger(originIndex) || !Number.isInteger(destinationIndex) || originIndex < 0 || destinationIndex < 0 || originIndex >= origins.length || destinationIndex >= destinations.length) {
+      recordRejection(rejectionCounts, 'INVALID_INDEXES')
+      continue
+    }
     const origin = origins[originIndex]
     const destination = destinations[destinationIndex]
     const key = `${origin.id}\u0000${destination.id}`
     const seconds = durationSeconds(duration)
-    if (origin.id === destination.id) continue
-    if (condition !== 'ROUTE_EXISTS' || typeof distanceMeters !== 'number' || !Number.isFinite(distanceMeters) || distanceMeters < 0 || seconds === undefined || received.has(key)) continue
+    if (origin.id === destination.id) {
+      recordRejection(rejectionCounts, 'SELF_PAIR')
+      continue
+    }
+    if (condition !== 'ROUTE_EXISTS') {
+      recordRejection(rejectionCounts, 'OTHER')
+      continue
+    }
+    if (typeof distanceMeters !== 'number' || !Number.isFinite(distanceMeters) || distanceMeters < 0) {
+      recordRejection(rejectionCounts, 'INVALID_DISTANCE')
+      continue
+    }
+    if (seconds === undefined) {
+      recordRejection(rejectionCounts, 'INVALID_DURATION')
+      continue
+    }
+    if (received.has(key)) {
+      recordRejection(rejectionCounts, 'DUPLICATE_PAIR')
+      continue
+    }
     received.add(key)
     segments.push({ fromId: origin.id, toId: destination.id, distanceMeters, durationSeconds: seconds })
   }
 
   if (received.size !== expected.size || [...expected].some((key) => !received.has(key))) {
-    throw new RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is incomplete', {
+    const diagnostic: RouteMatrixDiagnostic = {
       reason: 'INCOMPLETE_COVERAGE',
       expectedElements: expected.size,
       receivedElements: elements.length,
       validRoutes: received.size,
       conditionCounts: sortCounts(conditionCounts),
       statusCodeCounts: sortCounts(statusCodeCounts)
-    })
+    }
+    if (Object.keys(rejectionCounts).length > 0) diagnostic.rejectionCounts = sortCounts(rejectionCounts)
+    throw new RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is incomplete', diagnostic)
   }
   return { segments }
 }
@@ -292,7 +331,7 @@ const computeMatrix = async ({ origins, destinations }: RouteMatrixRequest): Pro
     origins: origins.map(toGoogleWaypoint),
     destinations: destinations.map(toGoogleWaypoint),
     travelMode: 'DRIVE'
-  }, 'originIndex,destinationIndex,condition,distanceMeters,duration')
+  }, 'originIndex,destinationIndex,condition,status,distanceMeters,duration')
   return normalizeMatrix(elements, origins, destinations)
 }
 
