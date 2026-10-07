@@ -330,4 +330,126 @@ describe('Google Routes provider', () => {
 
     await expectProviderFailure(async () => await computeRoute({ origin: locations[0], intermediates: [locations[1]], destination: locations[0] }), 'ROUTE_FINAL_ROUTE_INVALID')
   })
+
+  it('S-20/TC-014: reports non-self rejected pairs with whitelisted reasons in deterministic order', async () => {
+    const threeLocations = [
+      { id: 'depot', name: 'Depot', latitude: -34.6, longitude: -58.4 },
+      { id: 'client-1', name: 'Client 1', latitude: -34.61, longitude: -58.41 },
+      { id: 'client-2', name: 'Client 2', latitude: -34.62, longitude: -58.42 }
+    ]
+    post.resolves({
+      data: [
+        { originIndex: 0, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: 0, duration: '0s' },
+        { originIndex: 1, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: 0, duration: '0s' },
+        { originIndex: 2, destinationIndex: 2, condition: 'ROUTE_EXISTS', distanceMeters: 0, duration: '0s' },
+        { originIndex: 0, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: 1200, duration: '120s' },
+        { originIndex: 0, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: 1250, duration: '125s' },
+        { originIndex: 1, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: 'invalid', duration: '130s' },
+        { originIndex: 0, destinationIndex: 2, condition: 'ROUTE_NOT_FOUND' },
+        { originIndex: 2, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: 1400, duration: 'not-a-duration' },
+        { originIndex: 1, destinationIndex: 2, condition: 'ROUTE_EXISTS', distanceMeters: 1600, duration: '160s' },
+        { originIndex: 2, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: 1700, duration: '170s' }
+      ]
+    })
+
+    try {
+      await computeMatrix({ origins: threeLocations, destinations: threeLocations })
+      expect.fail('Expected provider request to fail')
+    } catch (error) {
+      expect(error).to.be.instanceOf(RouteProviderError)
+      const providerError = error as RouteProviderError
+      expect(providerError.code).to.equal('ROUTE_MATRIX_INCOMPLETE')
+      expect(providerError.diagnostic?.rejectionCounts).to.deep.equal({
+        DUPLICATE_PAIR: 1,
+        INVALID_DISTANCE: 1,
+        INVALID_DURATION: 1,
+        OTHER: 1,
+        SELF_PAIR: 3
+      })
+      expect(providerError.diagnostic?.rejectedPairs).to.deep.equal([
+        { originIndex: 0, destinationIndex: 1, reason: 'DUPLICATE_PAIR' },
+        { originIndex: 1, destinationIndex: 0, reason: 'INVALID_DISTANCE' },
+        { originIndex: 0, destinationIndex: 2, reason: 'OTHER' },
+        { originIndex: 2, destinationIndex: 0, reason: 'INVALID_DURATION' }
+      ])
+      for (const pair of providerError.diagnostic?.rejectedPairs ?? []) {
+        expect(pair.originIndex).to.not.equal(pair.destinationIndex)
+      }
+    }
+  })
+
+  it('S-20/TC-014: bounds rejected-pair diagnostics to eight non-self entries', async () => {
+    const fourLocations = [
+      { id: 'depot', name: 'Depot', latitude: -34.6, longitude: -58.4 },
+      { id: 'client-1', name: 'Client 1', latitude: -34.61, longitude: -58.41 },
+      { id: 'client-2', name: 'Client 2', latitude: -34.62, longitude: -58.42 },
+      { id: 'client-3', name: 'Client 3', latitude: -34.63, longitude: -58.43 }
+    ]
+    const data: Array<Record<string, unknown>> = []
+    for (let originIndex = 0; originIndex < fourLocations.length; originIndex += 1) {
+      for (let destinationIndex = 0; destinationIndex < fourLocations.length; destinationIndex += 1) {
+        data.push({ originIndex, destinationIndex, condition: 'ROUTE_EXISTS', distanceMeters: 'invalid', duration: '1s' })
+      }
+    }
+    post.resolves({ data })
+
+    try {
+      await computeMatrix({ origins: fourLocations, destinations: fourLocations })
+      expect.fail('Expected provider request to fail')
+    } catch (error) {
+      const diagnostic = (error as RouteProviderError).diagnostic
+      expect(diagnostic?.rejectionCounts?.SELF_PAIR).to.equal(4)
+      expect(diagnostic?.rejectionCounts?.INVALID_DISTANCE).to.equal(12)
+      expect(diagnostic?.rejectedPairs).to.have.length(8)
+      expect(diagnostic?.rejectedPairs).to.deep.equal([
+        { originIndex: 0, destinationIndex: 1, reason: 'INVALID_DISTANCE' },
+        { originIndex: 0, destinationIndex: 2, reason: 'INVALID_DISTANCE' },
+        { originIndex: 0, destinationIndex: 3, reason: 'INVALID_DISTANCE' },
+        { originIndex: 1, destinationIndex: 0, reason: 'INVALID_DISTANCE' },
+        { originIndex: 1, destinationIndex: 2, reason: 'INVALID_DISTANCE' },
+        { originIndex: 1, destinationIndex: 3, reason: 'INVALID_DISTANCE' },
+        { originIndex: 2, destinationIndex: 0, reason: 'INVALID_DISTANCE' },
+        { originIndex: 2, destinationIndex: 1, reason: 'INVALID_DISTANCE' }
+      ])
+    }
+  })
+
+  it('S-22/TC-021: rejected-pair diagnostics exclude sensitive fields and raw values', async () => {
+    post.resolves({
+      data: [
+        {
+          originIndex: 0,
+          destinationIndex: 1,
+          condition: 'ROUTE_EXISTS',
+          distanceMeters: 'raw-provider-distance',
+          duration: 'not-a-duration',
+          address: 'Sensitive customer address',
+          apiKey: 'super-secret-key',
+          latitude: -34.61,
+          longitude: -58.41,
+          status: { code: 3, message: 'raw provider detail' },
+          rawPayload: { nested: 'raw provider payload' }
+        }
+      ]
+    })
+
+    try {
+      await computeMatrix({ origins: locations, destinations: locations })
+      expect.fail('Expected provider request to fail')
+    } catch (error) {
+      const diagnostic = (error as RouteProviderError).diagnostic
+      expect(diagnostic?.rejectedPairs).to.deep.equal([
+        { originIndex: 0, destinationIndex: 1, reason: 'INVALID_DISTANCE' }
+      ])
+      const text = JSON.stringify(diagnostic)
+      expect(text).to.not.contain('Sensitive customer address')
+      expect(text).to.not.contain('-34.61')
+      expect(text).to.not.contain('-58.41')
+      expect(text).to.not.contain('super-secret-key')
+      expect(text).to.not.contain('raw-provider-distance')
+      expect(text).to.not.contain('not-a-duration')
+      expect(text).to.not.contain('raw provider detail')
+      expect(text).to.not.contain('raw provider payload')
+    }
+  })
 })

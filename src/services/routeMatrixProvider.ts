@@ -27,6 +27,14 @@ type RouteMatrixRejectionReason =
   | 'DUPLICATE_PAIR'
   | 'OTHER'
 
+type RouteMatrixRejectedPairReason = Exclude<RouteMatrixRejectionReason, 'INVALID_ELEMENT' | 'INVALID_INDEXES' | 'SELF_PAIR'>
+
+interface RouteMatrixRejectedPair {
+  originIndex: number
+  destinationIndex: number
+  reason: RouteMatrixRejectedPairReason
+}
+
 interface RouteMatrixDiagnostic {
   reason: RouteMatrixDiagnosticReason
   expectedElements: number
@@ -35,6 +43,7 @@ interface RouteMatrixDiagnostic {
   conditionCounts: Record<string, number>
   statusCodeCounts: Record<string, number>
   rejectionCounts?: Record<string, number>
+  rejectedPairs?: RouteMatrixRejectedPair[]
   distanceValueCounts?: Record<string, number>
   responseShape?: string
 }
@@ -89,11 +98,18 @@ const DEFAULT_TIMEOUT_MS = 5000
 const MAX_DIAGNOSTIC_KEYS = 6
 const MAX_DIAGNOSTIC_LABEL_LENGTH = 32
 const MAX_SHAPE_LENGTH = 160
+const MAX_REJECTED_PAIRS = 8
 
 const KNOWN_CONDITIONS = new Set(['ROUTE_EXISTS', 'ROUTE_NOT_FOUND'])
 const SAFE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,31}$/
 const SAFE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,31}$/
 const NUMERIC_DISTANCE_PATTERN = /^\d+(?:\.\d+)?$/
+const REJECTED_PAIR_REASONS = new Set<RouteMatrixRejectedPairReason>([
+  'INVALID_DISTANCE',
+  'INVALID_DURATION',
+  'DUPLICATE_PAIR',
+  'OTHER'
+])
 
 const incrementCount = (counts: Record<string, number>, label: string): void => {
   const current = counts[label]
@@ -110,6 +126,19 @@ const incrementCount = (counts: Record<string, number>, label: string): void => 
 
 const recordRejection = (counts: Record<string, number>, reason: RouteMatrixRejectionReason): void => {
   counts[reason] = (counts[reason] ?? 0) + 1
+}
+
+// Bounded, sanitized index-only diagnostic. Emits nothing but whitelisted pair
+// indexes and rejection reasons, never provider values or client identifiers.
+const recordRejectedPair = (
+  pairs: RouteMatrixRejectedPair[],
+  originIndex: number,
+  destinationIndex: number,
+  reason: RouteMatrixRejectedPairReason
+): void => {
+  if (pairs.length >= MAX_REJECTED_PAIRS) return
+  if (!REJECTED_PAIR_REASONS.has(reason)) return
+  pairs.push({ originIndex, destinationIndex, reason })
 }
 
 const conditionLabel = (condition: unknown): string => {
@@ -278,6 +307,7 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
   const conditionCounts: Record<string, number> = {}
   const statusCodeCounts: Record<string, number> = {}
   const rejectionCounts: Record<string, number> = {}
+  const rejectedPairs: RouteMatrixRejectedPair[] = []
   const distanceValueCounts: Record<string, number> = {}
   for (const element of elements) {
     if (typeof element !== 'object' || element === null) {
@@ -305,19 +335,23 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
     }
     if (condition !== 'ROUTE_EXISTS') {
       recordRejection(rejectionCounts, 'OTHER')
+      recordRejectedPair(rejectedPairs, originIndex, destinationIndex, 'OTHER')
       continue
     }
     const meters = distanceMetersValue(distanceMeters)
     if (meters === undefined) {
       recordRejection(rejectionCounts, 'INVALID_DISTANCE')
+      recordRejectedPair(rejectedPairs, originIndex, destinationIndex, 'INVALID_DISTANCE')
       continue
     }
     if (seconds === undefined) {
       recordRejection(rejectionCounts, 'INVALID_DURATION')
+      recordRejectedPair(rejectedPairs, originIndex, destinationIndex, 'INVALID_DURATION')
       continue
     }
     if (received.has(key)) {
       recordRejection(rejectionCounts, 'DUPLICATE_PAIR')
+      recordRejectedPair(rejectedPairs, originIndex, destinationIndex, 'DUPLICATE_PAIR')
       continue
     }
     received.add(key)
@@ -335,6 +369,7 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
       distanceValueCounts: sortCounts(distanceValueCounts)
     }
     if (Object.keys(rejectionCounts).length > 0) diagnostic.rejectionCounts = sortCounts(rejectionCounts)
+    if (rejectedPairs.length > 0) diagnostic.rejectedPairs = rejectedPairs.map((pair) => ({ ...pair }))
     throw new RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is incomplete', diagnostic)
   }
   return { segments }
@@ -382,4 +417,4 @@ export {
   computeRoute,
   RouteProviderError
 }
-export type { RouteMatrixDiagnostic }
+export type { RouteMatrixDiagnostic, RouteMatrixRejectedPair }
