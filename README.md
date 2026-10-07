@@ -66,7 +66,7 @@ npm test      # Tests (Mocha)
 
 El seed siguiente es **exclusivamente para pruebas locales**. Carga la base
 `test_route_plan` en MongoDB local con datos sintéticos de Tucumán:
-Tafí del Valle, El Mollar, Monteros, Los Sarmientos y Aguilares.
+Tafí del Valle, El Mollar, Monteros, Los Sarmientos, Aguilares y Test-Route.
 
 Requisitos:
 
@@ -79,8 +79,8 @@ Ejecutar:
 npm run seed:route-plan:test
 ```
 
-El seed es idempotente y no elimina datos. Crea o actualiza 5 zonas, 26
-clientes, 26 ventas pendientes, un usuario de pruebas y la configuración
+El seed es idempotente y no elimina datos. Crea o actualiza 6 zonas, 34
+clientes, 34 ventas pendientes, un usuario de pruebas y la configuración
 `deposito_1`. No crea snapshots: esos se generan mediante el endpoint de
 guardado de planes.
 

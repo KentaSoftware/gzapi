@@ -49,7 +49,7 @@ const ROUTE_TEST_PERMISSIONS = [
 ]
 
 const FIXTURE_VALIDATED_AT = new Date('2026-01-01T00:00:00.000Z')
-const DEPOT_FIXTURE = { name: 'Deposito de prueba San Miguel de Tucuman', latitude: -26.8241, longitude: -65.2226 }
+const DEPOT_FIXTURE = { name: 'Deposito de prueba San Miguel de Tucuman', latitude: -27.34774586607769, longitude: -65.58714233837968 }
 const FUEL_COEFFICIENT = 8.5
 const MAX_STOPS = 20
 const TEST_PHONE_BASE = 3815000000
@@ -63,6 +63,14 @@ interface ZoneFixture {
   key: string
   code: string
   name: string
+  // Offset-based zones anchor their clients on these base coordinates; zones
+  // with explicit client coordinates provide `clients` and leave the base unset.
+  latitude?: number
+  longitude?: number
+  clients?: ClientCoordinate[]
+}
+
+interface ClientCoordinate {
   latitude: number
   longitude: number
 }
@@ -116,13 +124,28 @@ interface SaleFixture {
   serviceDateInstant: Date
 }
 
+// Explicit, high-precision client coordinates for the Test-Route zone. These
+// synthetic points are stored verbatim and must not be rounded.
+const TEST_ROUTE_CLIENTS: ClientCoordinate[] = [
+  { latitude: -26.85962461036464, longitude: -65.69629361944428 },
+  { latitude: -26.852520208810517, longitude: -65.70331010811422 },
+  { latitude: -26.858599435514773, longitude: -65.7199473568868 },
+  { latitude: -26.84488292304535, longitude: -65.68517031163914 },
+  { latitude: -26.592959354092393, longitude: -65.91934214376454 },
+  { latitude: -26.592860593646435, longitude: -65.91936422823521 },
+  { latitude: -26.94691214700121, longitude: -65.71598159529378 },
+  { latitude: -26.946688314831096, longitude: -65.69913798992495 }
+]
+
 // Tucuman localities resolved at the town/locality level, not the department.
+// Test-Route uses explicit client coordinates instead of deterministic offsets.
 const ZONE_FIXTURES: ZoneFixture[] = [
   { key: 'tafi-del-valle', code: 'TAFI_DEL_VALLE', name: 'Tafí del Valle', latitude: -26.8666667, longitude: -65.6833333 },
   { key: 'el-mollar', code: 'EL_MOLLAR', name: 'El Mollar', latitude: -26.9209985, longitude: -65.6939078 },
   { key: 'monteros', code: 'MONTEROS', name: 'Monteros', latitude: -27.1666667, longitude: -65.5 },
   { key: 'los-sarmientos', code: 'LOS_SARMIENTOS', name: 'Los Sarmientos', latitude: -27.4138889, longitude: -65.69 },
-  { key: 'aguilares', code: 'AGUILARES', name: 'Aguilares', latitude: -27.43096, longitude: -65.61302 }
+  { key: 'aguilares', code: 'AGUILARES', name: 'Aguilares', latitude: -27.43096, longitude: -65.61302 },
+  { key: 'test-route', code: 'TEST_ROUTE', name: 'Test-Route', clients: TEST_ROUTE_CLIENTS }
 ]
 
 // Deterministic sub-kilometer offsets keep each client inside its locality footprint.
@@ -133,6 +156,21 @@ const CLIENT_OFFSETS: CoordinateOffset[] = [
   { latitudeDelta: -0.0027, longitudeDelta: -0.0024 },
   { latitudeDelta: 0.0009, longitudeDelta: 0.0034 }
 ]
+
+// Resolve each client position for a zone: explicit coordinates are used
+// verbatim, while offset zones keep the existing 6-decimal deterministic math.
+const buildZoneClientCoordinates = (zone: ZoneFixture): ClientCoordinate[] => {
+  if (zone.clients !== undefined) return zone.clients
+  if (zone.latitude === undefined || zone.longitude === undefined) {
+    throw new Error(`Delivery zone ${zone.key} requires base coordinates or explicit clients`)
+  }
+  const latitude = zone.latitude
+  const longitude = zone.longitude
+  return CLIENT_OFFSETS.map((offset) => ({
+    latitude: Number((latitude + offset.latitudeDelta).toFixed(6)),
+    longitude: Number((longitude + offset.longitudeDelta).toFixed(6))
+  }))
+}
 
 const fixtureObjectId = (key: string): Types.ObjectId =>
   new Types.ObjectId(createHash('sha256').update(`${FIXTURE_NAMESPACE}:${key}`).digest('hex').slice(0, 24))
@@ -359,8 +397,9 @@ const seed = async (): Promise<SeedResult> => {
       const zoneId = zoneIds.get(zone.key)
       if (zoneId === undefined) throw new Error(`Missing seeded delivery zone for ${zone.key}`)
 
-      for (let index = 0; index < CLIENT_OFFSETS.length; index += 1) {
-        const offset = CLIENT_OFFSETS[index]
+      const coordinates = buildZoneClientCoordinates(zone)
+      for (let index = 0; index < coordinates.length; index += 1) {
+        const coordinate = coordinates[index]
         clientIndex += 1
         const clientName = `Cliente de prueba ${zone.name} ${index + 1}`
         const clientId = fixtureObjectId(`client:${zone.key}:${index + 1}`)
@@ -369,8 +408,8 @@ const seed = async (): Promise<SeedResult> => {
           nombreCompleto: clientName,
           address: `Calle Ficticia ${100 + index}, ${zone.name}`,
           telefono: TEST_PHONE_BASE + clientIndex,
-          latitude: Number((zone.latitude + offset.latitudeDelta).toFixed(6)),
-          longitude: Number((zone.longitude + offset.longitudeDelta).toFixed(6)),
+          latitude: coordinate.latitude,
+          longitude: coordinate.longitude,
           deliveryZoneId: zoneId,
           isActive: true,
           geocodingStatus: GEOCODING_STATUS.CONFIRMED,
@@ -393,6 +432,11 @@ const seed = async (): Promise<SeedResult> => {
     const blockedZone = ZONE_FIXTURES[0]
     const blockedZoneId = zoneIds.get(blockedZone.key)
     if (blockedZoneId === undefined) throw new Error(`Missing seeded delivery zone for ${blockedZone.key}`)
+    if (blockedZone.latitude === undefined || blockedZone.longitude === undefined) {
+      throw new Error(`Blocked fixture zone ${blockedZone.key} requires base coordinates`)
+    }
+    const blockedLatitude = blockedZone.latitude
+    const blockedLongitude = blockedZone.longitude
 
     const blockedClientName = `Cliente bloqueado ${blockedZone.name}`
     const blockedClientId = fixtureObjectId('client:blocked')
@@ -401,8 +445,8 @@ const seed = async (): Promise<SeedResult> => {
       nombreCompleto: blockedClientName,
       address: `Calle Ficticia 200, ${blockedZone.name}`,
       telefono: TEST_PHONE_BASE + 900,
-      latitude: blockedZone.latitude + 0.0043,
-      longitude: blockedZone.longitude - 0.0038,
+      latitude: blockedLatitude + 0.0043,
+      longitude: blockedLongitude - 0.0038,
       deliveryZoneId: blockedZoneId,
       isActive: true,
       geocodingStatus: GEOCODING_STATUS.UNVERIFIED,
