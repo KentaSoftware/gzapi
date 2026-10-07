@@ -35,6 +35,7 @@ interface RouteMatrixDiagnostic {
   conditionCounts: Record<string, number>
   statusCodeCounts: Record<string, number>
   rejectionCounts?: Record<string, number>
+  distanceValueCounts?: Record<string, number>
   responseShape?: string
 }
 
@@ -92,6 +93,7 @@ const MAX_SHAPE_LENGTH = 160
 const KNOWN_CONDITIONS = new Set(['ROUTE_EXISTS', 'ROUTE_NOT_FOUND'])
 const SAFE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,31}$/
 const SAFE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,31}$/
+const NUMERIC_DISTANCE_PATTERN = /^\d+(?:\.\d+)?$/
 
 const incrementCount = (counts: Record<string, number>, label: string): void => {
   const current = counts[label]
@@ -186,6 +188,27 @@ const durationSeconds = (value: unknown): number | undefined => {
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined
 }
 
+// Google/protobuf JSON serializes integer fields as decimal strings, so a finite
+// non-negative numeric string is normalized to a number. Units, exponents, signs,
+// whitespace, null, and arbitrary strings stay invalid.
+const distanceMetersValue = (value: unknown): number | undefined => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value >= 0 ? value : undefined
+  }
+  if (typeof value === 'string' && NUMERIC_DISTANCE_PATTERN.test(value)) {
+    const meters = Number(value)
+    return Number.isFinite(meters) && meters >= 0 ? meters : undefined
+  }
+  return undefined
+}
+
+const distanceValueLabel = (value: unknown): string => {
+  if (value === undefined) return 'MISSING'
+  if (typeof value === 'string') return distanceMetersValue(value) === undefined ? 'INVALID' : 'NUMERIC_STRING'
+  if (typeof value === 'number') return distanceMetersValue(value) === undefined ? 'INVALID' : 'NUMBER'
+  return 'INVALID'
+}
+
 const isTransient = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) return true
   const response = (error as { response?: { status?: unknown } }).response
@@ -255,16 +278,19 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
   const conditionCounts: Record<string, number> = {}
   const statusCodeCounts: Record<string, number> = {}
   const rejectionCounts: Record<string, number> = {}
+  const distanceValueCounts: Record<string, number> = {}
   for (const element of elements) {
     if (typeof element !== 'object' || element === null) {
       incrementCount(conditionCounts, 'MISSING')
       incrementCount(statusCodeCounts, 'MISSING')
+      incrementCount(distanceValueCounts, 'MISSING')
       recordRejection(rejectionCounts, 'INVALID_ELEMENT')
       continue
     }
     const { originIndex, destinationIndex, condition, status, distanceMeters, duration } = element as GoogleMatrixElement
     incrementCount(conditionCounts, conditionLabel(condition))
     incrementCount(statusCodeCounts, statusCodeLabel(status))
+    incrementCount(distanceValueCounts, distanceValueLabel(distanceMeters))
     if (typeof originIndex !== 'number' || typeof destinationIndex !== 'number' || !Number.isInteger(originIndex) || !Number.isInteger(destinationIndex) || originIndex < 0 || destinationIndex < 0 || originIndex >= origins.length || destinationIndex >= destinations.length) {
       recordRejection(rejectionCounts, 'INVALID_INDEXES')
       continue
@@ -281,7 +307,8 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
       recordRejection(rejectionCounts, 'OTHER')
       continue
     }
-    if (typeof distanceMeters !== 'number' || !Number.isFinite(distanceMeters) || distanceMeters < 0) {
+    const meters = distanceMetersValue(distanceMeters)
+    if (meters === undefined) {
       recordRejection(rejectionCounts, 'INVALID_DISTANCE')
       continue
     }
@@ -294,7 +321,7 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
       continue
     }
     received.add(key)
-    segments.push({ fromId: origin.id, toId: destination.id, distanceMeters, durationSeconds: seconds })
+    segments.push({ fromId: origin.id, toId: destination.id, distanceMeters: meters, durationSeconds: seconds })
   }
 
   if (received.size !== expected.size || [...expected].some((key) => !received.has(key))) {
@@ -304,7 +331,8 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
       receivedElements: elements.length,
       validRoutes: received.size,
       conditionCounts: sortCounts(conditionCounts),
-      statusCodeCounts: sortCounts(statusCodeCounts)
+      statusCodeCounts: sortCounts(statusCodeCounts),
+      distanceValueCounts: sortCounts(distanceValueCounts)
     }
     if (Object.keys(rejectionCounts).length > 0) diagnostic.rejectionCounts = sortCounts(rejectionCounts)
     throw new RouteProviderError('ROUTE_MATRIX_INCOMPLETE', 'Google Routes matrix response is incomplete', diagnostic)
@@ -318,10 +346,11 @@ const normalizeFinalRoute = (response: GoogleRoutesResponse): FinalRoute => {
   }
   const route = response.routes[0] as GoogleRoute
   const seconds = durationSeconds(route.duration)
-  if (typeof route.distanceMeters !== 'number' || !Number.isFinite(route.distanceMeters) || route.distanceMeters < 0 || seconds === undefined || typeof route.polyline?.encodedPolyline !== 'string' || route.polyline.encodedPolyline === '') {
+  const meters = distanceMetersValue(route.distanceMeters)
+  if (meters === undefined || seconds === undefined || typeof route.polyline?.encodedPolyline !== 'string' || route.polyline.encodedPolyline === '') {
     throw new RouteProviderError('ROUTE_FINAL_ROUTE_INVALID', 'Google Routes final route response is invalid')
   }
-  return { encodedPolyline: route.polyline.encodedPolyline, distanceMeters: route.distanceMeters, durationSeconds: seconds }
+  return { encodedPolyline: route.polyline.encodedPolyline, distanceMeters: meters, durationSeconds: seconds }
 }
 
 const computeMatrix = async ({ origins, destinations }: RouteMatrixRequest): Promise<RouteMatrix> => {

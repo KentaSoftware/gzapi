@@ -113,7 +113,8 @@ describe('Google Routes provider', () => {
         receivedElements: 1,
         validRoutes: 1,
         conditionCounts: { ROUTE_EXISTS: 1 },
-        statusCodeCounts: { MISSING: 1 }
+        statusCodeCounts: { MISSING: 1 },
+        distanceValueCounts: { NUMBER: 1 }
       })
     }
   })
@@ -138,6 +139,7 @@ describe('Google Routes provider', () => {
       expect(diagnostic?.validRoutes).to.equal(1)
       expect(diagnostic?.conditionCounts).to.deep.equal({ MISSING: 2, ROUTE_EXISTS: 1, ROUTE_NOT_FOUND: 1 })
       expect(diagnostic?.statusCodeCounts).to.deep.equal({ 0: 1, 5: 1, UNKNOWN: 2 })
+      expect(diagnostic?.distanceValueCounts).to.deep.equal({ MISSING: 3, NUMBER: 1 })
     }
   })
 
@@ -151,6 +153,71 @@ describe('Google Routes provider', () => {
     for (const field of ['originIndex', 'destinationIndex', 'condition', 'status', 'distanceMeters', 'duration']) {
       expect(fieldMask).to.contain(field)
     }
+  })
+
+  it('S-20/TC-014: normalizes numeric-string distanceMeters from protobuf JSON', async () => {
+    post.resolves({
+      data: [
+        { originIndex: 0, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: '1200', duration: '120s' },
+        { originIndex: 1, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: '1300.5', duration: '130s' }
+      ]
+    })
+
+    const matrix = await computeMatrix({ origins: locations, destinations: locations })
+
+    expect(matrix.segments).to.deep.equal([
+      { fromId: 'depot', toId: 'client-1', distanceMeters: 1200, durationSeconds: 120 },
+      { fromId: 'client-1', toId: 'depot', distanceMeters: 1300.5, durationSeconds: 130 }
+    ])
+  })
+
+  it('S-20/TC-014: still rejects malformed, negative, and non-numeric distance values', async () => {
+    const threeLocations = [
+      { id: 'depot', name: 'Depot', latitude: -34.6, longitude: -58.4 },
+      { id: 'client-1', name: 'Client 1', latitude: -34.61, longitude: -58.41 },
+      { id: 'client-2', name: 'Client 2', latitude: -34.62, longitude: -58.42 }
+    ]
+    post.resolves({
+      data: [
+        { originIndex: 0, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: '1200', duration: '120s' },
+        { originIndex: 1, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: -1200, duration: '120s' },
+        { originIndex: 0, destinationIndex: 2, condition: 'ROUTE_EXISTS', distanceMeters: '1200m', duration: '120s' },
+        { originIndex: 2, destinationIndex: 0, condition: 'ROUTE_EXISTS', distanceMeters: '1e3', duration: '120s' },
+        { originIndex: 1, destinationIndex: 2, condition: 'ROUTE_EXISTS', distanceMeters: null, duration: '120s' },
+        { originIndex: 2, destinationIndex: 1, condition: 'ROUTE_EXISTS', distanceMeters: 1700, duration: '120s' }
+      ]
+    })
+
+    try {
+      await computeMatrix({ origins: threeLocations, destinations: threeLocations })
+      expect.fail('Expected provider request to fail')
+    } catch (error) {
+      expect(error).to.be.instanceOf(RouteProviderError)
+      const providerError = error as RouteProviderError
+      expect(providerError.code).to.equal('ROUTE_MATRIX_INCOMPLETE')
+      expect(providerError.diagnostic?.validRoutes).to.equal(2)
+      expect(providerError.diagnostic?.rejectionCounts).to.deep.equal({ INVALID_DISTANCE: 4 })
+      expect(providerError.diagnostic?.distanceValueCounts).to.deep.equal({ INVALID: 4, NUMBER: 1, NUMERIC_STRING: 1 })
+      const text = JSON.stringify(providerError.diagnostic)
+      expect(text).to.not.contain('1200m')
+      expect(text).to.not.contain('1e3')
+    }
+  })
+
+  it('S-20/TC-015: normalizes numeric-string final-route distance', async () => {
+    post.resolves({
+      data: {
+        routes: [{ distanceMeters: '2500', duration: '250s', polyline: { encodedPolyline: 'encoded-polyline' } }]
+      }
+    })
+
+    const route = await computeRoute({
+      origin: locations[0],
+      intermediates: [locations[1]],
+      destination: locations[0]
+    })
+
+    expect(route).to.deep.equal({ encodedPolyline: 'encoded-polyline', distanceMeters: 2500, durationSeconds: 250 })
   })
 
   it('S-20/TC-014: attributes the rejected non-self elements with whitelisted, non-sensitive buckets', async () => {
