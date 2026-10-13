@@ -10,6 +10,7 @@ import RoutePlanModel from '../src/models/routePlan'
 import RoutingConfigModel from '../src/models/routingConfig'
 import SaleModel from '../src/models/sale'
 import UserModel from '../src/models/user'
+import VehicleModel from '../src/models/vehicle'
 import * as routeMatrixProvider from '../src/services/routeMatrixProvider'
 import { generateToken } from '../src/utils/jwt.handle'
 
@@ -25,6 +26,7 @@ describe('Route plan preview', () => {
   let configAdminUserId: string
   let userId: Types.ObjectId
   let zoneId: Types.ObjectId
+  let vehicleId: Types.ObjectId
 
   const createEligibleClient = async (name: string, latitude: number, longitude: number): Promise<Types.ObjectId> => {
     const client = await ClientModel.create({
@@ -105,12 +107,14 @@ describe('Route plan preview', () => {
     configAdminUserId = String(configAdminUser._id)
     const zone = await DeliveryZoneModel.create({ code: 'NORTE', normalizedName: 'norte', name: 'Norte', active: true })
     zoneId = zone._id
+    const vehicle = await VehicleModel.create({ code: 'TEST-ROUTE-01', fuelConsumptionLitersPer100Km: 8.5, active: true })
+    vehicleId = vehicle._id
   })
 
   const previewRequest = (saleIds: Types.ObjectId[]): request.Test => request(app)
     .post('/routePlan/preview')
     .set('Authorization', `Bearer ${authorizedToken}`)
-    .send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String) })
+    .send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String), driverId: String(userId), vehicleId: String(vehicleId) })
 
   it('S-25/TC-017: requires authentication and create_route_plan before preview work', async () => {
     const matrix = sinon.stub(routeMatrixProvider, 'computeMatrix')
