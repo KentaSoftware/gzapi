@@ -4,6 +4,7 @@ import { Client, GEOCODING_STATUS } from '../interfaces/client.interface'
 import {
   CANDIDATE_BLOCK_REASONS,
   DEFAULT_ROUTE_ALGORITHM,
+  ROUTE_METRIC_AVAILABILITY,
   ROUTING_CONFIG_KEYS,
   type BlockedCandidateEntry,
   type CandidateEntry,
@@ -22,13 +23,16 @@ import DeliveryZoneModel from '../models/deliveryZone'
 import RoutingConfigModel from '../models/routingConfig'
 import RoutePlanModel from '../models/routePlan'
 import SaleModel from '../models/sale'
-import { buildClosedRoute, calculateFuelLiters, RouteInvariantError } from './routeHeuristic'
+import { buildClosedRoute, RouteInvariantError } from './routeHeuristic'
 import { computeMatrix, computeRoute, RouteProviderError, type RouteMatrixDiagnostic } from './routeMatrixProvider'
+import { calculateFuelLiters as calculateAssignedFuelLiters, resolveAssignedConsumption } from './routeFuel'
+import { calculateStopEstimates } from './routeSchedule'
+import { getVehicleById } from './vehicle'
 
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 
-type RoutePreviewErrorCode = 'NO_ELIGIBLE_ORDERS' | 'CLIENT_LOCATION_MISSING' | 'CLIENT_LOCATION_AMBIGUOUS' | 'ROUTE_TECHNICAL_LIMIT_EXCEEDED' | 'ROUTE_MATRIX_INCOMPLETE' | 'ROUTING_PROVIDER_UNAVAILABLE' | 'ROUTING_PROVIDER_QUOTA_EXCEEDED' | 'INVALID_ROUTE_INPUT' | 'INVALID_CONFIGURATION'
+type RoutePreviewErrorCode = 'NO_ELIGIBLE_ORDERS' | 'CLIENT_LOCATION_MISSING' | 'CLIENT_LOCATION_AMBIGUOUS' | 'ROUTE_TECHNICAL_LIMIT_EXCEEDED' | 'ROUTE_MATRIX_INCOMPLETE' | 'ROUTING_PROVIDER_UNAVAILABLE' | 'ROUTING_PROVIDER_QUOTA_EXCEEDED' | 'INVALID_ROUTE_INPUT' | 'INVALID_CONFIGURATION' | 'ROUTE_ASSIGNMENT_REQUIRED'
 
 interface RoutePlanRequestContext {
   correlationId?: string
@@ -223,13 +227,17 @@ const providerDiagnostic = (error: unknown): RouteMatrixDiagnostic | undefined =
 
 const errorCode = (error: unknown): string => error instanceof RoutePreviewError ? error.code : 'INTERNAL_ERROR'
 
-const previewRoute = async ({ serviceDate, deliveryZoneId, saleIds }: RoutePreviewRequest, context: RoutePlanRequestContext): Promise<RoutePreview> => {
+const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanRequestContext): Promise<RoutePreview> => {
+  const { serviceDate, deliveryZoneId, saleIds, driverId, vehicleId } = input
+  if (driverId === undefined && vehicleId === undefined) throw new RoutePreviewError('ROUTE_ASSIGNMENT_REQUIRED', 'driverId and vehicleId are required before preview or save')
+  if (driverId === undefined) throw new RoutePreviewError('ROUTE_ASSIGNMENT_REQUIRED', 'driverId is required before preview or save')
+  if (vehicleId === undefined) throw new RoutePreviewError('ROUTE_ASSIGNMENT_REQUIRED', 'vehicleId is required before preview or save')
   const { start, end } = serviceDateRange(serviceDate)
   const zone = await DeliveryZoneModel.findOne({ _id: deliveryZoneId, active: true }).lean()
   if (zone === null) throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'The requested delivery zone is not active')
 
   const config = await RoutingConfigModel.findOne({ key: 'deposito_1', enabled: true }).lean()
-  if (config === null || !hasValidCoordinates(config.depot?.latitude, config.depot?.longitude) || typeof config.fuelConsumptionLitersPer100Km !== 'number' || !Number.isFinite(config.fuelConsumptionLitersPer100Km) || config.fuelConsumptionLitersPer100Km < 0) {
+  if (config === null || !hasValidCoordinates(config.depot?.latitude, config.depot?.longitude)) {
     throw new RoutePreviewError('INVALID_CONFIGURATION', 'Routing configuration is not valid for preview')
   }
 
@@ -304,11 +312,39 @@ const previewRoute = async ({ serviceDate, deliveryZoneId, saleIds }: RoutePrevi
       logRoutePlanEvent({ event: 'route_plan_provider_failed', correlationId: context.correlationId, latencyMs: Date.now() - routeStart, provider: config.provider, providerOperation: 'route', algorithmVersion: config.algorithm, ruleVersion: CANDIDATE_RULE_VERSION, routingConfigRevision: config.revision, resultCode: errorCode(mapped), diagnostic: providerDiagnostic(mapped) })
       throw error
     }
+    const calculatedAt = new Date()
+    const timezone = SERVICE_TIME_ZONE
+    const vehicle = await getVehicleById(vehicleId)
+    const consumption = resolveAssignedConsumption(vehicle)
+    const distanceKm = finalRoute.distanceMeters / 1000
+    const fuelAvailable = consumption !== null
+    const fuelLiters = fuelAvailable ? calculateAssignedFuelLiters(distanceKm, consumption) : null
+    const routeForSchedule: RoutePreview = {
+      route: { depot, stops: heuristic.orderedStops, segments: heuristic.segments, encodedPolyline: finalRoute.encodedPolyline },
+      metrics: { distanceMeters: finalRoute.distanceMeters, durationSeconds: finalRoute.durationSeconds, stopCount: heuristic.orderedStops.length, fuelLiters, availability: fuelAvailable ? ROUTE_METRIC_AVAILABILITY.CALCULATED : ROUTE_METRIC_AVAILABILITY.UNAVAILABLE },
+      assignments: { driverId, vehicleId },
+      fuelAssumptions: { availability: fuelAvailable ? ROUTE_METRIC_AVAILABILITY.CALCULATED : ROUTE_METRIC_AVAILABILITY.UNAVAILABLE, consumptionLitersPer100Km: consumption, distanceKm, vehicleCode: vehicle?.code ?? null, source: 'assigned-vehicle', calculatedAt },
+      scheduleAssumptions: { calculatedAt, timezone, source: 'system-clock' },
+      stopEstimates: [],
+      saleReferences: sales.map((sale) => ({ saleId: String(sale._id), versionAtSave: (sale as unknown as { updatedAt?: Date }).updatedAt?.getTime() ?? null, statusAtSave: sale.delivery?.status ?? null })),
+      warnings: fuelAvailable ? ['TIME_WINDOWS_NOT_CONSIDERED'] : ['TIME_WINDOWS_NOT_CONSIDERED', 'FUEL_UNAVAILABLE'],
+      factorsConsidered: ['DISTANCE', 'DURATION', 'FUEL_CONSUMPTION'],
+      algorithmVersion: config.algorithm,
+      algorithmProvider: config.provider,
+      routingConfigRevision: config.revision,
+      ruleVersion: CANDIDATE_RULE_VERSION
+    }
+    routeForSchedule.stopEstimates = calculateStopEstimates(routeForSchedule, calculatedAt, timezone)
     return {
       route: { depot, stops: heuristic.orderedStops, segments: heuristic.segments, encodedPolyline: finalRoute.encodedPolyline },
-      metrics: { distanceMeters: finalRoute.distanceMeters, durationSeconds: finalRoute.durationSeconds, stopCount: heuristic.orderedStops.length, fuelLiters: calculateFuelLiters(finalRoute.distanceMeters / 1000, config.fuelConsumptionLitersPer100Km) },
-      warnings: ['TIME_WINDOWS_NOT_CONSIDERED'],
-      factorsConsidered: ['DISTANCE', 'DURATION', 'FUEL_CONSUMPTION'],
+      metrics: routeForSchedule.metrics,
+      assignments: routeForSchedule.assignments,
+      fuelAssumptions: routeForSchedule.fuelAssumptions,
+      scheduleAssumptions: routeForSchedule.scheduleAssumptions,
+      stopEstimates: routeForSchedule.stopEstimates,
+      saleReferences: routeForSchedule.saleReferences,
+      warnings: routeForSchedule.warnings,
+      factorsConsidered: routeForSchedule.factorsConsidered,
       algorithmVersion: config.algorithm,
       algorithmProvider: config.provider,
       routingConfigRevision: config.revision,
@@ -366,7 +402,12 @@ const saveSnapshot = async (input: RoutePreviewRequest, createdBy: string, conte
         distanceMeters: segment.distanceMeters,
         durationSeconds: segment.durationSeconds
       })),
-      metrics: result.metrics,
+      metrics: { ...result.metrics, fuelLiters: result.metrics.fuelLiters ?? undefined },
+      assignments: result.assignments,
+      fuelAssumptions: result.fuelAssumptions,
+      scheduleAssumptions: result.scheduleAssumptions,
+      stopEstimates: result.stopEstimates,
+      saleReferences: result.saleReferences,
       algorithm: {
         name: result.algorithmVersion,
         version: result.algorithmVersion,

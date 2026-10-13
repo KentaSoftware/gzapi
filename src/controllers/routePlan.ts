@@ -46,7 +46,12 @@ const previewRoute = async (req: Request, res: Response): Promise<void> => {
   const input = routePreviewRequestSchema.safeParse(req.body)
   if (!input.success) {
     logRoutePlanEvent({ event: 'route_plan_preview_failed', correlationId: res.locals.correlationId, latencyMs: 0, resultCode: 'INVALID_ROUTE_INPUT' })
-    sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Route preview input is invalid')
+    const assignmentIssues = input.error.issues.filter((issue) => issue.path[0] === 'driverId' || issue.path[0] === 'vehicleId')
+    if (assignmentIssues.length > 0) {
+      sendErrorEnvelope(res, 422, 'ROUTE_ASSIGNMENT_REQUIRED', assignmentIssues.map((issue) => issue.message).join('; '))
+    } else {
+      sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Route preview input is invalid')
+    }
     return
   }
 
@@ -72,7 +77,12 @@ const saveRoutePlan = async (req: Request, res: Response): Promise<void> => {
   const input = routePreviewRequestSchema.safeParse(req.body)
   if (!input.success) {
     logRoutePlanEvent({ event: 'route_plan_snapshot_save_failed', correlationId: res.locals.correlationId, latencyMs: 0, resultCode: 'INVALID_ROUTE_INPUT' })
-    sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Route plan input is invalid')
+    const assignmentIssues = input.error.issues.filter((issue) => issue.path[0] === 'driverId' || issue.path[0] === 'vehicleId')
+    if (assignmentIssues.length > 0) {
+      sendErrorEnvelope(res, 422, 'ROUTE_ASSIGNMENT_REQUIRED', assignmentIssues.map((issue) => issue.message).join('; '))
+    } else {
+      sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Route plan input is invalid')
+    }
     return
   }
 

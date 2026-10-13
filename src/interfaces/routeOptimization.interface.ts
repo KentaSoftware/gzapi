@@ -126,7 +126,7 @@ export interface RoutePlanMetrics {
   distanceMeters: number
   durationSeconds: number
   stopCount: number
-  fuelLiters: number
+  fuelLiters?: number
   availability?: RouteMetricAvailability
 }
 
@@ -243,6 +243,7 @@ export interface RoutePlan {
   encodedPolyline: string
   warnings: string[]
   audit: RoutePlanAudit
+  assignments?: Required<RouteOperationalAssignment>
   fuelAssumptions?: RouteFuelAssumptions
   scheduleAssumptions?: RouteScheduleAssumptions
   stopEstimates?: RouteStopEstimate[]
@@ -376,6 +377,8 @@ export interface FinalRoute {
 
 export interface RoutePreviewRequest extends CandidateQuery {
   saleIds: string[]
+  driverId?: string
+  vehicleId?: string
 }
 
 export interface RoutePreview {
@@ -389,8 +392,14 @@ export interface RoutePreview {
     distanceMeters: number
     durationSeconds: number
     stopCount: number
-    fuelLiters: number
+    fuelLiters: number | null
+    availability?: RouteMetricAvailability
   }
+  assignments: Required<RouteOperationalAssignment>
+  fuelAssumptions: RouteFuelAssumptions
+  scheduleAssumptions: RouteScheduleAssumptions
+  stopEstimates: RouteStopEstimate[]
+  saleReferences: RouteSnapshotSaleReference[]
   warnings: string[]
   factorsConsidered: string[]
   algorithmVersion: string

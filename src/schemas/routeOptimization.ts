@@ -25,11 +25,15 @@ const dashboardQuerySchema = z.object({
 }).strict()
 
 const routePreviewRequestSchema = candidateQuerySchema.extend({
-  saleIds: z.array(z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'saleIds must contain ObjectIds')).min(1)
+  saleIds: z.array(z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'saleIds must contain ObjectIds')).min(1),
+  driverId: z.string().trim().min(1).optional(),
+  vehicleId: z.string().trim().min(1).optional()
 }).superRefine((input, context) => {
   if (new Set(input.saleIds).size !== input.saleIds.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'saleIds must not contain duplicates', path: ['saleIds'] })
   }
+  if (input.driverId === undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'driverId is required before preview or save', path: ['driverId'] })
+  if (input.vehicleId === undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'vehicleId is required before preview or save', path: ['vehicleId'] })
 })
 
 const coordinateSchema = z.number().finite()
@@ -128,14 +132,16 @@ const routePlanSegmentSchema = z.object({
   durationSeconds: z.number().nonnegative()
 })
 
+const routeMetricAvailabilitySchema = z.enum(Object.values(ROUTE_METRIC_AVAILABILITY) as [string, ...string[]])
+
 const routePlanMetricsSchema = z.object({
   distanceMeters: z.number().nonnegative(),
   durationSeconds: z.number().nonnegative(),
   stopCount: z.number().int().nonnegative(),
-  fuelLiters: z.number().nonnegative().default(0)
+  fuelLiters: z.number().nonnegative().nullable().default(null),
+  availability: routeMetricAvailabilitySchema.optional()
 })
 
-const routeMetricAvailabilitySchema = z.enum(Object.values(ROUTE_METRIC_AVAILABILITY) as [string, ...string[]])
 const routeOperationalStatusSchema = z.enum(Object.values(ROUTE_OPERATIONAL_STATUS) as [string, ...string[]])
 const routeSnapshotStalenessCauseSchema = z.enum(Object.values(ROUTE_SNAPSHOT_STALENESS_CAUSE) as [string, ...string[]])
 
@@ -246,6 +252,7 @@ const routePlanSnapshotSchema = z.object({
   encodedPolyline: z.string().default(''),
   warnings: z.array(z.string()),
   audit: routePlanAuditSchema,
+  assignments: routeOperationalAssignmentSchema.optional(),
   fuelAssumptions: routeFuelAssumptionsSchema.optional(),
   scheduleAssumptions: routeScheduleAssumptionsSchema.optional(),
   stopEstimates: z.array(routeStopEstimateSchema).optional(),

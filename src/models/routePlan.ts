@@ -43,7 +43,8 @@ const routePlanSchema = new Schema<RoutePlan>(
       distanceMeters: { type: Number, required: true, immutable: true },
       durationSeconds: { type: Number, required: true, immutable: true },
       stopCount: { type: Number, required: true, immutable: true },
-      fuelLiters: { type: Number, required: true, immutable: true }
+      fuelLiters: { type: Number, required: false, default: null, immutable: true },
+      availability: { type: String, required: false, immutable: true }
     },
     algorithm: {
       name: { type: String, required: true, immutable: true },
@@ -57,7 +58,15 @@ const routePlanSchema = new Schema<RoutePlan>(
     audit: {
       createdBy: { type: String, required: true, immutable: true },
       createdAt: { type: Date, required: true, immutable: true }
-    }
+    },
+    assignments: {
+      driverId: { type: String, required: false, immutable: true },
+      vehicleId: { type: String, required: false, immutable: true }
+    },
+    fuelAssumptions: { type: Schema.Types.Mixed, required: false, immutable: true },
+    scheduleAssumptions: { type: Schema.Types.Mixed, required: false, immutable: true },
+    stopEstimates: { type: Schema.Types.Mixed, required: false, immutable: true },
+    saleReferences: { type: Schema.Types.Mixed, required: false, immutable: true }
   },
   { timestamps: { createdAt: true, updatedAt: false }, versionKey: false }
 )
