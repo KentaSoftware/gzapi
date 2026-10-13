@@ -1,7 +1,27 @@
 import { Request, Response } from 'express'
 import { getCandidates, getRoutingConfig, getSnapshot, listSnapshots, logRoutePlanEvent, preview, RoutePreviewError, saveSnapshot, updateRoutingConfig } from '../services/routePlan'
-import { candidateQuerySchema, routePreviewRequestSchema, routingConfigUpdateSchema } from '../schemas/routeOptimization'
+import { candidateQuerySchema, dashboardQuerySchema, routePreviewRequestSchema, routingConfigUpdateSchema } from '../schemas/routeOptimization'
 import { handleHttp, sendErrorEnvelope } from '../utils/error.handle'
+import { getDashboard } from '../services/routeDashboard'
+import type { RouteOperationalStatus } from '../interfaces/routeOptimization.interface'
+
+const getRouteDashboard = async (req: Request, res: Response): Promise<void> => {
+  const input = dashboardQuerySchema.safeParse({
+    serviceDate: req.query.serviceDate,
+    zoneCode: req.query.zoneCode,
+    status: req.query.status
+  })
+  if (!input.success) {
+    logRoutePlanEvent({ event: 'route_plan_snapshot_read_failed', correlationId: res.locals.correlationId, latencyMs: 0, resultCode: 'INVALID_ROUTE_INPUT' })
+    sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Route dashboard input is invalid')
+    return
+  }
+  try {
+    res.send(await getDashboard({ ...input.data, status: input.data.status as RouteOperationalStatus | undefined }))
+  } catch (error) {
+    handleHttp(res, 'ERROR_GET_ROUTE_DASHBOARD', error)
+  }
+}
 
 const getCandidateItems = async (req: Request, res: Response): Promise<void> => {
   const input = candidateQuerySchema.safeParse({
@@ -129,4 +149,4 @@ const getRoutePlanById = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
-export { getCandidateItems, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById }
+export { getCandidateItems, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById, getRouteDashboard }

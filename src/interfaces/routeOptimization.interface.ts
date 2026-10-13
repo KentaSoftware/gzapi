@@ -282,6 +282,43 @@ export interface CandidateResult {
   ruleVersion: string
 }
 
+export interface RouteDashboardQuery {
+  serviceDate: string
+  zoneCode: string
+  status?: RouteOperationalStatus
+}
+
+export interface RouteDashboardKpis {
+  activeRoutes: number
+  pendingOrders: number
+  totalDistanceMeters: number | null
+  estimatedFuelLiters: number | null
+}
+
+export interface RouteDashboardCard {
+  id: string
+  status: RouteOperationalStatus
+  zoneCode: string
+  selectedSaleIds: string[]
+  clientCount: number
+  metrics: {
+    distanceMeters: number
+    durationSeconds: number
+    fuelLiters: number | null
+  }
+  assignments: RouteOperationalAssignment
+  warnings: string[]
+  stale: boolean
+}
+
+export interface RouteDashboard {
+  filters: RouteDashboardQuery
+  kpis: RouteDashboardKpis
+  routes: RouteDashboardCard[]
+  candidates: CandidateResult
+  warnings: string[]
+}
+
 export interface RouteLocation {
   id: string
   name: string

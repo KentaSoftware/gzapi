@@ -18,6 +18,12 @@ const candidateQuerySchema = z.object({
   deliveryZoneId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'deliveryZoneId must be an ObjectId')
 }).strict()
 
+const dashboardQuerySchema = z.object({
+  serviceDate: z.string().refine(isCivilDate, 'serviceDate must be a civil date'),
+  zoneCode: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'zoneCode is invalid'),
+  status: z.enum(Object.values(ROUTE_OPERATIONAL_STATUS) as [string, ...string[]]).optional()
+}).strict()
+
 const routePreviewRequestSchema = candidateQuerySchema.extend({
   saleIds: z.array(z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'saleIds must contain ObjectIds')).min(1)
 }).superRefine((input, context) => {
@@ -248,6 +254,7 @@ const routePlanSnapshotSchema = z.object({
 
 export {
   candidateQuerySchema,
+  dashboardQuerySchema,
   deliveryZoneCreateSchema,
   deliveryZoneQuerySchema,
   deliveryZoneUpdateSchema,
