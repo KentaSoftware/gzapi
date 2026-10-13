@@ -216,6 +216,11 @@ export interface RouteSnapshotStaleness {
   detectedAt: Date
 }
 
+export interface RoutePlanReadState {
+  staleness: RouteSnapshotStaleness | null
+  readWarnings: string[]
+}
+
 export interface RoutePlanAlgorithm {
   name: string
   version: string
@@ -249,6 +254,8 @@ export interface RoutePlan {
   stopEstimates?: RouteStopEstimate[]
   saleReferences?: RouteSnapshotSaleReference[]
   createdAt?: Date
+  staleness?: RouteSnapshotStaleness | null
+  readWarnings?: string[]
 }
 
 export const CANDIDATE_BLOCK_REASONS = {

@@ -67,4 +67,15 @@ describe('Route snapshot staleness', () => {
     expect(JSON.stringify(snapshot)).to.equal(bytesBefore)
     expect(result.saleRefs).to.have.length(2)
   })
+
+  it('FR-048: preserves legacy snapshots as readable without fabricating staleness evidence', () => {
+    const snapshot = snapshotFixture()
+    delete snapshot.saleReferences
+
+    const result = detectStaleness(snapshot, [])
+
+    expect(result.stale).to.equal(false)
+    expect(result.saleRefs).to.deep.equal([])
+    expect(result.causes).to.deep.equal([])
+  })
 })

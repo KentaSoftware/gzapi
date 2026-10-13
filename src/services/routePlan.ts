@@ -12,6 +12,7 @@ import {
   type CandidateResult,
   type RouteLocation,
   type RoutePlan,
+  type RoutePlanReadState,
   type RoutePreview,
   type RoutePreviewRequest,
   type RouteStop,
@@ -22,15 +23,18 @@ import ClientModel from '../models/client'
 import DeliveryZoneModel from '../models/deliveryZone'
 import RoutingConfigModel from '../models/routingConfig'
 import RoutePlanModel from '../models/routePlan'
+import RoutePlanOperationalModel from '../models/routePlanOperational'
 import SaleModel from '../models/sale'
 import { buildClosedRoute, RouteInvariantError } from './routeHeuristic'
 import { computeMatrix, computeRoute, RouteProviderError, type RouteMatrixDiagnostic } from './routeMatrixProvider'
 import { calculateFuelLiters as calculateAssignedFuelLiters, resolveAssignedConsumption } from './routeFuel'
 import { calculateStopEstimates } from './routeSchedule'
 import { getVehicleById } from './vehicle'
+import { detectStaleness } from './routeStaleness'
 
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
+const STALE_ROUTE_WARNING = 'STALE_ROUTE_PLAN_REQUIRES_REPLANNING'
 
 type RoutePreviewErrorCode = 'NO_ELIGIBLE_ORDERS' | 'CLIENT_LOCATION_MISSING' | 'CLIENT_LOCATION_AMBIGUOUS' | 'ROUTE_TECHNICAL_LIMIT_EXCEEDED' | 'ROUTE_MATRIX_INCOMPLETE' | 'ROUTING_PROVIDER_UNAVAILABLE' | 'ROUTING_PROVIDER_QUOTA_EXCEEDED' | 'INVALID_ROUTE_INPUT' | 'INVALID_CONFIGURATION' | 'ROUTE_ASSIGNMENT_REQUIRED'
 
@@ -428,12 +432,50 @@ const saveSnapshot = async (input: RoutePreviewRequest, createdBy: string, conte
   }
 }
 
+const readState = async (snapshot: RoutePlan): Promise<RoutePlanReadState> => {
+  if (snapshot.saleReferences === undefined || snapshot.saleReferences.length === 0) {
+    return { staleness: null, readWarnings: [] }
+  }
+
+  const saleIds = snapshot.saleReferences
+    .map((reference) => reference.saleId)
+    .filter((saleId) => Types.ObjectId.isValid(saleId))
+    .map((saleId) => new Types.ObjectId(saleId))
+  const currentSales = saleIds.length === 0
+    ? []
+    : await SaleModel.find(
+      { _id: { $in: saleIds } },
+      { _id: 1, updatedAt: 1, estado: 1, delivery: 1 }
+    ).lean()
+  const staleness = detectStaleness(snapshot, currentSales)
+  await RoutePlanOperationalModel.updateOne(
+    { snapshotId: String(snapshot._id) },
+    {
+      $set: {
+        stale: staleness.stale,
+        staleCauses: staleness.causes,
+        staleDetectedAt: staleness.detectedAt
+      }
+    }
+  )
+  return {
+    staleness,
+    readWarnings: staleness.stale ? [STALE_ROUTE_WARNING] : []
+  }
+}
+
+const withReadState = async (snapshot: RoutePlan): Promise<RoutePlan> => ({
+  ...snapshot,
+  ...(await readState(snapshot))
+})
+
 const listSnapshots = async (context: RoutePlanRequestContext = {}): Promise<RoutePlan[]> => {
   const start = Date.now()
   try {
     const snapshots = await RoutePlanModel.find({}).sort({ createdAt: -1, _id: -1 }).lean()
+    const snapshotsWithReadState = await Promise.all(snapshots.map(withReadState))
     logRoutePlanEvent({ event: 'route_plan_snapshot_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: 'SUCCESS' })
-    return snapshots
+    return snapshotsWithReadState
   } catch (error) {
     logRoutePlanEvent({ event: 'route_plan_snapshot_read_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: 'INTERNAL_ERROR' })
     throw error
@@ -444,8 +486,9 @@ const getSnapshot = async (id: string, context: RoutePlanRequestContext = {}): P
   const start = Date.now()
   try {
     const snapshot = await RoutePlanModel.findById(id).lean()
+    const snapshotWithReadState = snapshot === null ? null : await withReadState(snapshot)
     logRoutePlanEvent({ event: 'route_plan_snapshot_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: snapshot === null ? 'ROUTE_PLAN_NOT_FOUND' : 'SUCCESS' })
-    return snapshot
+    return snapshotWithReadState
   } catch (error) {
     logRoutePlanEvent({ event: 'route_plan_snapshot_read_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: 'INTERNAL_ERROR' })
     throw error
