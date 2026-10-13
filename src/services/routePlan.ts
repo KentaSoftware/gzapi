@@ -37,11 +37,15 @@ import { detectStaleness } from './routeStaleness'
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const STALE_ROUTE_WARNING = 'STALE_ROUTE_PLAN_REQUIRES_REPLANNING'
+const MAX_CANDIDATE_READS = 1000
+const MAX_SNAPSHOT_LIST_READS = 100
 
 type RoutePreviewErrorCode = 'NO_ELIGIBLE_ORDERS' | 'CLIENT_LOCATION_MISSING' | 'CLIENT_LOCATION_AMBIGUOUS' | 'ROUTE_TECHNICAL_LIMIT_EXCEEDED' | 'ROUTE_MATRIX_INCOMPLETE' | 'ROUTING_PROVIDER_UNAVAILABLE' | 'ROUTING_PROVIDER_QUOTA_EXCEEDED' | 'INVALID_ROUTE_INPUT' | 'INVALID_CONFIGURATION' | 'ROUTE_ASSIGNMENT_REQUIRED'
 
 interface RoutePlanRequestContext {
   correlationId?: string
+  maxResults?: number
+  truncated?: boolean
 }
 
 interface RoutePlanEvent {
@@ -111,16 +115,22 @@ const blockedCandidate = (saleId: unknown, reason: BlockedCandidateEntry['reason
   return result
 }
 
-const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery): Promise<CandidateResult> => {
+interface CandidateQueryResult {
+  result: CandidateResult
+  truncated: boolean
+}
+
+const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery, maxResults?: number): Promise<CandidateQueryResult> => {
   const { start, end } = serviceDateRange(serviceDate)
-  const sales = await SaleModel.find({
+  const salesQuery = SaleModel.find({
     'delivery.status': 'PENDING',
     'delivery.serviceDate': { $gte: start, $lt: end }
   })
     .sort({ _id: 1 })
-    .lean()
+  const sales = await (maxResults === undefined ? salesQuery : salesQuery.limit(maxResults + 1)).lean()
+  const boundedSales = maxResults === undefined || sales.length <= maxResults ? sales : sales.slice(0, maxResults)
 
-  const clientIds = sales
+  const clientIds = boundedSales
     .map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente))
     .filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id))
     .map((id) => new Types.ObjectId(id))
@@ -131,7 +141,7 @@ const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery):
   const eligible: CandidateEntry[] = []
   const blocked: BlockedCandidateEntry[] = []
 
-  for (const sale of sales) {
+  for (const sale of boundedSales) {
     const client = sale.idCliente === undefined ? undefined : clientsById.get(String(sale.idCliente))
     if (client === undefined) {
       blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.INVALID_CLIENT_REFERENCE))
@@ -148,15 +158,19 @@ const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery):
     }
   }
 
-  return { eligible, blocked, ruleVersion: CANDIDATE_RULE_VERSION }
+  return {
+    result: { eligible, blocked, ruleVersion: CANDIDATE_RULE_VERSION },
+    truncated: maxResults !== undefined && sales.length > maxResults
+  }
 }
 
 const getCandidates = async (input: CandidateQuery, context: RoutePlanRequestContext = {}): Promise<CandidateResult> => {
   const start = Date.now()
   try {
-    const result = await queryCandidates(input)
-    logRoutePlanEvent({ event: 'route_plan_candidates_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: result.ruleVersion, resultCode: 'SUCCESS' })
-    return result
+    const queryResult = await queryCandidates(input, context.maxResults)
+    context.truncated = queryResult.truncated
+    logRoutePlanEvent({ event: 'route_plan_candidates_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: queryResult.result.ruleVersion, resultCode: 'SUCCESS' })
+    return queryResult.result
   } catch (error) {
     logRoutePlanEvent({ event: 'route_plan_candidates_read_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: CANDIDATE_RULE_VERSION, resultCode: 'INTERNAL_ERROR' })
     throw error
@@ -457,6 +471,32 @@ const saveSnapshot = async (input: RoutePreviewRequest, createdBy: string, conte
   }
 }
 
+type CurrentSaleRead = Parameters<typeof detectStaleness>[1]
+
+const readStateFromSales = async (snapshot: RoutePlan, currentSales: CurrentSaleRead, persistProjection = true): Promise<RoutePlanReadState> => {
+  if (snapshot.saleReferences === undefined || snapshot.saleReferences.length === 0) {
+    return { staleness: null, readWarnings: [] }
+  }
+
+  const staleness = detectStaleness(snapshot, currentSales)
+  if (persistProjection) {
+    await RoutePlanOperationalModel.updateOne(
+      { snapshotId: String(snapshot._id) },
+      {
+        $set: {
+          stale: staleness.stale,
+          staleCauses: staleness.causes,
+          staleDetectedAt: staleness.detectedAt
+        }
+      }
+    )
+  }
+  return {
+    staleness,
+    readWarnings: staleness.stale ? [STALE_ROUTE_WARNING] : []
+  }
+}
+
 const readState = async (snapshot: RoutePlan): Promise<RoutePlanReadState> => {
   if (snapshot.saleReferences === undefined || snapshot.saleReferences.length === 0) {
     return { staleness: null, readWarnings: [] }
@@ -472,21 +512,45 @@ const readState = async (snapshot: RoutePlan): Promise<RoutePlanReadState> => {
       { _id: { $in: saleIds } },
       { _id: 1, updatedAt: 1, estado: 1, delivery: 1 }
     ).lean()
-  const staleness = detectStaleness(snapshot, currentSales)
-  await RoutePlanOperationalModel.updateOne(
-    { snapshotId: String(snapshot._id) },
-    {
-      $set: {
-        stale: staleness.stale,
-        staleCauses: staleness.causes,
-        staleDetectedAt: staleness.detectedAt
-      }
+  return await readStateFromSales(snapshot, currentSales as unknown as CurrentSaleRead)
+}
+
+const readStatesForSnapshots = async (snapshots: RoutePlan[]): Promise<Map<string, RoutePlanReadState>> => {
+  const saleIds = [...new Set(snapshots.flatMap((snapshot) => snapshot.saleReferences?.map((reference) => reference.saleId) ?? []))]
+    .filter((saleId) => Types.ObjectId.isValid(saleId))
+    .map((saleId) => new Types.ObjectId(saleId))
+  const currentSales = saleIds.length === 0
+    ? []
+    : await SaleModel.find(
+      { _id: { $in: saleIds } },
+      { _id: 1, updatedAt: 1, estado: 1, delivery: 1 }
+    ).lean()
+  const currentSaleById = new Map(currentSales.map((sale) => [String(sale._id), sale]))
+  const states = new Map<string, RoutePlanReadState>()
+  const operations = []
+  for (const snapshot of snapshots) {
+    const snapshotSales = (snapshot.saleReferences ?? [])
+      .map((reference) => currentSaleById.get(reference.saleId))
+      .filter((sale): sale is (typeof currentSales)[number] => sale !== undefined)
+    const state = await readStateFromSales(snapshot, snapshotSales as unknown as CurrentSaleRead, false)
+    states.set(String(snapshot._id), state)
+    if (snapshot.saleReferences !== undefined && snapshot.saleReferences.length > 0) {
+      operations.push({
+        updateOne: {
+          filter: { snapshotId: String(snapshot._id) },
+          update: {
+            $set: {
+              stale: state.staleness?.stale ?? false,
+              staleCauses: state.staleness?.causes ?? [],
+              staleDetectedAt: state.staleness?.detectedAt
+            }
+          }
+        }
+      })
     }
-  )
-  return {
-    staleness,
-    readWarnings: staleness.stale ? [STALE_ROUTE_WARNING] : []
   }
+  if (operations.length > 0) await RoutePlanOperationalModel.bulkWrite(operations)
+  return states
 }
 
 const withReadState = async (snapshot: RoutePlan): Promise<RoutePlan> => ({
@@ -497,8 +561,14 @@ const withReadState = async (snapshot: RoutePlan): Promise<RoutePlan> => ({
 const listSnapshots = async (context: RoutePlanRequestContext = {}): Promise<RoutePlan[]> => {
   const start = Date.now()
   try {
-    const snapshots = await RoutePlanModel.find({}).sort({ createdAt: -1, _id: -1 }).lean()
-    const snapshotsWithReadState = await Promise.all(snapshots.map(withReadState))
+    const snapshotRead = await RoutePlanModel.find({}).sort({ createdAt: -1, _id: -1 }).limit(MAX_SNAPSHOT_LIST_READS + 1).lean()
+    const truncated = snapshotRead.length > MAX_SNAPSHOT_LIST_READS
+    const snapshots = truncated ? snapshotRead.slice(0, MAX_SNAPSHOT_LIST_READS) : snapshotRead
+    const readStates = await readStatesForSnapshots(snapshots)
+    const snapshotsWithReadState = snapshots.map((snapshot) => ({ ...snapshot, ...(readStates.get(String(snapshot._id)) ?? { staleness: null, readWarnings: [] }) }))
+    if (truncated && snapshotsWithReadState.length > 0) {
+      snapshotsWithReadState[0].readWarnings = [...(snapshotsWithReadState[0].readWarnings ?? []), 'SNAPSHOT_LIST_LIMIT_REACHED']
+    }
     logRoutePlanEvent({ event: 'route_plan_snapshot_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: 'SUCCESS' })
     return snapshotsWithReadState
   } catch (error) {
@@ -520,4 +590,4 @@ const getSnapshot = async (id: string, context: RoutePlanRequestContext = {}): P
   }
 }
 
-export { CANDIDATE_RULE_VERSION, getCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }
+export { CANDIDATE_RULE_VERSION, MAX_CANDIDATE_READS, MAX_SNAPSHOT_LIST_READS, getCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }

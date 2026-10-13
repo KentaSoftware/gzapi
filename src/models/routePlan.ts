@@ -72,6 +72,8 @@ const routePlanSchema = new Schema<RoutePlan>(
 )
 
 routePlanSchema.index({ 'zoneSnapshot.code': 1, planningDate: 1 }, { name: 'idx_route_plan_zone_date' })
+routePlanSchema.index({ planningDate: 1, 'zoneSnapshot.code': 1, createdAt: -1, _id: -1 }, { name: 'idx_route_plan_dashboard_read' })
+routePlanSchema.index({ createdAt: -1, _id: -1 }, { name: 'idx_route_plan_snapshot_list' })
 routePlanSchema.index({ 'audit.createdBy': 1, createdAt: -1 }, { name: 'idx_route_plan_creator_date' })
 
 routePlanSchema.pre('save', function () {

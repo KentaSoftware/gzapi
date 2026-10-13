@@ -16,6 +16,39 @@ import SaleModel from '../models/sale'
 import { getCandidates } from './routePlan'
 
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
+const MAX_DASHBOARD_SNAPSHOTS = 1000
+const MAX_DASHBOARD_CANDIDATES = 1000
+const MAX_CONCURRENT_DASHBOARD_READS = 100
+
+interface ConcurrencyLimiter {
+  run: <T>(task: () => Promise<T>) => Promise<T>
+  activeCount: () => number
+}
+
+const createConcurrencyLimiter = (limit: number): ConcurrencyLimiter => {
+  let active = 0
+  const queue: Array<() => void> = []
+
+  const drain = (): void => {
+    while (active < limit && queue.length > 0) {
+      active += 1
+      queue.shift()?.()
+    }
+  }
+
+  return {
+    run: async <T>(task: () => Promise<T>): Promise<T> => await new Promise<T>((resolve, reject) => {
+      queue.push(() => {
+        void task().then(resolve, reject).finally(() => {
+          active -= 1
+          drain()
+        })
+      })
+      drain()
+    }),
+    activeCount: () => active
+  }
+}
 
 interface DashboardSnapshotRead {
   _id: unknown
@@ -36,6 +69,8 @@ interface DashboardProjectionRead {
 interface DashboardRequestContext {
   correlationId?: string
   actor?: string
+  maxResults?: number
+  truncated?: boolean
 }
 
 const logDashboardEvent = (event: string, context: DashboardRequestContext, startedAt: number, outcome: string, routeSnapshotId?: string): void => {
@@ -81,7 +116,7 @@ const routeCard = (snapshot: DashboardSnapshotRead, projection: DashboardProject
   stale: projection?.stale === true
 })
 
-const getDashboard = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => {
+const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => {
   const startedAt = Date.now()
   try {
     const { start, end } = serviceDateRange(input.serviceDate)
@@ -99,11 +134,14 @@ const getDashboard = async (input: RouteDashboardQuery, context: DashboardReques
       return result
     }
 
-    const candidates = await getCandidates({ serviceDate: input.serviceDate, deliveryZoneId: String(zone._id) })
-    const snapshots = await RoutePlanModel.find({
+    const candidateContext: DashboardRequestContext = { maxResults: MAX_DASHBOARD_CANDIDATES }
+    const candidates = await getCandidates({ serviceDate: input.serviceDate, deliveryZoneId: String(zone._id) }, candidateContext)
+    const snapshotRead = await RoutePlanModel.find({
       planningDate: { $gte: start, $lt: end },
       'zoneSnapshot.code': zone.code
-    }).sort({ planningDate: 1, _id: 1 }).lean()
+    }).sort({ planningDate: 1, _id: 1 }).limit(MAX_DASHBOARD_SNAPSHOTS + 1).lean()
+    const snapshotsTruncated = snapshotRead.length > MAX_DASHBOARD_SNAPSHOTS
+    const snapshots = snapshotsTruncated ? snapshotRead.slice(0, MAX_DASHBOARD_SNAPSHOTS) : snapshotRead
     const snapshotIds = snapshots.map((snapshot) => String(snapshot._id))
     const projections = snapshotIds.length === 0
       ? []
@@ -122,6 +160,8 @@ const getDashboard = async (input: RouteDashboardQuery, context: DashboardReques
     const warnings = [...new Set([
       ...routes.flatMap((route) => route.warnings),
       ...(routes.some((route) => route.stale) ? ['STALE_ROUTE_PLAN'] : []),
+      ...(snapshotsTruncated ? ['DASHBOARD_SNAPSHOT_LIMIT_REACHED'] : []),
+      ...(candidateContext.truncated === true ? ['DASHBOARD_CANDIDATE_LIMIT_REACHED'] : []),
       ...(routes.length === 0 && candidates.eligible.length === 0 && candidates.blocked.length === 0 ? ['NO_DASHBOARD_DATA'] : [])
     ])]
 
@@ -145,4 +185,8 @@ const getDashboard = async (input: RouteDashboardQuery, context: DashboardReques
   }
 }
 
-export { getDashboard }
+const dashboardReadLimiter = createConcurrencyLimiter(MAX_CONCURRENT_DASHBOARD_READS)
+
+const getDashboard = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => await dashboardReadLimiter.run(async () => await getDashboardRead(input, context))
+
+export { MAX_CONCURRENT_DASHBOARD_READS, MAX_DASHBOARD_CANDIDATES, MAX_DASHBOARD_SNAPSHOTS, createConcurrencyLimiter, getDashboard }

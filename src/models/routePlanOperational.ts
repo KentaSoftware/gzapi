@@ -58,6 +58,7 @@ const routePlanOperationalSchema = new Schema<RoutePlanOperational>(
 )
 
 routePlanOperationalSchema.index({ snapshotId: 1 }, { unique: true, name: 'idx_unique_route_plan_operational_snapshot' })
+routePlanOperationalSchema.index({ snapshotId: 1, stale: 1 }, { name: 'idx_route_plan_operational_stale' })
 
 const RoutePlanOperationalModel = model<RoutePlanOperational>('routePlanOperational', routePlanOperationalSchema)
 
