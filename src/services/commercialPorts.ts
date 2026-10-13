@@ -4,10 +4,12 @@ import SaleModel from '../models/sale'
 import {
   CommercialFact,
   CommercialFactError,
+  DeliveryPort,
   FinancePort,
   RoutePlanReader,
   StockPort
 } from '../interfaces/commercialFact.interface'
+import { recomputeForSale } from './routePlanOperational'
 
 // Phase 0 Finance port adapter. Finance derives cash only from explicit payment
 // and refund facts. This adapter writes the legacy compatibility projections
@@ -41,6 +43,16 @@ export const stockPortAdapter: StockPort = {
   async receivePurchase (): Promise<void> {},
   async applyPurchaseAdjustment (): Promise<void> {},
   async applyPhysicalReturn (): Promise<void> {}
+}
+
+export const deliveryPortAdapter: DeliveryPort = {
+  async recordSaleDelivery (fact: CommercialFact): Promise<void> {
+    await SaleModel.updateOne(
+      { _id: new Types.ObjectId(fact.aggregateId) },
+      { $set: { delivery: { status: 'DELIVERED', deliveredAt: fact.businessDate } } }
+    )
+    await recomputeForSale(fact.aggregateId, fact.actorId)
+  }
 }
 
 // Commitment reference handed from the sale-creation path to Stock. It carries

@@ -27,7 +27,7 @@ describe('Route plan snapshots', () => {
   const snapshotRequest = (saleIds: Types.ObjectId[]): request.Test => request(app)
     .post('/routePlan')
     .set('Authorization', `Bearer ${authorizedToken}`)
-    .send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String) })
+    .send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String), driverId: String(userId), vehicleId: String(new Types.ObjectId()) })
 
   const configureRoute = async (): Promise<void> => {
     await RoutingConfigModel.create({

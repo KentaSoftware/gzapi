@@ -174,6 +174,12 @@ const routeOperationalAssignmentSchema = z.object({
   vehicleId: z.string().trim().min(1).optional()
 }).strict()
 
+const routeOperationalUpdateSchema = z.object({
+  version: z.number().int().positive(),
+  driverId: z.string().trim().min(1),
+  vehicleId: z.string().trim().min(1)
+}).strict()
+
 const routeOperationalHistoryEntrySchema = z.object({
   status: routeOperationalStatusSchema,
   driverId: z.string().trim().min(1).optional(),
@@ -276,6 +282,7 @@ export {
   routeFuelAssumptionsSchema,
   routeMetricAvailabilitySchema,
   routeOperationalStatusSchema,
+  routeOperationalUpdateSchema,
   routePlanOperationalSchema,
   routeScheduleAssumptionsSchema,
   routeSnapshotStalenessSchema,

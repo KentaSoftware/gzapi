@@ -1,9 +1,10 @@
 import { Request, Response } from 'express'
 import { getCandidates, getRoutingConfig, getSnapshot, listSnapshots, logRoutePlanEvent, preview, RoutePreviewError, saveSnapshot, updateRoutingConfig } from '../services/routePlan'
-import { candidateQuerySchema, dashboardQuerySchema, routePreviewRequestSchema, routingConfigUpdateSchema } from '../schemas/routeOptimization'
+import { candidateQuerySchema, dashboardQuerySchema, routeOperationalUpdateSchema, routePreviewRequestSchema, routingConfigUpdateSchema } from '../schemas/routeOptimization'
 import { handleHttp, sendErrorEnvelope } from '../utils/error.handle'
 import { getDashboard } from '../services/routeDashboard'
 import type { RouteOperationalStatus } from '../interfaces/routeOptimization.interface'
+import { assign, createProjection, OperationalProjectionError } from '../services/routePlanOperational'
 
 const getRouteDashboard = async (req: Request, res: Response): Promise<void> => {
   const input = dashboardQuerySchema.safeParse({
@@ -159,4 +160,27 @@ const getRoutePlanById = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
-export { getCandidateItems, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById, getRouteDashboard }
+const patchRoutePlanOperational = async (req: Request, res: Response): Promise<void> => {
+  if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
+    sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Route plan identifier is invalid')
+    return
+  }
+  const input = routeOperationalUpdateSchema.safeParse(req.body)
+  if (!input.success) {
+    sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Operational update accepts only version, driverId and vehicleId')
+    return
+  }
+  try {
+    await createProjection(req.params.id, { changedBy: res.locals.userId })
+    res.send(await assign(req.params.id, { ...input.data, changedBy: res.locals.userId }))
+  } catch (error) {
+    if (error instanceof OperationalProjectionError) {
+      const status = error.code === 'ROUTE_OPERATIONAL_VERSION_CONFLICT' ? 409 : error.code === 'ROUTE_OPERATIONAL_NOT_FOUND' ? 404 : 422
+      sendErrorEnvelope(res, status, error.code, error.message)
+      return
+    }
+    handleHttp(res, 'ERROR_UPDATE_ROUTE_OPERATIONAL', error)
+  }
+}
+
+export { getCandidateItems, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById, getRouteDashboard, patchRoutePlanOperational }
