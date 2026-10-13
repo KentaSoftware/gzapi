@@ -1,3 +1,5 @@
+import type { SaleDeliveryStatus } from './sale.interface'
+
 export const ROUTING_CONFIG_KEYS = {
   DEPOSITO_1: 'deposito_1'
 } as const
@@ -9,6 +11,30 @@ export const ROUTE_MODES = {
 } as const
 
 export type RouteMode = (typeof ROUTE_MODES)[keyof typeof ROUTE_MODES]
+
+export const ROUTE_OPERATIONAL_STATUS = {
+  PENDING: 'PENDING',
+  IN_PROGRESS: 'IN_PROGRESS',
+  COMPLETED: 'COMPLETED'
+} as const
+
+export type RouteOperationalStatus = (typeof ROUTE_OPERATIONAL_STATUS)[keyof typeof ROUTE_OPERATIONAL_STATUS]
+
+export const ROUTE_METRIC_AVAILABILITY = {
+  CALCULATED: 'CALCULATED',
+  ESTIMATED: 'ESTIMATED',
+  OPERATIONAL: 'OPERATIONAL',
+  UNAVAILABLE: 'UNAVAILABLE'
+} as const
+
+export type RouteMetricAvailability = (typeof ROUTE_METRIC_AVAILABILITY)[keyof typeof ROUTE_METRIC_AVAILABILITY]
+
+export const ROUTE_SNAPSHOT_STALENESS_CAUSE = {
+  MODIFIED: 'MODIFIED',
+  CANCELLED: 'CANCELLED'
+} as const
+
+export type RouteSnapshotStalenessCause = (typeof ROUTE_SNAPSHOT_STALENESS_CAUSE)[keyof typeof ROUTE_SNAPSHOT_STALENESS_CAUSE]
 
 export const DEFAULT_ROUTE_ALGORITHM = 'nearest-neighbor-2opt-v1'
 
@@ -101,6 +127,93 @@ export interface RoutePlanMetrics {
   durationSeconds: number
   stopCount: number
   fuelLiters: number
+  availability?: RouteMetricAvailability
+}
+
+export interface RouteFuelAssumptions {
+  availability: RouteMetricAvailability
+  consumptionLitersPer100Km: number | null
+  distanceKm: number
+  vehicleCode: string | null
+  source: string
+  calculatedAt: Date
+}
+
+export interface RouteScheduleAssumptions {
+  calculatedAt: Date
+  timezone: string
+  source: string
+}
+
+export interface RouteStopEstimate {
+  sequence: number
+  arrival: Date | null
+  cumulativeDurationSeconds: number | null
+  calculatedAt: Date
+  timezone: string
+  availability: RouteMetricAvailability
+}
+
+export interface RouteStateDerivationInput {
+  selectedSaleIds: string[]
+  deliveries: SaleDeliveryStatus[]
+}
+
+export interface RouteOperationalAssignment {
+  driverId?: string
+  vehicleId?: string
+}
+
+export interface RouteOperationalHistoryEntry {
+  status: RouteOperationalStatus
+  driverId?: string
+  vehicleId?: string
+  changedBy: string
+  changedAt: Date
+  version: number
+}
+
+export interface RoutePlanOperational {
+  snapshotId: string
+  status: RouteOperationalStatus
+  sourceDeliveryVersion: number
+  assignments: RouteOperationalAssignment
+  history: RouteOperationalHistoryEntry[]
+  version: number
+  updatedBy?: string
+  updatedAt?: Date
+  stale?: boolean
+  staleCauses?: RouteSnapshotStalenessCause[]
+  staleDetectedAt?: Date
+}
+
+export interface SelectableVehicle {
+  id: string
+  code: string
+  fuelConsumptionLitersPer100Km: number
+  attributes: Record<string, string>
+  availability: boolean
+}
+
+export interface RouteSnapshotSaleReference {
+  saleId: string
+  versionAtSave: number | null
+  statusAtSave: SaleDeliveryStatus | null
+}
+
+export interface RouteSnapshotSaleRef {
+  saleId: string
+  versionAtSave: number | null
+  currentVersion: number | null
+  currentStatus: SaleDeliveryStatus | null
+}
+
+export interface RouteSnapshotStaleness {
+  snapshotId: string
+  stale: boolean
+  causes: RouteSnapshotStalenessCause[]
+  saleRefs: RouteSnapshotSaleRef[]
+  detectedAt: Date
 }
 
 export interface RoutePlanAlgorithm {
@@ -130,6 +243,10 @@ export interface RoutePlan {
   encodedPolyline: string
   warnings: string[]
   audit: RoutePlanAudit
+  fuelAssumptions?: RouteFuelAssumptions
+  scheduleAssumptions?: RouteScheduleAssumptions
+  stopEstimates?: RouteStopEstimate[]
+  saleReferences?: RouteSnapshotSaleReference[]
   createdAt?: Date
 }
 

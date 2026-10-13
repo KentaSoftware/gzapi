@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { ROUTE_MODES } from '../interfaces/routeOptimization.interface'
+import {
+  ROUTE_METRIC_AVAILABILITY,
+  ROUTE_MODES,
+  ROUTE_OPERATIONAL_STATUS,
+  ROUTE_SNAPSHOT_STALENESS_CAUSE
+} from '../interfaces/routeOptimization.interface'
 import { SALE_DELIVERY_STATUS } from '../interfaces/sale.interface'
 
 const isCivilDate = (value: string): boolean => {
@@ -124,6 +129,91 @@ const routePlanMetricsSchema = z.object({
   fuelLiters: z.number().nonnegative().default(0)
 })
 
+const routeMetricAvailabilitySchema = z.enum(Object.values(ROUTE_METRIC_AVAILABILITY) as [string, ...string[]])
+const routeOperationalStatusSchema = z.enum(Object.values(ROUTE_OPERATIONAL_STATUS) as [string, ...string[]])
+const routeSnapshotStalenessCauseSchema = z.enum(Object.values(ROUTE_SNAPSHOT_STALENESS_CAUSE) as [string, ...string[]])
+
+const routeFuelAssumptionsSchema = z.object({
+  availability: routeMetricAvailabilitySchema,
+  consumptionLitersPer100Km: z.number().finite().nonnegative().nullable(),
+  distanceKm: z.number().finite().nonnegative(),
+  vehicleCode: z.string().trim().min(1).nullable(),
+  source: z.string().trim().min(1),
+  calculatedAt: z.date()
+}).strict()
+
+const routeScheduleAssumptionsSchema = z.object({
+  calculatedAt: z.date(),
+  timezone: z.string().trim().min(1),
+  source: z.string().trim().min(1)
+}).strict()
+
+const routeStopEstimateSchema = z.object({
+  sequence: z.number().int().positive(),
+  arrival: z.date().nullable(),
+  cumulativeDurationSeconds: z.number().finite().nonnegative().nullable(),
+  calculatedAt: z.date(),
+  timezone: z.string().trim().min(1),
+  availability: routeMetricAvailabilitySchema
+}).strict()
+
+const routeOperationalAssignmentSchema = z.object({
+  driverId: z.string().trim().min(1).optional(),
+  vehicleId: z.string().trim().min(1).optional()
+}).strict()
+
+const routeOperationalHistoryEntrySchema = z.object({
+  status: routeOperationalStatusSchema,
+  driverId: z.string().trim().min(1).optional(),
+  vehicleId: z.string().trim().min(1).optional(),
+  changedBy: z.string().trim().min(1),
+  changedAt: z.date(),
+  version: z.number().int().positive()
+}).strict()
+
+const routePlanOperationalSchema = z.object({
+  snapshotId: z.string().trim().min(1),
+  status: routeOperationalStatusSchema,
+  sourceDeliveryVersion: z.number().int().nonnegative(),
+  assignments: routeOperationalAssignmentSchema,
+  history: z.array(routeOperationalHistoryEntrySchema),
+  version: z.number().int().positive(),
+  updatedBy: z.string().trim().min(1).optional(),
+  updatedAt: z.date().optional(),
+  stale: z.boolean().optional(),
+  staleCauses: z.array(routeSnapshotStalenessCauseSchema).optional(),
+  staleDetectedAt: z.date().optional()
+}).strict()
+
+const selectableVehicleSchema = z.object({
+  id: z.string().trim().min(1),
+  code: z.string().trim().min(1),
+  fuelConsumptionLitersPer100Km: z.number().finite().positive(),
+  attributes: z.record(z.string(), z.string()),
+  availability: z.boolean()
+}).strict()
+
+const routeSnapshotSaleReferenceSchema = z.object({
+  saleId: z.string().trim().min(1),
+  versionAtSave: z.number().int().nonnegative().nullable(),
+  statusAtSave: z.enum([SALE_DELIVERY_STATUS.PENDING, SALE_DELIVERY_STATUS.DELIVERED]).nullable()
+}).strict()
+
+const routeSnapshotSaleRefSchema = z.object({
+  saleId: z.string().trim().min(1),
+  versionAtSave: z.number().int().nonnegative().nullable(),
+  currentVersion: z.number().int().nonnegative().nullable(),
+  currentStatus: z.enum([SALE_DELIVERY_STATUS.PENDING, SALE_DELIVERY_STATUS.DELIVERED]).nullable()
+}).strict()
+
+const routeSnapshotStalenessSchema = z.object({
+  snapshotId: z.string().trim().min(1),
+  stale: z.boolean(),
+  causes: z.array(routeSnapshotStalenessCauseSchema),
+  saleRefs: z.array(routeSnapshotSaleRefSchema),
+  detectedAt: z.date()
+}).strict()
+
 const routePlanAlgorithmSchema = z.object({
   name: z.string().trim().min(1),
   version: z.string().trim().min(1),
@@ -149,7 +239,11 @@ const routePlanSnapshotSchema = z.object({
   ruleVersion: z.string().trim().min(1).default('candidate-eligibility-v1'),
   encodedPolyline: z.string().default(''),
   warnings: z.array(z.string()),
-  audit: routePlanAuditSchema
+  audit: routePlanAuditSchema,
+  fuelAssumptions: routeFuelAssumptionsSchema.optional(),
+  scheduleAssumptions: routeScheduleAssumptionsSchema.optional(),
+  stopEstimates: z.array(routeStopEstimateSchema).optional(),
+  saleReferences: z.array(routeSnapshotSaleReferenceSchema).optional()
 })
 
 export {
@@ -165,6 +259,14 @@ export {
   routePlanSnapshotSchema,
   routePlanStopSchema,
   routePlanZoneSnapshotSchema,
+  routeFuelAssumptionsSchema,
+  routeMetricAvailabilitySchema,
+  routeOperationalStatusSchema,
+  routePlanOperationalSchema,
+  routeScheduleAssumptionsSchema,
+  routeSnapshotStalenessSchema,
+  routeStopEstimateSchema,
+  selectableVehicleSchema,
   routingConfigUpdateSchema,
   routingDepotSchema,
   saleDeliverySchema
