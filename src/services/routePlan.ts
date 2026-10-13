@@ -13,6 +13,7 @@ import {
   type RouteLocation,
   type RoutePlan,
   type RoutePlanReadState,
+  type RouteAssignmentOptions,
   type RoutePreview,
   type RoutePreviewRequest,
   type RouteStop,
@@ -29,7 +30,8 @@ import { buildClosedRoute, RouteInvariantError } from './routeHeuristic'
 import { computeMatrix, computeRoute, RouteProviderError, type RouteMatrixDiagnostic } from './routeMatrixProvider'
 import { calculateFuelLiters as calculateAssignedFuelLiters, resolveAssignedConsumption } from './routeFuel'
 import { calculateStopEstimates } from './routeSchedule'
-import { getVehicleById } from './vehicle'
+import { getVehicleById, listSelectableVehicles } from './vehicle'
+import { getAllUsers } from './user'
 import { detectStaleness } from './routeStaleness'
 
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
@@ -158,6 +160,29 @@ const getCandidates = async (input: CandidateQuery, context: RoutePlanRequestCon
   } catch (error) {
     logRoutePlanEvent({ event: 'route_plan_candidates_read_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: CANDIDATE_RULE_VERSION, resultCode: 'INTERNAL_ERROR' })
     throw error
+  }
+}
+
+interface AssignmentUserSource {
+  _id?: unknown
+  nickname?: unknown
+  isActive?: unknown
+}
+
+const getAssignmentOptions = async (): Promise<RouteAssignmentOptions> => {
+  const users = await getAllUsers() as unknown[]
+  const drivers = users.map((user): RouteAssignmentOptions['drivers'][number] => {
+    const source = user as AssignmentUserSource
+    return {
+      id: String(source._id),
+      nickname: String(source.nickname),
+      isActive: source.isActive === true
+    }
+  })
+
+  return {
+    drivers,
+    vehicles: await listSelectableVehicles()
   }
 }
 
@@ -495,4 +520,4 @@ const getSnapshot = async (id: string, context: RoutePlanRequestContext = {}): P
   }
 }
 
-export { CANDIDATE_RULE_VERSION, getCandidates, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }
+export { CANDIDATE_RULE_VERSION, getCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }

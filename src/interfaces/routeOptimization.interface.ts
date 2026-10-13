@@ -195,6 +195,17 @@ export interface SelectableVehicle {
   availability: boolean
 }
 
+export interface SelectableDriver {
+  id: string
+  nickname: string
+  isActive: boolean
+}
+
+export interface RouteAssignmentOptions {
+  drivers: SelectableDriver[]
+  vehicles: SelectableVehicle[]
+}
+
 export interface RouteSnapshotSaleReference {
   saleId: string
   versionAtSave: number | null

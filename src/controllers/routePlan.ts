@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import { getCandidates, getRoutingConfig, getSnapshot, listSnapshots, logRoutePlanEvent, preview, RoutePreviewError, saveSnapshot, updateRoutingConfig } from '../services/routePlan'
+import { getAssignmentOptions, getCandidates, getRoutingConfig, getSnapshot, listSnapshots, logRoutePlanEvent, preview, RoutePreviewError, saveSnapshot, updateRoutingConfig } from '../services/routePlan'
 import { candidateQuerySchema, dashboardQuerySchema, routeOperationalUpdateSchema, routePreviewRequestSchema, routingConfigUpdateSchema } from '../schemas/routeOptimization'
 import { handleHttp, sendErrorEnvelope } from '../utils/error.handle'
 import { getDashboard } from '../services/routeDashboard'
@@ -40,6 +40,14 @@ const getCandidateItems = async (req: Request, res: Response): Promise<void> => 
     res.send(await getCandidates(input.data, { correlationId: res.locals.correlationId }))
   } catch (error) {
     handleHttp(res, 'ERROR_GET_ROUTE_CANDIDATES', error)
+  }
+}
+
+const getRouteAssignmentOptions = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.send(await getAssignmentOptions())
+  } catch (error) {
+    handleHttp(res, 'ERROR_GET_ROUTE_ASSIGNMENT_OPTIONS', error)
   }
 }
 
@@ -183,4 +191,4 @@ const patchRoutePlanOperational = async (req: Request, res: Response): Promise<v
   }
 }
 
-export { getCandidateItems, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById, getRouteDashboard, patchRoutePlanOperational }
+export { getCandidateItems, getRouteAssignmentOptions, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById, getRouteDashboard, patchRoutePlanOperational }
