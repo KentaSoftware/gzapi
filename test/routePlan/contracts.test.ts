@@ -14,6 +14,7 @@ import {
   routeStopEstimateSchema,
   selectableVehicleSchema
 } from '../../src/schemas/routeOptimization'
+import { routePlanOperationalSchema as routePlanOperationalMongooseSchema } from '../../src/models/routePlanOperational'
 
 describe('Route dashboard contracts', () => {
   it('S-21: exposes the approved operational statuses and metric availability values', () => {
@@ -93,6 +94,16 @@ describe('Route dashboard contracts', () => {
     expect(routePlanOperationalSchema.safeParse(projection).success).to.equal(true)
     expect(routeSnapshotStalenessSchema.safeParse(staleness).success).to.equal(true)
     expect(selectableVehicleSchema.safeParse(vehicle).success).to.equal(true)
+  })
+
+  it('NFR-004: keeps the operational projection separate from immutable snapshots', () => {
+    expect(routePlanOperationalMongooseSchema.path('snapshotId').options.immutable).to.equal(true)
+    expect(routePlanOperationalMongooseSchema.path('assignments.driverId')).to.not.equal(undefined)
+    expect(routePlanOperationalMongooseSchema.path('assignments.vehicleId')).to.not.equal(undefined)
+    expect(routePlanOperationalMongooseSchema.path('history')).to.not.equal(undefined)
+    expect(routePlanOperationalMongooseSchema.path('stale')).to.not.equal(undefined)
+    expect(routePlanOperationalMongooseSchema.path('staleCauses')).to.not.equal(undefined)
+    expect(routePlanOperationalMongooseSchema.path('staleDetectedAt')).to.not.equal(undefined)
   })
 
   it('keeps new snapshot dashboard fields optional for legacy reads', () => {
