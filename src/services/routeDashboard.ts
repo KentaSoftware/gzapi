@@ -19,6 +19,8 @@ const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const MAX_DASHBOARD_SNAPSHOTS = 1000
 const MAX_DASHBOARD_CANDIDATES = 1000
 const MAX_CONCURRENT_DASHBOARD_READS = 100
+const MAX_DASHBOARD_ROUTE_STOPS = 50
+const MAX_DASHBOARD_ROUTE_SALE_REFERENCES = 1000
 
 interface ConcurrencyLimiter {
   run: <T>(task: () => Promise<T>) => Promise<T>
@@ -54,9 +56,17 @@ interface DashboardSnapshotRead {
   _id: unknown
   zoneSnapshot: { code: string }
   selectedSaleIds: string[]
-  stops: unknown[]
-  metrics: { distanceMeters: number, durationSeconds: number, fuelLiters?: number }
+  assignments?: RouteOperationalAssignment
+  depot?: { name: string, latitude: number, longitude: number }
+  stops: Array<{ clientId: string, saleIds: string[], sequence: number, latitude: number, longitude: number }>
+  segments?: Array<{ fromStopSequence: number, toStopSequence: number, distanceMeters: number, durationSeconds: number }>
+  metrics: { distanceMeters: number, durationSeconds: number, fuelLiters?: number, availability?: RouteDashboardCard['metricAvailability'] }
   warnings: string[]
+  encodedPolyline?: string
+  fuelAssumptions?: RouteDashboardCard['fuelAssumptions']
+  scheduleAssumptions?: RouteDashboardCard['scheduleAssumptions']
+  stopEstimates?: RouteDashboardCard['stopEstimates']
+  saleReferences?: RouteDashboardCard['saleReferences']
 }
 
 interface DashboardProjectionRead {
@@ -64,6 +74,7 @@ interface DashboardProjectionRead {
   status: RouteOperationalStatus
   assignments?: RouteOperationalAssignment
   stale?: boolean
+  staleCauses?: RouteDashboardCard['staleCauses']
 }
 
 interface DashboardRequestContext {
@@ -100,21 +111,35 @@ const deriveStatus = (statuses: string[]): RouteOperationalStatus => {
   return ROUTE_OPERATIONAL_STATUS.PENDING
 }
 
-const routeCard = (snapshot: DashboardSnapshotRead, projection: DashboardProjectionRead | undefined, saleStatuses: string[]): RouteDashboardCard => ({
-  id: String(snapshot._id),
-  status: projection?.status ?? deriveStatus(saleStatuses),
-  zoneCode: snapshot.zoneSnapshot.code,
-  selectedSaleIds: [...snapshot.selectedSaleIds],
-  clientCount: snapshot.stops.length,
-  metrics: {
-    distanceMeters: snapshot.metrics.distanceMeters,
-    durationSeconds: snapshot.metrics.durationSeconds,
-    fuelLiters: typeof snapshot.metrics.fuelLiters === 'number' ? snapshot.metrics.fuelLiters : null
-  },
-  assignments: projection?.assignments ?? {},
-  warnings: [...snapshot.warnings],
-  stale: projection?.stale === true
-})
+const routeCard = (snapshot: DashboardSnapshotRead, projection: DashboardProjectionRead | undefined, saleStatuses: string[]): RouteDashboardCard => {
+  const card: RouteDashboardCard = {
+    id: String(snapshot._id),
+    status: projection?.status ?? deriveStatus(saleStatuses),
+    zoneCode: snapshot.zoneSnapshot.code,
+    selectedSaleIds: [...snapshot.selectedSaleIds],
+    clientCount: snapshot.stops.length,
+    metrics: {
+      distanceMeters: snapshot.metrics.distanceMeters,
+      durationSeconds: snapshot.metrics.durationSeconds,
+      fuelLiters: typeof snapshot.metrics.fuelLiters === 'number' ? snapshot.metrics.fuelLiters : null
+    },
+    assignments: projection?.assignments ?? snapshot.assignments ?? {},
+    warnings: [...snapshot.warnings],
+    stale: projection?.stale === true
+  }
+
+  if (snapshot.depot !== undefined) card.depot = { ...snapshot.depot }
+  if (snapshot.encodedPolyline !== undefined) card.encodedPolyline = snapshot.encodedPolyline
+  if (snapshot.stops.length <= MAX_DASHBOARD_ROUTE_STOPS) card.stops = snapshot.stops.map((stop) => ({ ...stop, saleIds: [...stop.saleIds] }))
+  if (snapshot.segments !== undefined) card.segments = snapshot.segments.slice(0, MAX_DASHBOARD_ROUTE_STOPS + 1).map((segment) => ({ ...segment }))
+  if (snapshot.metrics.availability !== undefined) card.metricAvailability = snapshot.metrics.availability
+  if (snapshot.fuelAssumptions !== undefined) card.fuelAssumptions = { ...snapshot.fuelAssumptions }
+  if (snapshot.scheduleAssumptions !== undefined) card.scheduleAssumptions = { ...snapshot.scheduleAssumptions }
+  if (snapshot.stopEstimates !== undefined) card.stopEstimates = snapshot.stopEstimates.slice(0, MAX_DASHBOARD_ROUTE_STOPS).map((estimate) => ({ ...estimate }))
+  if (snapshot.saleReferences !== undefined) card.saleReferences = snapshot.saleReferences.slice(0, MAX_DASHBOARD_ROUTE_SALE_REFERENCES).map((reference) => ({ ...reference }))
+  if (projection?.staleCauses !== undefined) card.staleCauses = [...projection.staleCauses]
+  return card
+}
 
 const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => {
   const startedAt = Date.now()
@@ -153,6 +178,7 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
     const statusBySaleId = new Map(sales.map((sale) => [String(sale._id), sale.delivery?.status ?? 'PENDING']))
     const allRoutes = snapshots.map((snapshot) => routeCard(snapshot, projectionBySnapshotId.get(String(snapshot._id)), snapshot.selectedSaleIds.map((saleId) => statusBySaleId.get(saleId) ?? 'PENDING')))
     const routes = input.status === undefined ? allRoutes : allRoutes.filter((route) => route.status === input.status)
+    const oversizedRouteIds = new Set(snapshots.filter((snapshot) => snapshot.stops.length > MAX_DASHBOARD_ROUTE_STOPS || (snapshot.saleReferences?.length ?? 0) > MAX_DASHBOARD_ROUTE_SALE_REFERENCES).map((snapshot) => String(snapshot._id)))
     const totalDistanceMeters = routes.length === 0 ? null : routes.reduce((sum, route) => sum + route.metrics.distanceMeters, 0)
     const estimatedFuelLiters = routes.length === 0 || routes.some((route) => route.metrics.fuelLiters === null)
       ? null
@@ -160,6 +186,7 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
     const warnings = [...new Set([
       ...routes.flatMap((route) => route.warnings),
       ...(routes.some((route) => route.stale) ? ['STALE_ROUTE_PLAN'] : []),
+      ...(routes.some((route) => oversizedRouteIds.has(route.id)) ? ['DASHBOARD_ROUTE_DETAIL_LIMIT_REACHED'] : []),
       ...(snapshotsTruncated ? ['DASHBOARD_SNAPSHOT_LIMIT_REACHED'] : []),
       ...(candidateContext.truncated === true ? ['DASHBOARD_CANDIDATE_LIMIT_REACHED'] : []),
       ...(routes.length === 0 && candidates.eligible.length === 0 && candidates.blocked.length === 0 ? ['NO_DASHBOARD_DATA'] : [])
@@ -189,4 +216,4 @@ const dashboardReadLimiter = createConcurrencyLimiter(MAX_CONCURRENT_DASHBOARD_R
 
 const getDashboard = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => await dashboardReadLimiter.run(async () => await getDashboardRead(input, context))
 
-export { MAX_CONCURRENT_DASHBOARD_READS, MAX_DASHBOARD_CANDIDATES, MAX_DASHBOARD_SNAPSHOTS, createConcurrencyLimiter, getDashboard }
+export { MAX_CONCURRENT_DASHBOARD_READS, MAX_DASHBOARD_CANDIDATES, MAX_DASHBOARD_ROUTE_SALE_REFERENCES, MAX_DASHBOARD_ROUTE_STOPS, MAX_DASHBOARD_SNAPSHOTS, createConcurrencyLimiter, getDashboard }

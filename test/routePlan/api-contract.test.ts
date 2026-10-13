@@ -126,6 +126,19 @@ describe('Route plan API contract', () => {
     expect(forbidden.status).to.equal(403)
   })
 
+  it('TC-033: returns bounded selected-route detail and preserves dashboard limit warnings', async () => {
+    await createSnapshot()
+    const response = await request(app)
+      .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
+      .set('Authorization', `Bearer ${readToken}`)
+
+    expect(response.status).to.equal(200)
+    expect(response.body.routes[0]).to.include.keys(['depot', 'stops', 'segments', 'assignments'])
+    expect(response.body.routes[0].stops).to.have.length(1)
+    expect(response.body.routes[0].stops[0].sequence).to.equal(1)
+    expect(response.body.routes[0].stops[0].saleIds).to.deep.equal(response.body.routes[0].selectedSaleIds)
+  })
+
   it('TC-026/TC-030: rejects preview and save without assignments before provider or snapshot work', async () => {
     const providerMatrix = sinon.stub(routeMatrixProvider, 'computeMatrix').rejects(new Error('provider must not be called'))
     const providerRoute = sinon.stub(routeMatrixProvider, 'computeRoute').rejects(new Error('provider must not be called'))

@@ -314,6 +314,21 @@ export interface RouteDashboardKpis {
   estimatedFuelLiters: number | null
 }
 
+export interface RouteDashboardStop {
+  clientId: string
+  saleIds: string[]
+  sequence: number
+  latitude: number
+  longitude: number
+}
+
+export interface RouteDashboardSegment {
+  fromStopSequence: number
+  toStopSequence: number
+  distanceMeters: number
+  durationSeconds: number
+}
+
 export interface RouteDashboardCard {
   id: string
   status: RouteOperationalStatus
@@ -328,6 +343,16 @@ export interface RouteDashboardCard {
   assignments: RouteOperationalAssignment
   warnings: string[]
   stale: boolean
+  depot?: RoutingDepot
+  encodedPolyline?: string
+  stops?: RouteDashboardStop[]
+  segments?: RouteDashboardSegment[]
+  metricAvailability?: RouteMetricAvailability
+  fuelAssumptions?: RouteFuelAssumptions
+  scheduleAssumptions?: RouteScheduleAssumptions
+  stopEstimates?: RouteStopEstimate[]
+  saleReferences?: RouteSnapshotSaleReference[]
+  staleCauses?: RouteSnapshotStalenessCause[]
 }
 
 export interface RouteDashboard {

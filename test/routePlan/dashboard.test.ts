@@ -68,12 +68,16 @@ describe('Route dashboard aggregation', () => {
       depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 },
       stops: [{ clientId: 'client-1', saleIds: ['sale-1'], sequence: 1, latitude: -34.61, longitude: -58.41 }],
       segments: [],
-      metrics: { distanceMeters: 12500, durationSeconds: 900, stopCount: 1, fuelLiters: 1.25 },
+      metrics: { distanceMeters: 12500, durationSeconds: 900, stopCount: 1, fuelLiters: 1.25, availability: 'CALCULATED' },
       algorithm: { name: 'heuristic', version: '1', provider: 'internal' },
       routingConfigRevision: 1,
       ruleVersion: 'candidate-eligibility-v1',
       encodedPolyline: 'encoded-route',
       warnings: [],
+      assignments: { driverId: 'driver-1', vehicleId: 'vehicle-1' },
+      fuelAssumptions: { availability: 'CALCULATED', consumptionLitersPer100Km: 10, distanceKm: 12.5, vehicleCode: 'AA123AA', source: 'vehicle', calculatedAt: new Date() },
+      scheduleAssumptions: { calculatedAt: new Date(), timezone: 'America/Argentina/Buenos_Aires', source: 'route-schedule' },
+      stopEstimates: [{ sequence: 1, arrival: new Date('2026-10-12T03:15:00.000Z'), cumulativeDurationSeconds: 900, calculatedAt: new Date(), timezone: 'America/Argentina/Buenos_Aires', availability: 'CALCULATED' }],
       audit: { createdBy: String(userId), createdAt: new Date() }
     })
 
@@ -86,6 +90,10 @@ describe('Route dashboard aggregation', () => {
     expect(response.body.routes).to.have.length(1)
     expect(response.body.routes[0]).to.include({ status: 'PENDING', clientCount: 1 })
     expect(response.body.routes[0].metrics).to.deep.equal({ distanceMeters: 12500, durationSeconds: 900, fuelLiters: 1.25 })
+    expect(response.body.routes[0]).to.include.keys(['depot', 'stops', 'metricAvailability', 'fuelAssumptions', 'scheduleAssumptions', 'stopEstimates'])
+    expect(response.body.routes[0].depot).to.deep.equal({ name: 'Deposito 1', latitude: -34.6, longitude: -58.4 })
+    expect(response.body.routes[0].stops[0]).to.deep.equal({ clientId: 'client-1', saleIds: ['sale-1'], sequence: 1, latitude: -34.61, longitude: -58.41 })
+    expect(response.body.routes[0].assignments).to.deep.equal({ driverId: 'driver-1', vehicleId: 'vehicle-1' })
   })
 
   it('S-10: validates the civil date, zone code and optional operational status', async () => {
@@ -133,5 +141,59 @@ describe('Route dashboard aggregation', () => {
     expect(response.status).to.equal(200)
     expect(response.body.kpis).to.deep.equal({ activeRoutes: 0, pendingOrders: 0, totalDistanceMeters: null, estimatedFuelLiters: null })
     expect(response.body.warnings).to.deep.equal(['NO_DASHBOARD_DATA'])
+  })
+
+  it('S-24: keeps selected-route detail fields optional for legacy snapshots', async () => {
+    await RoutePlanModel.create({
+      snapshotVersion: 1,
+      planningDate: SERVICE_DAY_START,
+      zoneSnapshot: { code: 'NORTE', normalizedName: 'norte', name: 'Norte' },
+      selectedSaleIds: ['legacy-sale'],
+      depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 },
+      stops: [{ clientId: 'legacy-client', saleIds: ['legacy-sale'], sequence: 1, latitude: -34.61, longitude: -58.41 }],
+      segments: [],
+      metrics: { distanceMeters: 100, durationSeconds: 10, stopCount: 1 },
+      algorithm: { name: 'heuristic', version: '1', provider: 'internal' },
+      routingConfigRevision: 1,
+      ruleVersion: 'candidate-eligibility-v1',
+      encodedPolyline: 'legacy-route',
+      warnings: [],
+      audit: { createdBy: String(userId), createdAt: new Date() }
+    })
+
+    const response = await request(app)
+      .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(response.status).to.equal(200)
+    expect(response.body.routes[0]).to.include.keys(['depot', 'stops'])
+    expect(response.body.routes[0]).not.to.have.any.keys(['fuelAssumptions', 'scheduleAssumptions', 'stopEstimates', 'saleReferences'])
+  })
+
+  it('NFR-010: truncates oversized route detail without changing the bounded dashboard result', async () => {
+    await RoutePlanModel.create({
+      snapshotVersion: 1,
+      planningDate: SERVICE_DAY_START,
+      zoneSnapshot: { code: 'NORTE', normalizedName: 'norte', name: 'Norte' },
+      selectedSaleIds: ['bounded-sale'],
+      depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 },
+      stops: Array.from({ length: 51 }, (_value, index) => ({ clientId: `client-${index}`, saleIds: [`sale-${index}`], sequence: index + 1, latitude: -34.61, longitude: -58.41 })),
+      segments: [],
+      metrics: { distanceMeters: 100, durationSeconds: 10, stopCount: 51 },
+      algorithm: { name: 'heuristic', version: '1', provider: 'internal' },
+      routingConfigRevision: 1,
+      ruleVersion: 'candidate-eligibility-v1',
+      encodedPolyline: 'bounded-route',
+      warnings: [],
+      audit: { createdBy: String(userId), createdAt: new Date() }
+    })
+
+    const response = await request(app)
+      .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(response.status).to.equal(200)
+    expect(response.body.routes[0]).not.to.have.property('stops')
+    expect(response.body.warnings).to.include('DASHBOARD_ROUTE_DETAIL_LIMIT_REACHED')
   })
 })
