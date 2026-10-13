@@ -6,6 +6,18 @@ import { getDashboard } from '../services/routeDashboard'
 import type { RouteOperationalStatus } from '../interfaces/routeOptimization.interface'
 import { assign, createProjection, OperationalProjectionError } from '../services/routePlanOperational'
 
+const logRouteControllerEvent = (operation: string, res: Response, startedAt: number, outcome: string, routeSnapshotId?: string): void => {
+  console.log(JSON.stringify({
+    event: 'route_operation_observed',
+    operation,
+    outcome,
+    correlationId: res.locals.correlationId,
+    latencyMs: Date.now() - startedAt,
+    actor: res.locals.userId,
+    routeSnapshotId
+  }))
+}
+
 const getRouteDashboard = async (req: Request, res: Response): Promise<void> => {
   const input = dashboardQuerySchema.safeParse({
     serviceDate: req.query.serviceDate,
@@ -18,7 +30,7 @@ const getRouteDashboard = async (req: Request, res: Response): Promise<void> => 
     return
   }
   try {
-    res.send(await getDashboard({ ...input.data, status: input.data.status as RouteOperationalStatus | undefined }))
+    res.send(await getDashboard({ ...input.data, status: input.data.status as RouteOperationalStatus | undefined }, { correlationId: res.locals.correlationId, actor: res.locals.userId }))
   } catch (error) {
     handleHttp(res, 'ERROR_GET_ROUTE_DASHBOARD', error)
   }
@@ -44,9 +56,12 @@ const getCandidateItems = async (req: Request, res: Response): Promise<void> => 
 }
 
 const getRouteAssignmentOptions = async (_req: Request, res: Response): Promise<void> => {
+  const startedAt = Date.now()
   try {
     res.send(await getAssignmentOptions())
+    logRouteControllerEvent('assignment-options.read', res, startedAt, 'SUCCESS')
   } catch (error) {
+    logRouteControllerEvent('assignment-options.read', res, startedAt, 'INTERNAL_ERROR')
     handleHttp(res, 'ERROR_GET_ROUTE_ASSIGNMENT_OPTIONS', error)
   }
 }
@@ -169,6 +184,7 @@ const getRoutePlanById = async (req: Request, res: Response): Promise<void> => {
 }
 
 const patchRoutePlanOperational = async (req: Request, res: Response): Promise<void> => {
+  const startedAt = Date.now()
   if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
     sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Route plan identifier is invalid')
     return
@@ -180,13 +196,17 @@ const patchRoutePlanOperational = async (req: Request, res: Response): Promise<v
   }
   try {
     await createProjection(req.params.id, { changedBy: res.locals.userId })
-    res.send(await assign(req.params.id, { ...input.data, changedBy: res.locals.userId }))
+    const result = await assign(req.params.id, { ...input.data, changedBy: res.locals.userId, correlationId: res.locals.correlationId })
+    res.send(result)
+    logRouteControllerEvent('operational.update', res, startedAt, 'SUCCESS', req.params.id)
   } catch (error) {
     if (error instanceof OperationalProjectionError) {
       const status = error.code === 'ROUTE_OPERATIONAL_VERSION_CONFLICT' ? 409 : error.code === 'ROUTE_OPERATIONAL_NOT_FOUND' ? 404 : 422
       sendErrorEnvelope(res, status, error.code, error.message)
+      logRouteControllerEvent('operational.update', res, startedAt, error.code)
       return
     }
+    logRouteControllerEvent('operational.update', res, startedAt, 'INTERNAL_ERROR', req.params.id)
     handleHttp(res, 'ERROR_UPDATE_ROUTE_OPERATIONAL', error)
   }
 }

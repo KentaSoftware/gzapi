@@ -9,11 +9,13 @@ import { deriveRouteStatus } from './routeStateDerivation'
 interface CreateOperationalInput {
   changedBy: string
   assignments?: RouteOperationalAssignment
+  correlationId?: string
 }
 
 interface RecomputeInput {
   changedBy: string
   expectedVersion?: number
+  correlationId?: string
 }
 
 interface AssignmentInput {
@@ -21,6 +23,7 @@ interface AssignmentInput {
   driverId: string
   vehicleId: string
   changedBy: string
+  correlationId?: string
 }
 
 type OperationalErrorCode = 'ROUTE_OPERATIONAL_NOT_FOUND' | 'ROUTE_OPERATIONAL_VERSION_CONFLICT' | 'ROUTE_OPERATIONAL_SALES_INVALID'
@@ -35,6 +38,18 @@ class OperationalProjectionError extends Error {
     this.code = code
     this.currentVersion = currentVersion
   }
+}
+
+const logOperationalEvent = (operation: string, snapshotId: string, correlationId: string | undefined, actor: string, startedAt: number, outcome: string): void => {
+  console.log(JSON.stringify({
+    event: 'route_operation_observed',
+    operation,
+    outcome,
+    correlationId,
+    latencyMs: Date.now() - startedAt,
+    actor,
+    routeSnapshotId: snapshotId
+  }))
 }
 
 const selectedSaleState = async (snapshotId: string): Promise<{ saleIds: string[], status: RouteOperationalStatus, sourceDeliveryVersion: number }> => {
@@ -65,58 +80,79 @@ const historyEntry = (status: RouteOperationalStatus, assignments: RouteOperatio
 })
 
 const createProjection = async (snapshotId: string, input: CreateOperationalInput): Promise<RoutePlanOperational> => {
-  const current = await RoutePlanOperationalModel.findOne({ snapshotId }).lean()
-  if (current !== null) return current
-  const state = await selectedSaleState(snapshotId)
-  const snapshot = await RoutePlanModel.findById(snapshotId).lean()
-  const assignments = input.assignments ?? snapshot?.assignments ?? {}
-  const projection = await RoutePlanOperationalModel.create({
-    snapshotId,
-    status: state.status,
-    sourceDeliveryVersion: state.sourceDeliveryVersion,
-    assignments,
-    history: [historyEntry(state.status, assignments, input.changedBy, 1)],
-    version: 1,
-    updatedBy: input.changedBy
-  })
-  return projection.toObject() as unknown as RoutePlanOperational
+  const startedAt = Date.now()
+  try {
+    const current = await RoutePlanOperationalModel.findOne({ snapshotId }).lean()
+    if (current !== null) return current
+    const state = await selectedSaleState(snapshotId)
+    const snapshot = await RoutePlanModel.findById(snapshotId).lean()
+    const assignments = input.assignments ?? snapshot?.assignments ?? {}
+    const projection = await RoutePlanOperationalModel.create({
+      snapshotId,
+      status: state.status,
+      sourceDeliveryVersion: state.sourceDeliveryVersion,
+      assignments,
+      history: [historyEntry(state.status, assignments, input.changedBy, 1)],
+      version: 1,
+      updatedBy: input.changedBy
+    })
+    logOperationalEvent('operational.projection.create', snapshotId, input.correlationId, input.changedBy, startedAt, 'SUCCESS')
+    return projection.toObject() as unknown as RoutePlanOperational
+  } catch (error) {
+    logOperationalEvent('operational.projection.create', snapshotId, input.correlationId, input.changedBy, startedAt, error instanceof OperationalProjectionError ? error.code : 'INTERNAL_ERROR')
+    throw error
+  }
 }
 
 const recomputeState = async (snapshotId: string, input: RecomputeInput): Promise<RoutePlanOperational> => {
-  const state = await selectedSaleState(snapshotId)
-  const current = await RoutePlanOperationalModel.findOne({ snapshotId }).lean()
-  if (current === null) return await createProjection(snapshotId, { changedBy: input.changedBy })
-  if (input.expectedVersion !== undefined && current.version !== input.expectedVersion) {
-    throw new OperationalProjectionError('ROUTE_OPERATIONAL_VERSION_CONFLICT', `Route operation is stale; refresh version ${current.version} before retrying`, current.version)
+  const startedAt = Date.now()
+  try {
+    const state = await selectedSaleState(snapshotId)
+    const current = await RoutePlanOperationalModel.findOne({ snapshotId }).lean()
+    if (current === null) return await createProjection(snapshotId, { changedBy: input.changedBy, correlationId: input.correlationId })
+    if (input.expectedVersion !== undefined && current.version !== input.expectedVersion) {
+      throw new OperationalProjectionError('ROUTE_OPERATIONAL_VERSION_CONFLICT', `Route operation is stale; refresh version ${current.version} before retrying`, current.version)
+    }
+    if (current.status === state.status && current.sourceDeliveryVersion === state.sourceDeliveryVersion) return current as unknown as RoutePlanOperational
+    const nextVersion = current.version + 1
+    const updated = await RoutePlanOperationalModel.findOneAndUpdate(
+      { snapshotId, version: current.version },
+      { $set: { status: state.status, sourceDeliveryVersion: state.sourceDeliveryVersion, updatedBy: input.changedBy }, $inc: { version: 1 }, $push: { history: historyEntry(state.status, current.assignments, input.changedBy, nextVersion) } },
+      { new: true }
+    ).lean()
+    if (updated === null) throw new OperationalProjectionError('ROUTE_OPERATIONAL_VERSION_CONFLICT', 'Route operation changed concurrently; refresh and retry')
+    logOperationalEvent('operational.recompute', snapshotId, input.correlationId, input.changedBy, startedAt, 'SUCCESS')
+    return updated as unknown as RoutePlanOperational
+  } catch (error) {
+    logOperationalEvent('operational.recompute', snapshotId, input.correlationId, input.changedBy, startedAt, error instanceof OperationalProjectionError ? error.code : 'INTERNAL_ERROR')
+    throw error
   }
-  if (current.status === state.status && current.sourceDeliveryVersion === state.sourceDeliveryVersion) return current as unknown as RoutePlanOperational
-  const nextVersion = current.version + 1
-  const updated = await RoutePlanOperationalModel.findOneAndUpdate(
-    { snapshotId, version: current.version },
-    { $set: { status: state.status, sourceDeliveryVersion: state.sourceDeliveryVersion, updatedBy: input.changedBy }, $inc: { version: 1 }, $push: { history: historyEntry(state.status, current.assignments, input.changedBy, nextVersion) } },
-    { new: true }
-  ).lean()
-  if (updated === null) throw new OperationalProjectionError('ROUTE_OPERATIONAL_VERSION_CONFLICT', 'Route operation changed concurrently; refresh and retry')
-  return updated as unknown as RoutePlanOperational
 }
 
 const assign = async (snapshotId: string, input: AssignmentInput): Promise<RoutePlanOperational> => {
-  const state = await selectedSaleState(snapshotId)
-  const current = await RoutePlanOperationalModel.findOne({ snapshotId, version: input.version }).lean()
-  if (current === null) {
-    const latest = await RoutePlanOperationalModel.findOne({ snapshotId }).lean()
-    if (latest === null) throw new OperationalProjectionError('ROUTE_OPERATIONAL_NOT_FOUND', 'Operational route projection was not found')
-    throw new OperationalProjectionError('ROUTE_OPERATIONAL_VERSION_CONFLICT', `Route operation is stale; refresh version ${latest.version} before retrying`, latest.version)
+  const startedAt = Date.now()
+  try {
+    const state = await selectedSaleState(snapshotId)
+    const current = await RoutePlanOperationalModel.findOne({ snapshotId, version: input.version }).lean()
+    if (current === null) {
+      const latest = await RoutePlanOperationalModel.findOne({ snapshotId }).lean()
+      if (latest === null) throw new OperationalProjectionError('ROUTE_OPERATIONAL_NOT_FOUND', 'Operational route projection was not found')
+      throw new OperationalProjectionError('ROUTE_OPERATIONAL_VERSION_CONFLICT', `Route operation is stale; refresh version ${latest.version} before retrying`, latest.version)
+    }
+    const assignments = { driverId: input.driverId, vehicleId: input.vehicleId }
+    const nextVersion = input.version + 1
+    const updated = await RoutePlanOperationalModel.findOneAndUpdate(
+      { snapshotId, version: input.version },
+      { $set: { status: state.status, sourceDeliveryVersion: state.sourceDeliveryVersion, assignments, updatedBy: input.changedBy }, $inc: { version: 1 }, $push: { history: historyEntry(state.status, assignments, input.changedBy, nextVersion) } },
+      { new: true }
+    ).lean()
+    if (updated === null) throw new OperationalProjectionError('ROUTE_OPERATIONAL_VERSION_CONFLICT', 'Route operation changed concurrently; refresh and retry')
+    logOperationalEvent('operational.update', snapshotId, input.correlationId, input.changedBy, startedAt, 'SUCCESS')
+    return updated as unknown as RoutePlanOperational
+  } catch (error) {
+    logOperationalEvent('operational.update', snapshotId, input.correlationId, input.changedBy, startedAt, error instanceof OperationalProjectionError ? error.code : 'INTERNAL_ERROR')
+    throw error
   }
-  const assignments = { driverId: input.driverId, vehicleId: input.vehicleId }
-  const nextVersion = input.version + 1
-  const updated = await RoutePlanOperationalModel.findOneAndUpdate(
-    { snapshotId, version: input.version },
-    { $set: { status: state.status, sourceDeliveryVersion: state.sourceDeliveryVersion, assignments, updatedBy: input.changedBy }, $inc: { version: 1 }, $push: { history: historyEntry(state.status, assignments, input.changedBy, nextVersion) } },
-    { new: true }
-  ).lean()
-  if (updated === null) throw new OperationalProjectionError('ROUTE_OPERATIONAL_VERSION_CONFLICT', 'Route operation changed concurrently; refresh and retry')
-  return updated as unknown as RoutePlanOperational
 }
 
 const recomputeForSale = async (saleId: string, changedBy: string): Promise<void> => {
