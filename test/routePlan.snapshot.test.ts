@@ -10,6 +10,7 @@ import RoutePlanModel from '../src/models/routePlan'
 import RoutingConfigModel from '../src/models/routingConfig'
 import SaleModel from '../src/models/sale'
 import UserModel from '../src/models/user'
+import VehicleModel from '../src/models/vehicle'
 import * as routeMatrixProvider from '../src/services/routeMatrixProvider'
 import { generateToken } from '../src/utils/jwt.handle'
 
@@ -23,11 +24,12 @@ describe('Route plan snapshots', () => {
   let unauthorizedToken: string
   let userId: Types.ObjectId
   let zoneId: Types.ObjectId
+  let vehicleId: Types.ObjectId
 
   const snapshotRequest = (saleIds: Types.ObjectId[]): request.Test => request(app)
     .post('/routePlan')
     .set('Authorization', `Bearer ${authorizedToken}`)
-    .send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String), driverId: String(userId), vehicleId: String(new Types.ObjectId()) })
+    .send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String), driverId: String(userId), vehicleId: String(vehicleId) })
 
   const configureRoute = async (): Promise<void> => {
     await RoutingConfigModel.create({
@@ -83,6 +85,7 @@ describe('Route plan snapshots', () => {
       ClientModel.deleteMany({}),
       DeliveryZoneModel.deleteMany({}),
       RoutingConfigModel.deleteMany({}),
+      VehicleModel.deleteMany({}),
       UserModel.deleteMany({}),
       RoleModel.deleteMany({})
     ])
@@ -95,6 +98,8 @@ describe('Route plan snapshots', () => {
     unauthorizedToken = await generateToken(unauthorizedUser)
     const zone = await DeliveryZoneModel.create({ code: 'NORTE', normalizedName: 'norte', name: 'Norte', active: true })
     zoneId = zone._id
+    const vehicle = await VehicleModel.create({ code: 'TEST-ROUTE-SNAPSHOT', fuelConsumptionLitersPer100Km: 8.5, active: true })
+    vehicleId = vehicle._id
   })
 
   it('S-25/TC-017: requires authentication and the matching permissions for snapshot save and reads', async () => {
@@ -142,7 +147,7 @@ describe('Route plan snapshots', () => {
     expect(firstSave.body._id).to.not.equal(secondSave.body._id)
     expect(firstSave.body.snapshotVersion).to.equal(1)
     expect(firstSave.body.ruleVersion).to.equal('candidate-eligibility-v1')
-    expect(firstSave.body.metrics).to.deep.equal({ distanceMeters: 12000, durationSeconds: 900, stopCount: 1, fuelLiters: 1.02 })
+    expect(firstSave.body.metrics).to.deep.equal({ distanceMeters: 12000, durationSeconds: 900, stopCount: 1, fuelLiters: 1.02, availability: 'CALCULATED' })
     expect(firstSave.body.stops).to.deep.equal([{ clientId: firstSave.body.stops[0].clientId, saleIds: [String(firstSaleId), String(secondSaleId)], sequence: 1, latitude: -34.61, longitude: -58.41 }])
     expect(await SaleModel.find({}).sort({ _id: 1 }).lean()).to.deep.equal(salesBefore)
     expect(await ClientModel.find({}).sort({ _id: 1 }).lean()).to.deep.equal(clientsBefore)
@@ -163,7 +168,9 @@ describe('Route plan snapshots', () => {
     expect(list.body).to.have.length(2)
     expect(byId.status).to.equal(200)
     expect(byId.body._id).to.equal(firstSave.body._id)
-    expect(byId.body).to.deep.equal(firstSave.body)
+    expect(byId.body).to.deep.include(firstSave.body)
+    expect(byId.body.staleness.stale).to.equal(false)
+    expect(byId.body.readWarnings).to.deep.equal([])
     expect(providerOutage.called).to.equal(false)
   })
 

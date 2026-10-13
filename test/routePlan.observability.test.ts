@@ -19,7 +19,9 @@ describe('Route plan observability', () => {
       body: {
         serviceDate: '2026-10-05',
         deliveryZoneId: '507f1f77bcf86cd799439011',
-        saleIds: ['507f1f77bcf86cd799439012']
+        saleIds: ['507f1f77bcf86cd799439012'],
+        driverId: '507f1f77bcf86cd799439013',
+        vehicleId: '507f1f77bcf86cd799439014'
       }
     }
 

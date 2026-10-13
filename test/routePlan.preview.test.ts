@@ -90,6 +90,7 @@ describe('Route plan preview', () => {
       ClientModel.deleteMany({}),
       DeliveryZoneModel.deleteMany({}),
       RoutingConfigModel.deleteMany({}),
+      VehicleModel.deleteMany({}),
       UserModel.deleteMany({}),
       RoleModel.deleteMany({})
     ])
@@ -158,17 +159,15 @@ describe('Route plan preview', () => {
     expect(finalRoute.called).to.equal(false)
   })
 
-  it('S-26: rejects missing routing configuration, fuel coefficient, or depot coordinates', async () => {
+  it('S-26: rejects missing routing configuration or depot coordinates; vehicle supplies fuel', async () => {
     const clientId = await createEligibleClient('Config customer', -34.61, -58.41)
     const saleId = await createSale(clientId)
     const missingConfig = await previewRequest([saleId])
     await configureRouting()
-    await RoutingConfigModel.updateOne({ key: 'deposito_1' }, { $unset: { fuelConsumptionLitersPer100Km: 1 } })
-    const missingFuel = await previewRequest([saleId])
     await RoutingConfigModel.updateOne({ key: 'deposito_1' }, { $set: { fuelConsumptionLitersPer100Km: 8.5 }, $unset: { 'depot.latitude': 1 } })
     const missingDepot = await previewRequest([saleId])
 
-    for (const response of [missingConfig, missingFuel, missingDepot]) {
+    for (const response of [missingConfig, missingDepot]) {
       expect(response.status).to.equal(422)
       expect(response.body.code).to.equal('INVALID_CONFIGURATION')
     }
@@ -195,7 +194,7 @@ describe('Route plan preview', () => {
     expect(response.body.route.encodedPolyline).to.equal('encoded-route')
     expect(response.body.route.stops).to.have.length(2)
     expect(response.body.route.stops.find((stop: { clientId: string }) => stop.clientId === String(firstClientId)).saleIds).to.deep.equal([String(firstSaleId), String(secondSaleId)])
-    expect(response.body.metrics).to.deep.equal({ distanceMeters: 12000, durationSeconds: 900, stopCount: 2, fuelLiters: 1.02 })
+    expect(response.body.metrics).to.deep.equal({ distanceMeters: 12000, durationSeconds: 900, stopCount: 2, fuelLiters: 1.02, availability: 'CALCULATED' })
     expect(response.body.warnings).to.deep.equal(['TIME_WINDOWS_NOT_CONSIDERED'])
     expect(response.body.factorsConsidered).to.deep.equal(['DISTANCE', 'DURATION', 'FUEL_CONSUMPTION'])
     expect(response.body.algorithmVersion).to.equal('nearest-neighbor-2opt-v1')

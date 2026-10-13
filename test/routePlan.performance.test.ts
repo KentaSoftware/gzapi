@@ -9,6 +9,7 @@ import RoleModel from '../src/models/role'
 import RoutingConfigModel from '../src/models/routingConfig'
 import SaleModel from '../src/models/sale'
 import UserModel from '../src/models/user'
+import VehicleModel from '../src/models/vehicle'
 import * as routeMatrixProvider from '../src/services/routeMatrixProvider'
 import { generateToken } from '../src/utils/jwt.handle'
 
@@ -30,6 +31,7 @@ describe('Route plan preview performance', () => {
   let authorizedToken: string
   let userId: Types.ObjectId
   let zoneId: Types.ObjectId
+  let vehicleId: Types.ObjectId
   let saleIds: Types.ObjectId[]
 
   const deterministicMatrix = (origins: Array<{ id: string }>): { segments: Array<{ fromId: string, toId: string, distanceMeters: number, durationSeconds: number }> } => ({
@@ -63,6 +65,7 @@ describe('Route plan preview performance', () => {
       ClientModel.deleteMany({}),
       DeliveryZoneModel.deleteMany({}),
       RoutingConfigModel.deleteMany({}),
+      VehicleModel.deleteMany({}),
       UserModel.deleteMany({}),
       RoleModel.deleteMany({})
     ])
@@ -74,6 +77,8 @@ describe('Route plan preview performance', () => {
 
     const zone = await DeliveryZoneModel.create({ code: 'NORTE', normalizedName: 'norte', name: 'Norte', active: true })
     zoneId = zone._id
+    const vehicle = await VehicleModel.create({ code: 'TEST-ROUTE-PERFORMANCE', fuelConsumptionLitersPer100Km: 8.5, active: true })
+    vehicleId = vehicle._id
     await RoutingConfigModel.create({
       key: 'deposito_1',
       enabled: true,
@@ -113,7 +118,7 @@ describe('Route plan preview performance', () => {
     sinon.stub(routeMatrixProvider, 'computeMatrix').callsFake(async ({ origins }) => deterministicMatrix(origins))
     sinon.stub(routeMatrixProvider, 'computeRoute').resolves({ encodedPolyline: 'encoded-route', distanceMeters: 18000, durationSeconds: 1200 })
 
-    const body = { serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String) }
+    const body = { serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String), driverId: String(userId), vehicleId: String(vehicleId) }
 
     const execute = async (): Promise<request.Response> => await new Promise((resolve, reject) => {
       void request(app)

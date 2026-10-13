@@ -60,10 +60,12 @@ export interface BackfillResult {
 }
 
 declare const db: BackfillDatabase
-declare const ObjectId: { new (value: string): unknown }
+type ObjectIdConstructor = new (value: string) => unknown
 
-const isOperationalStatus = (value: string | undefined): value is LegacyOperationalStatus =>
-  value !== undefined && (OPERATIONAL_STATUSES as readonly string[]).includes(value)
+declare const ObjectId: ObjectIdConstructor
+
+const isSaleDeliveryStatus = (value: string | undefined): value is 'PENDING' | 'DELIVERED' =>
+  value === 'PENDING' || value === 'DELIVERED'
 
 const toDeliveryVersion = (sale: LegacySale): number => {
   if (sale.updatedAt instanceof Date) return sale.updatedAt.getTime()
@@ -77,9 +79,9 @@ export const resolveLegacyOperationalStatus = (snapshot: LegacySnapshot, sales: 
   const statuses = saleIds.map((saleId) => saleById.get(saleId)?.delivery?.status)
 
   // Missing sales or delivery facts are not evidence that a route completed.
-  if (saleIds.length === 0 || statuses.some((status) => !isOperationalStatus(status))) return 'PENDING'
-  if (statuses.every((status) => status === 'COMPLETED')) return 'COMPLETED'
-  if (statuses.some((status) => status === 'COMPLETED')) return 'IN_PROGRESS'
+  if (saleIds.length === 0 || statuses.some((status) => !isSaleDeliveryStatus(status))) return 'PENDING'
+  if (statuses.every((status) => status === 'DELIVERED')) return 'COMPLETED'
+  if (statuses.some((status) => status === 'DELIVERED')) return 'IN_PROGRESS'
   return 'PENDING'
 }
 
