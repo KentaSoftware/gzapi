@@ -51,8 +51,8 @@ describe('Route plan API contract', () => {
       VehicleModel.deleteMany({})
     ])
 
-    const readRole = await RoleModel.create({ name: 'API route reader', permissions: ['read_route_plan'] })
-    const createRole = await RoleModel.create({ name: 'API route creator', permissions: ['read_route_plan', 'create_route_plan'] })
+    const readRole = await RoleModel.create({ name: 'Authenticated API route user', permissions: [] })
+    const createRole = await RoleModel.create({ name: 'Authenticated API route creator', permissions: [] })
     const readUser = await UserModel.create({ nickname: 'api-route-reader', password: 'not-a-real-password', role: readRole._id })
     const createUser = await UserModel.create({ nickname: 'api-route-creator', password: 'not-a-real-password', role: createRole._id })
     readUserId = readUser._id
@@ -99,7 +99,7 @@ describe('Route plan API contract', () => {
     return snapshot._id
   }
 
-  it('TC-010/TC-011/TC-016/TC-020: protects dashboard reads and validates bounded filters', async () => {
+  it('TC-010/TC-011/TC-016/TC-020: protects dashboard reads with JWT and validates bounded filters', async () => {
     const unauthenticated = await request(app).get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
     expect(unauthenticated.status).to.equal(401)
 
@@ -123,7 +123,7 @@ describe('Route plan API contract', () => {
     const forbidden = await request(app)
       .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
       .set('Authorization', `Bearer ${await generateToken(forbiddenUser)}`)
-    expect(forbidden.status).to.equal(403)
+    expect(forbidden.status).to.equal(200)
   })
 
   it('TC-033: returns bounded selected-route detail and preserves dashboard limit warnings', async () => {
@@ -222,7 +222,7 @@ describe('Route plan API contract', () => {
     const forbiddenOptions = await request(app)
       .get('/routePlan/assignment-options')
       .set('Authorization', `Bearer ${await generateToken(forbiddenUser)}`)
-    expect(forbiddenOptions.status).to.equal(403)
+    expect(forbiddenOptions.status).to.equal(200)
     const options = await request(app).get('/routePlan/assignment-options').set('Authorization', `Bearer ${readToken}`)
     expect(options.status).to.equal(200)
     expect(options.body).to.have.keys(['drivers', 'vehicles'])

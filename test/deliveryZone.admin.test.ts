@@ -34,7 +34,7 @@ describe('Delivery zone administration', () => {
       RoleModel.deleteMany({})
     ])
 
-    const readRole = await RoleModel.create({ name: 'Zone reader', permissions: ['read_route_plan'] })
+    const readRole = await RoleModel.create({ name: 'Authenticated route-flow user', permissions: [] })
     const manageRole = await RoleModel.create({ name: 'Zone manager', permissions: ['manage_delivery_zone', 'read_route_plan'] })
     const unrelatedRole = await RoleModel.create({ name: 'Sales reader', permissions: ['read_sale'] })
     const readUser = await UserModel.create({ nickname: 'zone-reader', password: 'not-a-real-password', role: readRole._id })
@@ -65,7 +65,7 @@ describe('Delivery zone administration', () => {
     const forbiddenUpdate = await request(app).patch(`/deliveryZone/${new Types.ObjectId().toString()}`).set('Authorization', `Bearer ${readToken}`).send({ active: false })
 
     expect(unauthList.status).to.equal(401)
-    expect(forbiddenList.status).to.equal(403)
+    expect(forbiddenList.status).to.equal(200)
     expect(unauthCreate.status).to.equal(401)
     expect(forbiddenCreate.status).to.equal(403)
     expect(unauthUpdate.status).to.equal(401)
@@ -118,7 +118,7 @@ describe('Delivery zone administration', () => {
     expect(await DeliveryZoneModel.countDocuments({})).to.equal(0)
   })
 
-  it('S-27: lists zones for authorized readers with an optional active filter', async () => {
+  it('S-27: lists zones for authenticated users with an optional active filter', async () => {
     await DeliveryZoneModel.create({ code: 'NORTE', normalizedName: 'norte', name: 'Norte', active: true })
     await DeliveryZoneModel.create({ code: 'SUR', normalizedName: 'sur', name: 'Sur', active: false })
 

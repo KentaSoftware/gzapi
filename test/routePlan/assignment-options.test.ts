@@ -28,13 +28,13 @@ describe('Route assignment options API', () => {
 
   beforeEach(async () => {
     await Promise.all([RoleModel.deleteMany({}), UserModel.deleteMany({}), VehicleModel.deleteMany({})])
-    const role = await RoleModel.create({ name: 'Assignment options reader', permissions: ['read_route_plan'] })
+    const role = await RoleModel.create({ name: 'Authenticated route user', permissions: [] })
     const reader = await UserModel.create({ nickname: 'assignment-options-reader', password: 'not-a-real-password', role: role._id, isActive: true })
     readerId = reader._id
     token = await generateToken(reader)
   })
 
-  it('S-06: returns assignment options behind authentication and read_route_plan', async () => {
+  it('S-06: returns assignment options behind authentication without route permissions', async () => {
     const unauthenticated = await request(app).get('/routePlan/assignment-options')
     expect(unauthenticated.status).to.equal(401)
 

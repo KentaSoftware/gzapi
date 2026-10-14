@@ -35,8 +35,8 @@ describe('Client geocoding', () => {
     await RoleModel.deleteMany({})
 
     const authorizedRole = await RoleModel.create({
-      name: 'Location confirmer',
-      permissions: ['confirm_client_location']
+      name: 'Authenticated route-flow user',
+      permissions: []
     })
     const unauthorizedRole = await RoleModel.create({
       name: 'Client editor',
@@ -85,18 +85,27 @@ describe('Client geocoding', () => {
     expect(stored?.geocoding).to.equal(undefined)
   })
 
-  it('S-12/TC-017/TC-020: denies geocoding to a user with update_client but without confirm_client_location', async () => {
+  it('S-12/TC-017/TC-020: allows geocoding to an authenticated user without route permissions', async () => {
     const client = await ClientModel.create({ nombreCompleto: 'Protected client', address: 'Original address' })
-    const geocode = sinon.stub(geocodingProvider, 'geocode')
+    const geocode = sinon.stub(geocodingProvider, 'geocode').resolves([])
+
+    const unauthenticated = await request(app)
+      .post(`/client/${String(client._id)}/geocode`)
+      .send({ address: 'Search address' })
+    expect(unauthenticated.status).to.equal(401)
 
     const response = await request(app)
       .post(`/client/${String(client._id)}/geocode`)
       .set('Authorization', `Bearer ${unauthorizedToken}`)
       .send({ address: 'Search address' })
 
-    expect(response.status).to.equal(403)
-    expect(response.body.code).to.equal('PERMISSION_DENIED')
-    expect(geocode.called).to.equal(false)
+    expect(response.status).to.equal(200)
+    expect(geocode.calledOnceWithExactly({ address: 'Search address' })).to.equal(true)
+
+    const protectedCrud = await request(app)
+      .get('/client')
+      .set('Authorization', `Bearer ${unauthorizedToken}`)
+    expect(protectedCrud.status).to.equal(403)
   })
 
   it('S-12/TC-011: reports an unavailable geocoding provider without making a location change', async () => {

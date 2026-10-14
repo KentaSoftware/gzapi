@@ -1,19 +1,26 @@
-import { Router } from 'express'
+import { NextFunction, Request, Response, Router } from 'express'
 import { getCandidateItems, getRouteAssignmentOptions, getRouteConfig, getRoutePlanById, getRoutePlans, getRouteDashboard, patchRouteConfig, patchRoutePlanOperational, previewRoute, saveRoutePlan } from '../controllers/routePlan'
-import { checkPermission } from '../middleware/checkPermission'
 import { checkJwt } from '../middleware/session'
 
 const router = Router()
 
-router.get('/dashboard', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_route_plan')(req, res, next) }, (req, res) => { void getRouteDashboard(req, res) })
-router.get('/candidates', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_route_plan')(req, res, next) }, (req, res) => { void getCandidateItems(req, res) })
-router.get('/assignment-options', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_route_plan')(req, res, next) }, (req, res) => { void getRouteAssignmentOptions(req, res) })
-router.post('/preview', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_route_plan')(req, res, next) }, (req, res) => { void previewRoute(req, res) })
-router.post('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_route_plan')(req, res, next) }, (req, res) => { void saveRoutePlan(req, res) })
-router.get('/', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_route_plan')(req, res, next) }, (req, res) => { void getRoutePlans(req, res) })
-router.get('/config', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('manage_route_config')(req, res, next) }, (req, res) => { void getRouteConfig(req, res) })
-router.patch('/config', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('manage_route_config')(req, res, next) }, (req, res) => { void patchRouteConfig(req, res) })
-router.patch('/:id/operational', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('create_route_plan')(req, res, next) }, (req, res) => { void patchRoutePlanOperational(req, res) })
-router.get('/:id', (req, res, next) => { void checkJwt(req, res, next) }, (req, res, next) => { void checkPermission('read_route_plan')(req, res, next) }, (req, res) => { void getRoutePlanById(req, res) })
+const authenticate = (req: Request, res: Response, next: NextFunction): void => {
+  void checkJwt(req, res, () => {
+    const authenticatedRequest = req as Request & { user?: { id?: unknown } }
+    if (typeof authenticatedRequest.user?.id === 'string') res.locals.userId = authenticatedRequest.user.id
+    next()
+  })
+}
+
+router.get('/dashboard', authenticate, (req, res) => { void getRouteDashboard(req, res) })
+router.get('/candidates', authenticate, (req, res) => { void getCandidateItems(req, res) })
+router.get('/assignment-options', authenticate, (req, res) => { void getRouteAssignmentOptions(req, res) })
+router.post('/preview', authenticate, (req, res) => { void previewRoute(req, res) })
+router.post('/', authenticate, (req, res) => { void saveRoutePlan(req, res) })
+router.get('/', authenticate, (req, res) => { void getRoutePlans(req, res) })
+router.get('/config', authenticate, (req, res) => { void getRouteConfig(req, res) })
+router.patch('/config', authenticate, (req, res) => { void patchRouteConfig(req, res) })
+router.patch('/:id/operational', authenticate, (req, res) => { void patchRoutePlanOperational(req, res) })
+router.get('/:id', authenticate, (req, res) => { void getRoutePlanById(req, res) })
 
 export { router }

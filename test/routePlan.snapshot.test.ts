@@ -102,7 +102,7 @@ describe('Route plan snapshots', () => {
     vehicleId = vehicle._id
   })
 
-  it('S-25/TC-017: requires authentication and the matching permissions for snapshot save and reads', async () => {
+  it('S-25/TC-017: requires authentication for snapshot save and reads', async () => {
     const matrix = sinon.stub(routeMatrixProvider, 'computeMatrix')
     const finalRoute = sinon.stub(routeMatrixProvider, 'computeRoute')
     const unauthenticatedSave = await request(app).post('/routePlan').send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: [String(new Types.ObjectId())] })
@@ -111,9 +111,10 @@ describe('Route plan snapshots', () => {
     const forbiddenRead = await request(app).get('/routePlan').set('Authorization', `Bearer ${unauthorizedToken}`)
 
     expect(unauthenticatedSave.status).to.equal(401)
-    expect(forbiddenSave.status).to.equal(403)
+    expect(forbiddenSave.status).to.equal(422)
+    expect(forbiddenSave.body.code).to.equal('ROUTE_ASSIGNMENT_REQUIRED')
     expect(unauthenticatedRead.status).to.equal(401)
-    expect(forbiddenRead.status).to.equal(403)
+    expect(forbiddenRead.status).to.equal(200)
     expect(matrix.called).to.equal(false)
     expect(finalRoute.called).to.equal(false)
     expect(await RoutePlanModel.countDocuments({})).to.equal(0)

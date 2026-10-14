@@ -65,13 +65,13 @@ describe('Route plan candidate query', () => {
     expect(response.body.code).to.equal('AUTHENTICATION_INVALID')
   })
 
-  it('S-29/TC-017/TC-020: rejects a candidate query without read_route_plan permission', async () => {
+  it('S-29/TC-017/TC-020: allows an authenticated candidate query without route permissions', async () => {
     const response = await request(app)
       .get(`/routePlan/candidates?serviceDate=${SERVICE_DATE}&deliveryZoneId=507f1f77bcf86cd799439011`)
       .set('Authorization', `Bearer ${unauthorizedToken}`)
 
-    expect(response.status).to.equal(403)
-    expect(response.body.code).to.equal('PERMISSION_DENIED')
+    expect(response.status).to.equal(200)
+    expect(response.body).to.deep.equal({ eligible: [], blocked: [], ruleVersion: 'candidate-eligibility-v1' })
   })
 
   it('S-01: validates required candidate query values', async () => {

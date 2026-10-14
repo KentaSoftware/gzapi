@@ -117,7 +117,7 @@ describe('Route plan preview', () => {
     .set('Authorization', `Bearer ${authorizedToken}`)
     .send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: saleIds.map(String), driverId: String(userId), vehicleId: String(vehicleId) })
 
-  it('S-25/TC-017: requires authentication and create_route_plan before preview work', async () => {
+  it('S-25/TC-017: requires authentication before preview work', async () => {
     const matrix = sinon.stub(routeMatrixProvider, 'computeMatrix')
     const finalRoute = sinon.stub(routeMatrixProvider, 'computeRoute')
     const unauthenticated = await request(app).post('/routePlan/preview').send({ serviceDate: SERVICE_DATE, deliveryZoneId: String(zoneId), saleIds: [String(new Types.ObjectId())] })
@@ -125,8 +125,8 @@ describe('Route plan preview', () => {
 
     expect(unauthenticated.status).to.equal(401)
     expect(unauthenticated.body.code).to.equal('AUTHENTICATION_INVALID')
-    expect(forbidden.status).to.equal(403)
-    expect(forbidden.body.code).to.equal('PERMISSION_DENIED')
+    expect(forbidden.status).to.equal(422)
+    expect(forbidden.body.code).to.equal('ROUTE_ASSIGNMENT_REQUIRED')
     expect(matrix.called).to.equal(false)
     expect(finalRoute.called).to.equal(false)
     expect(await RoutePlanModel.countDocuments({})).to.equal(0)
@@ -271,7 +271,7 @@ describe('Route plan preview', () => {
     expect(await RoutePlanModel.countDocuments({})).to.equal(0)
   })
 
-  it('S-26: protects routing configuration reads and updates with manage_route_config', async () => {
+  it('S-26: requires authentication for routing configuration reads and updates', async () => {
     const payload = { depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 }, routeMode: 'google-routes' }
     const unauthGet = await request(app).get('/routePlan/config')
     const forbiddenGet = await request(app).get('/routePlan/config').set('Authorization', `Bearer ${authorizedToken}`)
@@ -280,12 +280,11 @@ describe('Route plan preview', () => {
 
     expect(unauthGet.status).to.equal(401)
     expect(unauthGet.body.code).to.equal('AUTHENTICATION_INVALID')
-    expect(forbiddenGet.status).to.equal(403)
-    expect(forbiddenGet.body.code).to.equal('PERMISSION_DENIED')
+    expect(forbiddenGet.status).to.equal(404)
+    expect(forbiddenGet.body.code).to.equal('INVALID_CONFIGURATION')
     expect(unauthPatch.status).to.equal(401)
     expect(unauthPatch.body.code).to.equal('AUTHENTICATION_INVALID')
-    expect(forbiddenPatch.status).to.equal(403)
-    expect(forbiddenPatch.body.code).to.equal('PERMISSION_DENIED')
+    expect(forbiddenPatch.status).to.equal(200)
   })
 
   it('S-26: configures deposito_1, bumps the revision and records the authenticated actor', async () => {

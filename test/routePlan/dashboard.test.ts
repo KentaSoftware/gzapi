@@ -41,7 +41,7 @@ describe('Route dashboard aggregation', () => {
       SaleModel.deleteMany({}),
       UserModel.deleteMany({})
     ])
-    const role = await RoleModel.create({ name: 'Route reader', permissions: ['read_route_plan'] })
+    const role = await RoleModel.create({ name: 'Authenticated route user', permissions: [] })
     const user = await UserModel.create({ nickname: 'route-reader', password: 'not-a-real-password', role: role._id })
     userId = user._id
     token = await generateToken(user)
@@ -49,7 +49,7 @@ describe('Route dashboard aggregation', () => {
     zoneId = zone._id
   })
 
-  it('S-02: requires authentication and read_route_plan for the dashboard', async () => {
+  it('S-02: requires authentication but not route permissions for the dashboard', async () => {
     const unauthenticated = await request(app).get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
     expect(unauthenticated.status).to.equal(401)
 
