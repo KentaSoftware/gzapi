@@ -18,11 +18,12 @@ import RoutePlanModel from '../models/routePlan'
 import RoutePlanOperationalModel from '../models/routePlanOperational'
 import SaleModel from '../models/sale'
 import ClientModel from '../models/client'
-import { getCandidates } from './routePlan'
+import { getCandidates, getGlobalCandidates } from './routePlan'
 
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const MAX_DASHBOARD_SNAPSHOTS = 1000
 const MAX_DASHBOARD_CANDIDATES = 1000
+const MAX_DASHBOARD_MAP_LOCATIONS = 1000
 const MAX_CONCURRENT_DASHBOARD_READS = 100
 const MAX_DASHBOARD_ROUTE_STOPS = 50
 const MAX_DASHBOARD_ROUTE_SALE_REFERENCES = 1000
@@ -197,6 +198,38 @@ const getMapLocations = async (zoneId: unknown, serviceDate: string, candidates:
       const clientId = String(client._id)
       const status = eligibleClientIds.has(clientId) || (pendingClientIds.has(clientId) && !blockedClientIds.has(clientId))
         ? ROUTE_MAP_LOCATION_STATUS.ORDER
+        : blockedClientIds.has(clientId) ? ROUTE_MAP_LOCATION_STATUS.EXCLUDED : ROUTE_MAP_LOCATION_STATUS.NO_ORDER
+      return {
+        clientId,
+        displayName: client.nombreCompleto,
+        ...(client.address === undefined || client.address.trim() === '' ? {} : { addressSummary: client.address }),
+        latitude: client.lat as number,
+        longitude: client.lng as number,
+        status
+      }
+    })
+}
+
+interface GlobalMapLocationsRead {
+  locations: RouteMapLocation[]
+  truncated: boolean
+}
+
+const getGlobalMapLocations = async (candidates: CandidateResult): Promise<GlobalMapLocationsRead> => {
+  const clientsRead = await ClientModel.find({ isActive: true }).sort({ _id: 1 }).limit(MAX_DASHBOARD_MAP_LOCATIONS + 1).lean()
+  const truncated = clientsRead.length > MAX_DASHBOARD_MAP_LOCATIONS
+  const clients = truncated ? clientsRead.slice(0, MAX_DASHBOARD_MAP_LOCATIONS) : clientsRead
+  const sales = await SaleModel.find({ 'delivery.status': 'PENDING' }, { _id: 1, idCliente: 1 }).sort({ _id: 1 }).limit(MAX_DASHBOARD_CANDIDATES).lean()
+  const pendingClientIds = new Set(sales.map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente)).filter((id): id is string => id !== undefined))
+  const eligibleClientIds = new Set(candidates.eligible.map((candidate) => candidate.clientId).filter((id): id is string => id !== undefined))
+  const blockedClientIds = new Set(candidates.blocked.map((candidate) => candidate.clientId).filter((id): id is string => id !== undefined))
+
+  const locations = clients
+    .filter((client) => Number.isFinite(client.lat) && Number.isFinite(client.lng))
+    .map((client): RouteMapLocation => {
+      const clientId = String(client._id)
+      const status = eligibleClientIds.has(clientId) || (pendingClientIds.has(clientId) && !blockedClientIds.has(clientId))
+        ? ROUTE_MAP_LOCATION_STATUS.ORDER
         : blockedClientIds.has(clientId)
           ? ROUTE_MAP_LOCATION_STATUS.EXCLUDED
           : ROUTE_MAP_LOCATION_STATUS.NO_ORDER
@@ -209,15 +242,46 @@ const getMapLocations = async (zoneId: unknown, serviceDate: string, candidates:
         status
       }
     })
+
+  return { locations, truncated }
 }
+
+const isScopedDashboardQuery = (input: RouteDashboardQuery): input is Extract<RouteDashboardQuery, { serviceDate: string, zoneCode: string }> => input.serviceDate !== undefined && input.zoneCode !== undefined
 
 const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => {
   const startedAt = Date.now()
   try {
-    const { start, end } = serviceDateRange(input.serviceDate)
-    const zone = await DeliveryZoneModel.findOne({ code: input.zoneCode, active: true }).lean()
     const emptyCandidates: CandidateResult = { eligible: [], blocked: [], ruleVersion: 'candidate-eligibility-v1' }
-    if (zone === null) {
+    const candidateContext: DashboardRequestContext = { maxResults: MAX_DASHBOARD_CANDIDATES }
+    let candidates: CandidateResult
+    let mapLocations: RouteMapLocation[]
+    let mapLocationsTruncated = false
+    let snapshotRead: DashboardSnapshotRead[]
+    let zoneNotFound = false
+
+    if (isScopedDashboardQuery(input)) {
+      const { start, end } = serviceDateRange(input.serviceDate)
+      const zone = await DeliveryZoneModel.findOne({ code: input.zoneCode, active: true }).lean()
+      zoneNotFound = zone === null
+      candidates = zone === null ? emptyCandidates : await getCandidates({ serviceDate: input.serviceDate, deliveryZoneId: String(zone._id) }, candidateContext)
+      mapLocations = zone === null ? [] : await getMapLocations(zone._id, input.serviceDate, candidates)
+      if (zone === null) {
+        snapshotRead = []
+      } else {
+        snapshotRead = await RoutePlanModel.find({
+          planningDate: { $gte: start, $lt: end },
+          'zoneSnapshot.code': zone.code
+        }).sort({ planningDate: 1, _id: 1 }).limit(MAX_DASHBOARD_SNAPSHOTS + 1).lean()
+      }
+    } else {
+      candidates = await getGlobalCandidates(candidateContext)
+      const mapLocationsRead = await getGlobalMapLocations(candidates)
+      mapLocations = mapLocationsRead.locations
+      mapLocationsTruncated = mapLocationsRead.truncated
+      snapshotRead = await RoutePlanModel.find({}).sort({ planningDate: 1, _id: 1 }).limit(MAX_DASHBOARD_SNAPSHOTS + 1).lean()
+    }
+
+    if (zoneNotFound) {
       const result = {
         filters: input,
         kpis: { activeRoutes: 0, pendingOrders: 0, totalDistanceMeters: null, estimatedFuelLiters: null },
@@ -230,13 +294,6 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
       return result
     }
 
-    const candidateContext: DashboardRequestContext = { maxResults: MAX_DASHBOARD_CANDIDATES }
-    const candidates = await getCandidates({ serviceDate: input.serviceDate, deliveryZoneId: String(zone._id) }, candidateContext)
-    const mapLocations = await getMapLocations(zone._id, input.serviceDate, candidates)
-    const snapshotRead = await RoutePlanModel.find({
-      planningDate: { $gte: start, $lt: end },
-      'zoneSnapshot.code': zone.code
-    }).sort({ planningDate: 1, _id: 1 }).limit(MAX_DASHBOARD_SNAPSHOTS + 1).lean()
     const snapshotsTruncated = snapshotRead.length > MAX_DASHBOARD_SNAPSHOTS
     const snapshots = snapshotsTruncated ? snapshotRead.slice(0, MAX_DASHBOARD_SNAPSHOTS) : snapshotRead
     const enrichedCandidates = enrichCandidatesWithRouteDistances(candidates, snapshots)
@@ -262,6 +319,7 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
       ...(routes.some((route) => oversizedRouteIds.has(route.id)) ? ['DASHBOARD_ROUTE_DETAIL_LIMIT_REACHED'] : []),
       ...(snapshotsTruncated ? ['DASHBOARD_SNAPSHOT_LIMIT_REACHED'] : []),
       ...(candidateContext.truncated === true ? ['DASHBOARD_CANDIDATE_LIMIT_REACHED'] : []),
+      ...(mapLocationsTruncated ? ['DASHBOARD_MAP_LOCATION_LIMIT_REACHED'] : []),
       ...(routes.length === 0 && enrichedCandidates.eligible.length === 0 && enrichedCandidates.blocked.length === 0 ? ['NO_DASHBOARD_DATA'] : [])
     ])]
 
@@ -290,4 +348,4 @@ const dashboardReadLimiter = createConcurrencyLimiter(MAX_CONCURRENT_DASHBOARD_R
 
 const getDashboard = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => await dashboardReadLimiter.run(async () => await getDashboardRead(input, context))
 
-export { MAX_CONCURRENT_DASHBOARD_READS, MAX_DASHBOARD_CANDIDATES, MAX_DASHBOARD_ROUTE_SALE_REFERENCES, MAX_DASHBOARD_ROUTE_STOPS, MAX_DASHBOARD_SNAPSHOTS, createConcurrencyLimiter, getDashboard }
+export { MAX_CONCURRENT_DASHBOARD_READS, MAX_DASHBOARD_CANDIDATES, MAX_DASHBOARD_MAP_LOCATIONS, MAX_DASHBOARD_ROUTE_SALE_REFERENCES, MAX_DASHBOARD_ROUTE_STOPS, MAX_DASHBOARD_SNAPSHOTS, createConcurrencyLimiter, getDashboard }

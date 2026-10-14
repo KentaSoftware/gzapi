@@ -57,6 +57,57 @@ describe('Route dashboard aggregation', () => {
       .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
       .set('Authorization', `Bearer ${token}`)
     expect(response.status).to.equal(200)
+
+    const globalUnauthenticated = await request(app).get('/routePlan/dashboard')
+    expect(globalUnauthenticated.status).to.equal(401)
+    const globalResponse = await request(app)
+      .get('/routePlan/dashboard')
+      .set('Authorization', `Bearer ${token}`)
+    expect(globalResponse.status).to.equal(200)
+  })
+
+  it('S-26: reads routes and pending candidates globally across dates and zones', async () => {
+    const secondZone = await DeliveryZoneModel.create({ code: 'SUR', normalizedName: 'sur', name: 'Sur', active: true })
+    const client = await ClientModel.create({
+      nombreCompleto: 'Global client',
+      address: 'Global address',
+      lat: -34.63,
+      lng: -58.43,
+      isActive: true,
+      deliveryZoneId: secondZone._id,
+      geocoding: { status: 'CONFIRMED', source: 'GEOCODED', validatedAt: new Date(), validatedBy: userId }
+    })
+    const sale = await SaleModel.create({ estado: 'CREATED', total: 100, user: userId, cliente: 'Global client', idCliente: client._id, delivery: { status: 'PENDING', serviceDate: new Date('2026-10-13T03:00:00.000Z') } })
+    await RoutePlanModel.create([
+      { snapshotVersion: 1, planningDate: new Date('2026-10-11T03:00:00.000Z'), zoneSnapshot: { code: 'NORTE', normalizedName: 'norte', name: 'Norte' }, selectedSaleIds: ['old-sale'], depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 }, stops: [{ clientId: 'old-client', saleIds: ['old-sale'], sequence: 1, latitude: -34.61, longitude: -58.41 }], segments: [], metrics: { distanceMeters: 100, durationSeconds: 10, stopCount: 1 }, algorithm: { name: 'heuristic', version: '1', provider: 'internal' }, routingConfigRevision: 1, ruleVersion: 'candidate-eligibility-v1', encodedPolyline: 'old-route', warnings: [], audit: { createdBy: String(userId), createdAt: new Date() } },
+      { snapshotVersion: 1, planningDate: new Date('2026-10-13T03:00:00.000Z'), zoneSnapshot: { code: 'SUR', normalizedName: 'sur', name: 'Sur' }, selectedSaleIds: [String(sale._id)], depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 }, stops: [{ clientId: String(client._id), saleIds: [String(sale._id)], sequence: 1, latitude: -34.63, longitude: -58.43 }], segments: [], metrics: { distanceMeters: 200, durationSeconds: 20, stopCount: 1 }, algorithm: { name: 'heuristic', version: '1', provider: 'internal' }, routingConfigRevision: 1, ruleVersion: 'candidate-eligibility-v1', encodedPolyline: 'global-route', warnings: [], audit: { createdBy: String(userId), createdAt: new Date() } }
+    ])
+
+    const response = await request(app).get('/routePlan/dashboard').set('Authorization', `Bearer ${token}`)
+    expect(response.status).to.equal(200)
+    expect(response.body.routes.map((route: { zoneCode: string }) => route.zoneCode)).to.deep.equal(['NORTE', 'SUR'])
+    expect(response.body.candidates.eligible).to.have.length(1)
+    expect(response.body.candidates.eligible[0].saleId).to.equal(String(sale._id))
+    expect(response.body.mapLocations).to.deep.include({ clientId: String(client._id), status: 'ORDER', displayName: 'Global client', addressSummary: 'Global address', latitude: -34.63, longitude: -58.43 })
+  })
+
+  it('NFR-011: bounds global map locations and reports truncation', async () => {
+    await ClientModel.insertMany(Array.from({ length: 1001 }, (_value, index) => ({
+      nombreCompleto: `Global client ${index}`,
+      address: `Global address ${index}`,
+      lat: -34.6 - index / 100000,
+      lng: -58.4 - index / 100000,
+      isActive: true,
+      deliveryZoneId: zoneId
+    })))
+
+    const response = await request(app)
+      .get('/routePlan/dashboard')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(response.status).to.equal(200)
+    expect(response.body.mapLocations).to.have.length(1000)
+    expect(response.body.warnings).to.include('DASHBOARD_MAP_LOCATION_LIMIT_REACHED')
   })
 
   it('S-03: returns stable KPIs and route cards from bounded snapshot reads', async () => {
@@ -103,11 +154,19 @@ describe('Route dashboard aggregation', () => {
     const invalidStatus = await request(app)
       .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE&status=UNKNOWN`)
       .set('Authorization', `Bearer ${token}`)
+    const partialDate = await request(app)
+      .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}`)
+      .set('Authorization', `Bearer ${token}`)
+    const partialZone = await request(app)
+      .get('/routePlan/dashboard?zoneCode=NORTE')
+      .set('Authorization', `Bearer ${token}`)
 
     expect(invalidDate.status).to.equal(400)
     expect(invalidDate.body.code).to.equal('INVALID_ROUTE_INPUT')
     expect(invalidStatus.status).to.equal(400)
     expect(invalidStatus.body.code).to.equal('INVALID_ROUTE_INPUT')
+    expect(partialDate.status).to.equal(400)
+    expect(partialZone.status).to.equal(400)
   })
 
   it('S-22: keeps eligible and blocked candidates visible with stable causes', async () => {

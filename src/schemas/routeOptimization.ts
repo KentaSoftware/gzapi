@@ -19,10 +19,14 @@ const candidateQuerySchema = z.object({
 }).strict()
 
 const dashboardQuerySchema = z.object({
-  serviceDate: z.string().refine(isCivilDate, 'serviceDate must be a civil date'),
-  zoneCode: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'zoneCode is invalid'),
+  serviceDate: z.string().refine(isCivilDate, 'serviceDate must be a civil date').optional(),
+  zoneCode: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'zoneCode is invalid').optional(),
   status: z.enum(Object.values(ROUTE_OPERATIONAL_STATUS) as [string, ...string[]]).optional()
-}).strict()
+}).strict().superRefine((input, context) => {
+  if ((input.serviceDate === undefined) !== (input.zoneCode === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'serviceDate and zoneCode must be provided together' })
+  }
+})
 
 const routePreviewRequestSchema = candidateQuerySchema.extend({
   saleIds: z.array(z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'saleIds must contain ObjectIds')).min(1),

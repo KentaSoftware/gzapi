@@ -304,11 +304,17 @@ export interface CandidateResult {
   ruleVersion: string
 }
 
-export interface RouteDashboardQuery {
+export interface RouteDashboardGlobalQuery {
+  status?: RouteOperationalStatus
+}
+
+export interface RouteDashboardScopedQuery {
   serviceDate: string
   zoneCode: string
   status?: RouteOperationalStatus
 }
+
+export type RouteDashboardQuery = RouteDashboardGlobalQuery | RouteDashboardScopedQuery
 
 export interface RouteDashboardKpis {
   activeRoutes: number

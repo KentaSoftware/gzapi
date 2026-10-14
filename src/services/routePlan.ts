@@ -124,6 +124,34 @@ interface CandidateQueryResult {
   truncated: boolean
 }
 
+const queryGlobalCandidates = async (maxResults?: number): Promise<CandidateQueryResult> => {
+  const salesQuery = SaleModel.find({ 'delivery.status': 'PENDING' }).sort({ _id: 1 })
+  const sales = await (maxResults === undefined ? salesQuery : salesQuery.limit(maxResults + 1)).lean()
+  const boundedSales = maxResults === undefined || sales.length <= maxResults ? sales : sales.slice(0, maxResults)
+  const clientIds = boundedSales
+    .map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente))
+    .filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id))
+    .map((id) => new Types.ObjectId(id))
+  const clients = await ClientModel.find({ _id: { $in: clientIds } }).lean()
+  const clientsById = new Map(clients.map((client) => [String(client._id), client]))
+  const eligible: CandidateEntry[] = []
+  const blocked: BlockedCandidateEntry[] = []
+
+  for (const sale of boundedSales) {
+    const client = sale.idCliente === undefined ? undefined : clientsById.get(String(sale.idCliente))
+    if (client === undefined) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.INVALID_CLIENT_REFERENCE))
+    else if (client.isActive !== true) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_INACTIVE, client))
+    else if (client.address === undefined || client.address.trim() === '' || client.lat === undefined || client.lng === undefined) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client))
+    else if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_UNCONFIRMED, client))
+    else eligible.push(candidateEntry(sale._id, client))
+  }
+
+  return {
+    result: { eligible, blocked, ruleVersion: CANDIDATE_RULE_VERSION },
+    truncated: maxResults !== undefined && sales.length > maxResults
+  }
+}
+
 const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery, maxResults?: number): Promise<CandidateQueryResult> => {
   const { start, end } = serviceDateRange(serviceDate)
   const salesQuery = SaleModel.find({
@@ -172,6 +200,19 @@ const getCandidates = async (input: CandidateQuery, context: RoutePlanRequestCon
   const start = Date.now()
   try {
     const queryResult = await queryCandidates(input, context.maxResults)
+    context.truncated = queryResult.truncated
+    logRoutePlanEvent({ event: 'route_plan_candidates_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: queryResult.result.ruleVersion, resultCode: 'SUCCESS' })
+    return queryResult.result
+  } catch (error) {
+    logRoutePlanEvent({ event: 'route_plan_candidates_read_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: CANDIDATE_RULE_VERSION, resultCode: 'INTERNAL_ERROR' })
+    throw error
+  }
+}
+
+const getGlobalCandidates = async (context: RoutePlanRequestContext = {}): Promise<CandidateResult> => {
+  const start = Date.now()
+  try {
+    const queryResult = await queryGlobalCandidates(context.maxResults)
     context.truncated = queryResult.truncated
     logRoutePlanEvent({ event: 'route_plan_candidates_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: queryResult.result.ruleVersion, resultCode: 'SUCCESS' })
     return queryResult.result
@@ -594,4 +635,4 @@ const getSnapshot = async (id: string, context: RoutePlanRequestContext = {}): P
   }
 }
 
-export { CANDIDATE_RULE_VERSION, MAX_CANDIDATE_READS, MAX_SNAPSHOT_LIST_READS, getCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }
+export { CANDIDATE_RULE_VERSION, MAX_CANDIDATE_READS, MAX_SNAPSHOT_LIST_READS, getCandidates, getGlobalCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }
