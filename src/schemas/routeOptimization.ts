@@ -219,7 +219,13 @@ const selectableVehicleSchema = z.object({
 const routeSnapshotSaleReferenceSchema = z.object({
   saleId: z.string().trim().min(1),
   versionAtSave: z.number().int().nonnegative().nullable(),
-  statusAtSave: z.enum([SALE_DELIVERY_STATUS.PENDING, SALE_DELIVERY_STATUS.DELIVERED]).nullable()
+  statusAtSave: z.enum([SALE_DELIVERY_STATUS.PENDING, SALE_DELIVERY_STATUS.DELIVERED]).nullable(),
+  clientName: z.string().trim().min(1).optional(),
+  address: z.string().trim().min(1).optional(),
+  zoneName: z.string().trim().min(1).optional(),
+  itemCount: z.number().int().nonnegative().optional(),
+  productCount: z.number().int().nonnegative().optional(),
+  unitCount: z.number().finite().nonnegative().optional()
 }).strict()
 
 const routeSnapshotSaleRefSchema = z.object({

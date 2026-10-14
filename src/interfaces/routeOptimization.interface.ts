@@ -211,6 +211,12 @@ export interface RouteSnapshotSaleReference {
   saleId: string
   versionAtSave: number | null
   statusAtSave: SaleDeliveryStatus | null
+  clientName?: string
+  address?: string
+  zoneName?: string
+  itemCount?: number
+  productCount?: number
+  unitCount?: number
 }
 
 export interface RouteSnapshotSaleRef {

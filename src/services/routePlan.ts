@@ -27,6 +27,7 @@ import RoutingConfigModel from '../models/routingConfig'
 import RoutePlanModel from '../models/routePlan'
 import RoutePlanOperationalModel from '../models/routePlanOperational'
 import SaleModel from '../models/sale'
+import ItemSaleModel from '../models/itemSale'
 import { buildClosedRoute, RouteInvariantError } from './routeHeuristic'
 import { computeMatrix, computeRoute, RouteProviderError, type RouteMatrixDiagnostic } from './routeMatrixProvider'
 import { calculateFuelLiters as calculateAssignedFuelLiters, resolveAssignedConsumption } from './routeFuel'
@@ -169,7 +170,6 @@ const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery, 
     .map((id) => new Types.ObjectId(id))
   const clients = await ClientModel.find({ _id: { $in: clientIds } }).lean()
   const clientsById = new Map(clients.map((client) => [String(client._id), client]))
-
   const requestedZoneId = new Types.ObjectId(deliveryZoneId)
   const eligible: CandidateEntry[] = []
   const blocked: BlockedCandidateEntry[] = []
@@ -345,6 +345,19 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
   const clients = await ClientModel.find({ _id: { $in: clientIds } }).lean()
   const clientsById = new Map(clients.map((client) => [String(client._id), client]))
   const stopsByClient = new Map<string, RouteStop>()
+  const itemSales = await ItemSaleModel.find({
+    idVenta: { $in: selectedObjectIds },
+    $or: [{ estado: true }, { estado: { $exists: false } }]
+  }).lean()
+  const itemSummaryBySale = new Map<string, { itemCount: number, productIds: Set<string>, unitCount: number }>()
+  for (const item of itemSales) {
+    const saleId = String(item.idVenta)
+    const summary = itemSummaryBySale.get(saleId) ?? { itemCount: 0, productIds: new Set<string>(), unitCount: 0 }
+    summary.itemCount += 1
+    summary.productIds.add(String(item.idProducto))
+    summary.unitCount += item.cantidad
+    itemSummaryBySale.set(saleId, summary)
+  }
 
   for (const sale of sales) {
     if (sale.delivery?.status !== 'PENDING' || sale.delivery.serviceDate === undefined || sale.delivery.serviceDate < start || sale.delivery.serviceDate >= end || sale.idCliente === undefined) {
@@ -426,7 +439,26 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
       fuelAssumptions: { availability: fuelAvailable ? ROUTE_METRIC_AVAILABILITY.CALCULATED : ROUTE_METRIC_AVAILABILITY.UNAVAILABLE, consumptionLitersPer100Km: consumption, distanceKm, vehicleCode: vehicle?.code ?? null, source: 'assigned-vehicle', calculatedAt },
       scheduleAssumptions: { calculatedAt, timezone, source: 'system-clock' },
       stopEstimates: [],
-      saleReferences: sales.map((sale) => ({ saleId: String(sale._id), versionAtSave: (sale as unknown as { updatedAt?: Date }).updatedAt?.getTime() ?? null, statusAtSave: sale.delivery?.status ?? null })),
+      saleReferences: saleIds.map((saleId) => {
+        const sale = sales.find((candidate) => String(candidate._id) === saleId) as typeof sales[number]
+        const client = sale.idCliente === undefined ? undefined : clientsById.get(String(sale.idCliente))
+        const itemSummary = itemSummaryBySale.get(saleId)
+        const itemFields: { itemCount?: number, productCount?: number, unitCount?: number } = {}
+        if (itemSummary !== undefined) {
+          itemFields.itemCount = itemSummary.itemCount
+          itemFields.productCount = itemSummary.productIds.size
+          itemFields.unitCount = itemSummary.unitCount
+        }
+        return {
+          saleId,
+          versionAtSave: (sale as unknown as { updatedAt?: Date }).updatedAt?.getTime() ?? null,
+          statusAtSave: sale.delivery?.status ?? null,
+          ...(client?.nombreCompleto === undefined ? {} : { clientName: client.nombreCompleto }),
+          ...(client?.address === undefined ? {} : { address: client.address }),
+          zoneName: zone.name,
+          ...itemFields
+        }
+      }),
       warnings: fuelAvailable ? ['TIME_WINDOWS_NOT_CONSIDERED'] : ['TIME_WINDOWS_NOT_CONSIDERED', 'FUEL_UNAVAILABLE'],
       factorsConsidered: ['DISTANCE', 'DURATION', 'FUEL_CONSUMPTION'],
       algorithmVersion: config.algorithm,

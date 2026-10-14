@@ -27,4 +27,16 @@ describe('Route preview dashboard contract', () => {
 
     expect(result.success).to.equal(true)
   })
+
+  it('accepts optional linked-order enrichment without requiring fabricated item data', () => {
+    const result = routePreviewRequestSchema.safeParse({
+      serviceDate: '2026-10-12',
+      deliveryZoneId: '507f1f77bcf86cd799439011',
+      saleIds: ['507f1f77bcf86cd799439012'],
+      driverId: 'driver-1',
+      vehicleId: 'vehicle-1'
+    })
+
+    expect(result.success).to.equal(true)
+  })
 })
