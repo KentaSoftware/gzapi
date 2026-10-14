@@ -60,7 +60,7 @@ const ROUTE_TEST_PERMISSIONS = [
 ]
 
 const FIXTURE_VALIDATED_AT = new Date('2026-01-01T00:00:00.000Z')
-const DEPOT_FIXTURE = { name: 'Deposito de prueba San Miguel de Tucuman', latitude: -27.34774586607769, longitude: -65.58714233837968 }
+const DEPOT_FIXTURE = { name: 'Deposito de prueba San Miguel de Tucuman', address: 'Depósito de prueba, San Miguel de Tucumán, Tucumán', latitude: -27.34774586607769, longitude: -65.58714233837968 }
 const FUEL_COEFFICIENT = 8.5
 const MAX_STOPS = 20
 const TEST_PHONE_BASE = 3815000000

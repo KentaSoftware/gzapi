@@ -70,7 +70,8 @@ const saleDeliverySchema = z.object({
 const routingDepotSchema = z.object({
   name: z.string().trim().min(1).max(200),
   latitude: latitudeSchema,
-  longitude: longitudeSchema
+  longitude: longitudeSchema,
+  address: z.string().trim().min(1).max(500).optional()
 }).strict()
 
 const routingConfigUpdateSchema = z.object({

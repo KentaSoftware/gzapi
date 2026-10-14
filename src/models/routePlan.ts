@@ -35,7 +35,8 @@ const routePlanSchema = new Schema<RoutePlan>(
     depot: {
       name: { type: String, required: true, immutable: true },
       latitude: { type: Number, required: true, immutable: true },
-      longitude: { type: Number, required: true, immutable: true }
+      longitude: { type: Number, required: true, immutable: true },
+      address: { type: String, required: false, trim: true, immutable: true }
     },
     stops: { type: [routePlanStopSchema], required: true, immutable: true },
     segments: { type: [routePlanSegmentSchema], required: true, immutable: true },

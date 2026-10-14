@@ -52,6 +52,7 @@ export interface RoutingDepot {
   name: string
   latitude: number
   longitude: number
+  address?: string
 }
 
 export interface RoutingConfig {
@@ -453,7 +454,7 @@ export interface RoutePreviewRequest extends CandidateQuery {
 
 export interface RoutePreview {
   route: {
-    depot: RouteLocation
+    depot: RoutePreviewDepot
     stops: RouteStop[]
     segments: RouteMatrixSegment[]
     encodedPolyline: string
@@ -476,4 +477,8 @@ export interface RoutePreview {
   algorithmProvider: string
   routingConfigRevision: number
   ruleVersion: string
+}
+
+export interface RoutePreviewDepot extends RouteLocation {
+  address?: string
 }

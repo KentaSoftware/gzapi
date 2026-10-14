@@ -11,6 +11,7 @@ import {
   type CandidateQuery,
   type CandidateResult,
   type RouteLocation,
+  type RoutePreviewDepot,
   type RoutePlan,
   type RoutePlanReadState,
   type RouteAssignmentOptions,
@@ -265,7 +266,12 @@ const updateRoutingConfig = async (input: RoutingConfigUpdateInput, updatedBy: s
     const fields: Record<string, unknown> = {
       enabled: input.enabled ?? true,
       revision,
-      depot: input.depot,
+      depot: {
+        ...input.depot,
+        ...(input.depot.address === undefined && existing?.depot.address !== undefined
+          ? { address: existing.depot.address }
+          : {})
+      },
       provider: input.routeMode,
       algorithm: input.algorithm ?? existing?.algorithm ?? DEFAULT_ROUTE_ALGORITHM,
       updatedBy
@@ -360,7 +366,13 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
     }
   }
 
-  const depot: RouteLocation = { id: 'deposito_1', name: config.depot.name, latitude: config.depot.latitude, longitude: config.depot.longitude }
+  const depot: RoutePreviewDepot = {
+    id: 'deposito_1',
+    name: config.depot.name,
+    latitude: config.depot.latitude,
+    longitude: config.depot.longitude,
+    ...(config.depot.address === undefined ? {} : { address: config.depot.address })
+  }
   const stops = [...stopsByClient.values()]
   if (typeof config.maxStops === 'number' && Number.isFinite(config.maxStops) && stops.length > config.maxStops) {
     throw new RoutePreviewError('ROUTE_TECHNICAL_LIMIT_EXCEEDED', `Route preview exceeds the configured maximum of ${config.maxStops} stops`)
@@ -475,7 +487,8 @@ const saveSnapshot = async (input: RoutePreviewRequest, createdBy: string, conte
       depot: {
         name: result.route.depot.name,
         latitude: result.route.depot.latitude,
-        longitude: result.route.depot.longitude
+        longitude: result.route.depot.longitude,
+        ...(result.route.depot.address === undefined ? {} : { address: result.route.depot.address })
       },
       stops: result.route.stops.map((stop, index) => ({
         clientId: stop.clientId,

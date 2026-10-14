@@ -10,7 +10,8 @@ const routingConfigSchema = new Schema<RoutingConfig>(
     depot: {
       name: { type: String, required: true, trim: true },
       latitude: { type: Number, required: true },
-      longitude: { type: Number, required: true }
+      longitude: { type: Number, required: true },
+      address: { type: String, required: false, trim: true }
     },
     fuelConsumptionLitersPer100Km: { type: Number, min: 0 },
     maxStops: { type: Number, min: 1 },

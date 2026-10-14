@@ -64,7 +64,7 @@ interface DashboardSnapshotRead {
   zoneSnapshot: { code: string }
   selectedSaleIds: string[]
   assignments?: RouteOperationalAssignment
-  depot?: { name: string, latitude: number, longitude: number }
+  depot?: { name: string, latitude: number, longitude: number, address?: string }
   stops: Array<{ clientId: string, saleIds: string[], sequence: number, latitude: number, longitude: number }>
   segments?: Array<{ fromStopSequence: number, toStopSequence: number, distanceMeters: number, durationSeconds: number }>
   metrics: { distanceMeters: number, durationSeconds: number, fuelLiters?: number, availability?: RouteDashboardCard['metricAvailability'] }
