@@ -70,6 +70,11 @@ const SALE_ESTADO_CREATED = 'CREATED'
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const ROUTE_TEST_VEHICLE_CODE = 'TEST-ROUTE-01'
 const ROUTE_TEST_VEHICLE_FUEL = 8.5
+const ROUTE_TEST_VEHICLES = [
+  { key: 'TEST-ROUTE-01', code: ROUTE_TEST_VEHICLE_CODE, fuel: ROUTE_TEST_VEHICLE_FUEL },
+  { key: 'TEST-ROUTE-02', code: 'TEST-ROUTE-02', fuel: 9.2 },
+  { key: 'TEST-ROUTE-03', code: 'TEST-ROUTE-03', fuel: 7.8 }
+] as const
 const ROUTE_ESTIMATE_SPEED_KMH = 28
 const ROUTE_DISTANCE_FACTOR = 1.25
 const ROUTE_STOP_SERVICE_SECONDS = 180
@@ -394,10 +399,10 @@ const upsertRoutingConfig = async (id: Types.ObjectId, updatedBy: Types.ObjectId
   return 'updated'
 }
 
-const upsertRouteTestVehicle = async (id: Types.ObjectId): Promise<FixtureOutcome> => {
+const upsertRouteTestVehicle = async (id: Types.ObjectId, fixture: (typeof ROUTE_TEST_VEHICLES)[number]): Promise<FixtureOutcome> => {
   const payload = {
-    code: ROUTE_TEST_VEHICLE_CODE,
-    fuelConsumptionLitersPer100Km: ROUTE_TEST_VEHICLE_FUEL,
+    code: fixture.code,
+    fuelConsumptionLitersPer100Km: fixture.fuel,
     attributes: { fixture: 'route-plan-test', capacity: 'demo' },
     active: true
   }
@@ -659,8 +664,11 @@ const seed = async (): Promise<SeedResult> => {
     }))
 
     addOutcome(summary.routingConfigs, await upsertRoutingConfig(fixtureObjectId('routing-config:deposito_1'), userId))
-    const vehicleId = fixtureObjectId('vehicle:TEST-ROUTE-01')
-    addOutcome(summary.vehicles, await upsertRouteTestVehicle(vehicleId))
+    const vehicleIds = ROUTE_TEST_VEHICLES.map((fixture) => fixtureObjectId(`vehicle:${fixture.key}`))
+    for (let index = 0; index < ROUTE_TEST_VEHICLES.length; index += 1) {
+      addOutcome(summary.vehicles, await upsertRouteTestVehicle(vehicleIds[index], ROUTE_TEST_VEHICLES[index]))
+    }
+    const vehicleId = vehicleIds[0]
     if (testRouteClients.length !== 8 || testRouteSales.length !== 8) throw new Error('TEST_ROUTE fixture must contain exactly 8 clients and sales')
     await createRouteSnapshots(serviceDateInstant, userId, vehicleId, testRouteClients, testRouteSales, summary.routeSnapshots)
   } finally {
