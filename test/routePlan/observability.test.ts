@@ -22,6 +22,8 @@ describe('Route failure-path observability', () => {
     expect(event).to.include({ operation: 'dashboard.read', outcome: 'ROUTE_ZONE_NOT_FOUND', correlationId: 'dashboard-correlation', actor: 'operator-1' })
     expect(event.latencyMs).to.be.a('number')
     expect(JSON.stringify(event)).to.not.match(/address|payload|secret|token|sales/i)
+    const result = await getDashboard({ serviceDate: '2026-10-05', zoneCode: 'NORTE' })
+    expect(result.mapLocations).to.deep.equal([])
   })
 
   it('TC-021: logs assignment-options success without response arrays', async () => {

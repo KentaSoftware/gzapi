@@ -358,12 +358,30 @@ export interface RouteDashboardCard {
   staleCauses?: RouteSnapshotStalenessCause[]
 }
 
+export const ROUTE_MAP_LOCATION_STATUS = {
+  ORDER: 'ORDER',
+  NO_ORDER: 'NO_ORDER',
+  EXCLUDED: 'EXCLUDED'
+} as const
+
+export type RouteMapLocationStatus = (typeof ROUTE_MAP_LOCATION_STATUS)[keyof typeof ROUTE_MAP_LOCATION_STATUS]
+
+export interface RouteMapLocation {
+  clientId: string
+  displayName: string
+  addressSummary?: string
+  latitude: number
+  longitude: number
+  status: RouteMapLocationStatus
+}
+
 export interface RouteDashboard {
   filters: RouteDashboardQuery
   kpis: RouteDashboardKpis
   routes: RouteDashboardCard[]
   candidates: CandidateResult
   warnings: string[]
+  mapLocations: RouteMapLocation[]
 }
 
 export interface RouteLocation {

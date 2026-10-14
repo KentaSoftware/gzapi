@@ -2,12 +2,14 @@ import { fromZonedTime } from 'date-fns-tz'
 import { Types } from 'mongoose'
 import {
   ROUTE_OPERATIONAL_STATUS,
+  ROUTE_MAP_LOCATION_STATUS,
   type BlockedCandidateEntry,
   type CandidateEntry,
   type CandidateResult,
   type RouteDashboard,
   type RouteDashboardCard,
   type RouteDashboardQuery,
+  type RouteMapLocation,
   type RouteOperationalAssignment,
   type RouteOperationalStatus
 } from '../interfaces/routeOptimization.interface'
@@ -15,6 +17,7 @@ import DeliveryZoneModel from '../models/deliveryZone'
 import RoutePlanModel from '../models/routePlan'
 import RoutePlanOperationalModel from '../models/routePlanOperational'
 import SaleModel from '../models/sale'
+import ClientModel from '../models/client'
 import { getCandidates } from './routePlan'
 
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
@@ -177,6 +180,37 @@ const enrichCandidatesWithRouteDistances = (candidates: CandidateResult, snapsho
   }
 }
 
+const getMapLocations = async (zoneId: unknown, serviceDate: string, candidates: CandidateResult): Promise<RouteMapLocation[]> => {
+  const { start, end } = serviceDateRange(serviceDate)
+  const clients = await ClientModel.find({ isActive: true, deliveryZoneId: zoneId }).lean()
+  const sales = await SaleModel.find(
+    { 'delivery.status': 'PENDING', 'delivery.serviceDate': { $gte: start, $lt: end } },
+    { _id: 1, idCliente: 1 }
+  ).lean()
+  const pendingClientIds = new Set(sales.map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente)).filter((id): id is string => id !== undefined))
+  const eligibleClientIds = new Set(candidates.eligible.map((candidate) => candidate.clientId).filter((id): id is string => id !== undefined))
+  const blockedClientIds = new Set(candidates.blocked.map((candidate) => candidate.clientId).filter((id): id is string => id !== undefined))
+
+  return clients
+    .filter((client) => Number.isFinite(client.lat) && Number.isFinite(client.lng))
+    .map((client): RouteMapLocation => {
+      const clientId = String(client._id)
+      const status = eligibleClientIds.has(clientId) || (pendingClientIds.has(clientId) && !blockedClientIds.has(clientId))
+        ? ROUTE_MAP_LOCATION_STATUS.ORDER
+        : blockedClientIds.has(clientId)
+          ? ROUTE_MAP_LOCATION_STATUS.EXCLUDED
+          : ROUTE_MAP_LOCATION_STATUS.NO_ORDER
+      return {
+        clientId,
+        displayName: client.nombreCompleto,
+        ...(client.address === undefined || client.address.trim() === '' ? {} : { addressSummary: client.address }),
+        latitude: client.lat as number,
+        longitude: client.lng as number,
+        status
+      }
+    })
+}
+
 const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => {
   const startedAt = Date.now()
   try {
@@ -189,7 +223,8 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
         kpis: { activeRoutes: 0, pendingOrders: 0, totalDistanceMeters: null, estimatedFuelLiters: null },
         routes: [],
         candidates: emptyCandidates,
-        warnings: ['DELIVERY_ZONE_NOT_FOUND']
+        warnings: ['DELIVERY_ZONE_NOT_FOUND'],
+        mapLocations: []
       }
       logDashboardEvent('route_dashboard_read', context, startedAt, 'ROUTE_ZONE_NOT_FOUND')
       return result
@@ -197,6 +232,7 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
 
     const candidateContext: DashboardRequestContext = { maxResults: MAX_DASHBOARD_CANDIDATES }
     const candidates = await getCandidates({ serviceDate: input.serviceDate, deliveryZoneId: String(zone._id) }, candidateContext)
+    const mapLocations = await getMapLocations(zone._id, input.serviceDate, candidates)
     const snapshotRead = await RoutePlanModel.find({
       planningDate: { $gte: start, $lt: end },
       'zoneSnapshot.code': zone.code
@@ -239,7 +275,8 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
       },
       routes,
       candidates: enrichedCandidates,
-      warnings
+      warnings,
+      mapLocations
     }
     logDashboardEvent('route_dashboard_read', context, startedAt, 'SUCCESS', routes[0]?.id)
     return result
