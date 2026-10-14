@@ -9,6 +9,7 @@ import {
   type RouteDashboard,
   type RouteDashboardCard,
   type RouteDashboardQuery,
+  type RouteDashboardScopedQuery,
   type RouteMapLocation,
   type RouteOperationalAssignment,
   type RouteOperationalStatus
@@ -246,7 +247,8 @@ const getGlobalMapLocations = async (candidates: CandidateResult): Promise<Globa
   return { locations, truncated }
 }
 
-const isScopedDashboardQuery = (input: RouteDashboardQuery): input is Extract<RouteDashboardQuery, { serviceDate: string, zoneCode: string }> => input.serviceDate !== undefined && input.zoneCode !== undefined
+const isScopedDashboardQuery = (input: RouteDashboardQuery): input is RouteDashboardScopedQuery =>
+  'serviceDate' in input && 'zoneCode' in input && input.serviceDate !== undefined && input.zoneCode !== undefined
 
 const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => {
   const startedAt = Date.now()
