@@ -80,14 +80,17 @@ npm run seed:route-plan:test
 ```
 
 El seed es idempotente y no elimina datos. Crea o actualiza 6 zonas, 34
-clientes, 34 ventas pendientes, un usuario de pruebas y la configuración
-`deposito_1`. No crea snapshots: esos se generan mediante el endpoint de
-guardado de planes.
+clientes, 34 ventas pendientes, un usuario de pruebas, un vehículo de prueba,
+la configuración `deposito_1` y tres snapshots demo para `TEST_ROUTE`, usando
+los ocho clientes con coordenadas explícitas. Los snapshots se distribuyen en
+3 rutas (4/2/2 paradas) y sus métricas de distancia, duración, combustible y
+horarios son estimaciones deterministas locales; no representan datos de
+producción.
 
 Valores opcionales:
 
 ```bash
-ROUTE_PLAN_SERVICE_DATE=2026-10-05 npm run seed:route-plan:test
+ROUTE_PLAN_SERVICE_DATE=2026-10-14 npm run seed:route-plan:test
 ROUTE_PLAN_TEST_PASSWORD=tu-password-local npm run seed:route-plan:test
 ```
 

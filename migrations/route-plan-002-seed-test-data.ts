@@ -13,16 +13,27 @@ import {
 } from '../src/interfaces/client.interface'
 import {
   DEFAULT_ROUTE_ALGORITHM,
+  ROUTE_METRIC_AVAILABILITY,
   ROUTING_CONFIG_KEYS,
-  ROUTE_MODES
+  ROUTE_MODES,
+  type RoutePlan,
+  type RoutePlanSegment,
+  type RoutePlanStop,
+  type RouteSnapshotSaleReference,
+  type RouteStopEstimate,
+  type RouteScheduleAssumptions,
+  type RouteFuelAssumptions,
+  type RoutingDepot
 } from '../src/interfaces/routeOptimization.interface'
 import { SALE_DELIVERY_STATUS } from '../src/interfaces/sale.interface'
 import ClientModel from '../src/models/client'
 import DeliveryZoneModel from '../src/models/deliveryZone'
 import RoleModel from '../src/models/role'
+import RoutePlanModel from '../src/models/routePlan'
 import RoutingConfigModel from '../src/models/routingConfig'
 import SaleModel from '../src/models/sale'
 import UserModel from '../src/models/user'
+import VehicleModel from '../src/models/vehicle'
 import { encrypt } from '../src/utils/bcrypt.handle'
 
 // Standalone, idempotent seed for Route Optimization test data.
@@ -33,7 +44,7 @@ import { encrypt } from '../src/utils/bcrypt.handle'
 const DEFAULT_MONGO_URI = 'mongodb://127.0.0.1:27017/test_route_plan'
 const TARGET_DATABASE = 'test_route_plan'
 const ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
-const DEFAULT_SERVICE_DATE = '2026-10-05'
+const DEFAULT_SERVICE_DATE = '2026-10-14'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const DEFAULT_TEST_PASSWORD = 'route-plan-test-password'
 const FIXTURE_NAMESPACE = 'gzapi-route-plan-test-seed-v1'
@@ -56,6 +67,12 @@ const TEST_PHONE_BASE = 3815000000
 const SALE_TOTAL_BASE = 1000
 const SALE_TOTAL_STEP = 25
 const SALE_ESTADO_CREATED = 'CREATED'
+const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
+const ROUTE_TEST_VEHICLE_CODE = 'TEST-ROUTE-01'
+const ROUTE_TEST_VEHICLE_FUEL = 8.5
+const ROUTE_ESTIMATE_SPEED_KMH = 28
+const ROUTE_DISTANCE_FACTOR = 1.25
+const ROUTE_STOP_SERVICE_SECONDS = 180
 
 type FixtureOutcome = 'inserted' | 'updated'
 
@@ -92,6 +109,8 @@ interface SeedSummary {
   clients: GroupCount
   sales: GroupCount
   routingConfigs: GroupCount
+  vehicles: GroupCount
+  routeSnapshots: GroupCount
 }
 
 interface SeedResult {
@@ -122,6 +141,11 @@ interface SaleFixture {
   clientName: string
   total: number
   serviceDateInstant: Date
+}
+
+interface RoutePoint {
+  latitude: number
+  longitude: number
 }
 
 // Explicit, high-precision client coordinates for the Test-Route zone. These
@@ -221,7 +245,9 @@ const createSummary = (): SeedSummary => ({
   deliveryZones: { inserted: 0, updated: 0 },
   clients: { inserted: 0, updated: 0 },
   sales: { inserted: 0, updated: 0 },
-  routingConfigs: { inserted: 0, updated: 0 }
+  routingConfigs: { inserted: 0, updated: 0 },
+  vehicles: { inserted: 0, updated: 0 },
+  routeSnapshots: { inserted: 0, updated: 0 }
 })
 
 const addOutcome = (group: GroupCount, outcome: FixtureOutcome): void => {
@@ -368,6 +394,169 @@ const upsertRoutingConfig = async (id: Types.ObjectId, updatedBy: Types.ObjectId
   return 'updated'
 }
 
+const upsertRouteTestVehicle = async (id: Types.ObjectId): Promise<FixtureOutcome> => {
+  const payload = {
+    code: ROUTE_TEST_VEHICLE_CODE,
+    fuelConsumptionLitersPer100Km: ROUTE_TEST_VEHICLE_FUEL,
+    attributes: { fixture: 'route-plan-test', capacity: 'demo' },
+    active: true
+  }
+
+  const existing = await VehicleModel.findById(id)
+  if (existing === null) {
+    await VehicleModel.create({ _id: id, ...payload })
+    return 'inserted'
+  }
+  existing.set(payload)
+  await existing.save()
+  return 'updated'
+}
+
+const haversineDistanceMeters = (from: RoutePoint, to: RoutePoint): number => {
+  const earthRadiusMeters = 6371000
+  const latitudeDelta = (to.latitude - from.latitude) * Math.PI / 180
+  const longitudeDelta = (to.longitude - from.longitude) * Math.PI / 180
+  const latitudeFrom = from.latitude * Math.PI / 180
+  const latitudeTo = to.latitude * Math.PI / 180
+  const a = Math.sin(latitudeDelta / 2) ** 2 + Math.cos(latitudeFrom) * Math.cos(latitudeTo) * Math.sin(longitudeDelta / 2) ** 2
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * ROUTE_DISTANCE_FACTOR
+}
+
+const buildRouteSegments = (stops: RoutePlanStop[], depot: RoutingDepot): { segments: RoutePlanSegment[], distanceMeters: number, durationSeconds: number } => {
+  const points: RoutePoint[] = [depot, ...stops, depot]
+  const segments: RoutePlanSegment[] = []
+  let distanceMeters = 0
+  let durationSeconds = 0
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const segmentDistance = Math.round(haversineDistanceMeters(points[index], points[index + 1]))
+    const segmentDuration = Math.round(segmentDistance / (ROUTE_ESTIMATE_SPEED_KMH * 1000 / 3600))
+    distanceMeters += segmentDistance
+    durationSeconds += segmentDuration
+    segments.push({
+      fromStopSequence: index,
+      toStopSequence: index === points.length - 2 ? 0 : index + 1,
+      distanceMeters: segmentDistance,
+      durationSeconds: segmentDuration
+    })
+  }
+
+  return { segments, distanceMeters, durationSeconds }
+}
+
+const encodePolyline = (points: RoutePoint[]): string => {
+  let previousLatitude = 0
+  let previousLongitude = 0
+  let encoded = ''
+  const encodeValue = (value: number): string => {
+    let shifted = value < 0 ? ~(value << 1) : value << 1
+    let result = ''
+    while (shifted >= 0x20) {
+      result += String.fromCharCode((0x20 | (shifted & 0x1f)) + 63)
+      shifted >>= 5
+    }
+    return result + String.fromCharCode(shifted + 63)
+  }
+
+  for (const point of points) {
+    const latitude = Math.round(point.latitude * 1e5)
+    const longitude = Math.round(point.longitude * 1e5)
+    encoded += encodeValue(latitude - previousLatitude)
+    encoded += encodeValue(longitude - previousLongitude)
+    previousLatitude = latitude
+    previousLongitude = longitude
+  }
+  return encoded
+}
+
+const buildRouteSnapshot = (serviceDateInstant: Date, userId: Types.ObjectId, vehicleId: Types.ObjectId, routeIndex: number, clientFixtures: ClientFixture[], saleFixtures: SaleFixture[]): RoutePlan => {
+  const depot = DEPOT_FIXTURE
+  const stops: RoutePlanStop[] = clientFixtures.map((client, index) => ({
+    clientId: String(client.id),
+    saleIds: [String(saleFixtures[index].id)],
+    sequence: index + 1,
+    latitude: client.latitude,
+    longitude: client.longitude
+  }))
+  const route = buildRouteSegments(stops, depot)
+  const totalDurationWithStops = route.durationSeconds + stops.length * ROUTE_STOP_SERVICE_SECONDS
+  const scheduleAssumptions: RouteScheduleAssumptions = {
+    calculatedAt: serviceDateInstant,
+    timezone: SERVICE_TIME_ZONE,
+    source: 'deterministic-test-fixture'
+  }
+  const stopEstimates: RouteStopEstimate[] = []
+  let cumulativeDurationSeconds = 0
+  for (let index = 0; index < stops.length; index += 1) {
+    cumulativeDurationSeconds += route.segments[index].durationSeconds + ROUTE_STOP_SERVICE_SECONDS
+    stopEstimates.push({
+      sequence: stops[index].sequence,
+      arrival: new Date(serviceDateInstant.getTime() + cumulativeDurationSeconds * 1000),
+      cumulativeDurationSeconds,
+      calculatedAt: serviceDateInstant,
+      timezone: SERVICE_TIME_ZONE,
+      availability: ROUTE_METRIC_AVAILABILITY.ESTIMATED
+    })
+  }
+  const saleReferences: RouteSnapshotSaleReference[] = saleFixtures.map((sale) => ({
+    saleId: String(sale.id),
+    versionAtSave: null,
+    statusAtSave: SALE_DELIVERY_STATUS.PENDING
+  }))
+  const fuelLiters = route.distanceMeters / 100000 * ROUTE_TEST_VEHICLE_FUEL
+  const fuelAssumptions: RouteFuelAssumptions = {
+    availability: ROUTE_METRIC_AVAILABILITY.CALCULATED,
+    consumptionLitersPer100Km: ROUTE_TEST_VEHICLE_FUEL,
+    distanceKm: route.distanceMeters / 1000,
+    vehicleCode: ROUTE_TEST_VEHICLE_CODE,
+    source: 'deterministic-test-fixture',
+    calculatedAt: serviceDateInstant
+  }
+  const points: RoutePoint[] = [depot, ...stops, depot]
+
+  return {
+    _id: fixtureObjectId(`route-snapshot:TEST_ROUTE:${serviceDateInstant.toISOString()}:${routeIndex}`),
+    snapshotVersion: 1,
+    planningDate: serviceDateInstant,
+    zoneSnapshot: { code: 'TEST_ROUTE', normalizedName: 'test-route', name: 'Test-Route' },
+    selectedSaleIds: saleFixtures.map((sale) => String(sale.id)),
+    depot,
+    stops,
+    segments: route.segments,
+    metrics: {
+      distanceMeters: route.distanceMeters,
+      durationSeconds: totalDurationWithStops,
+      stopCount: stops.length,
+      fuelLiters,
+      availability: ROUTE_METRIC_AVAILABILITY.ESTIMATED
+    },
+    algorithm: { name: DEFAULT_ROUTE_ALGORITHM, version: DEFAULT_ROUTE_ALGORITHM, provider: ROUTE_MODES.GOOGLE_ROUTES },
+    routingConfigRevision: 1,
+    ruleVersion: CANDIDATE_RULE_VERSION,
+    encodedPolyline: encodePolyline(points),
+    warnings: ['DEMO_ESTIMATED_ROUTE_METRICS'],
+    audit: { createdBy: String(userId), createdAt: serviceDateInstant },
+    assignments: { driverId: String(userId), vehicleId: String(vehicleId) },
+    fuelAssumptions,
+    scheduleAssumptions,
+    stopEstimates,
+    saleReferences
+  }
+}
+
+const createRouteSnapshots = async (serviceDateInstant: Date, userId: Types.ObjectId, vehicleId: Types.ObjectId, clientFixtures: ClientFixture[], saleFixtures: SaleFixture[], summary: GroupCount): Promise<void> => {
+  const partitions = [[0, 1, 2, 3], [4, 5], [6, 7]]
+  for (let routeIndex = 0; routeIndex < partitions.length; routeIndex += 1) {
+    const indexes = partitions[routeIndex]
+    const snapshot = buildRouteSnapshot(serviceDateInstant, userId, vehicleId, routeIndex + 1, indexes.map((index) => clientFixtures[index]), indexes.map((index) => saleFixtures[index]))
+    const existing = await RoutePlanModel.findById(snapshot._id)
+    if (existing === null) {
+      await RoutePlanModel.create(snapshot)
+      addOutcome(summary, 'inserted')
+    }
+  }
+}
+
 const seed = async (): Promise<SeedResult> => {
   const uri = resolveMongoUri()
   const { serviceDate, serviceDateInstant } = resolveServiceDate()
@@ -393,6 +582,8 @@ const seed = async (): Promise<SeedResult> => {
     }
 
     let clientIndex = 0
+    const testRouteClients: ClientFixture[] = []
+    const testRouteSales: SaleFixture[] = []
     for (const zone of ZONE_FIXTURES) {
       const zoneId = zoneIds.get(zone.key)
       if (zoneId === undefined) throw new Error(`Missing seeded delivery zone for ${zone.key}`)
@@ -403,7 +594,7 @@ const seed = async (): Promise<SeedResult> => {
         clientIndex += 1
         const clientName = `Cliente de prueba ${zone.name} ${index + 1}`
         const clientId = fixtureObjectId(`client:${zone.key}:${index + 1}`)
-        addOutcome(summary.clients, await upsertClient({
+        const clientFixture: ClientFixture = {
           id: clientId,
           nombreCompleto: clientName,
           address: `Calle Ficticia ${100 + index}, ${zone.name}`,
@@ -415,15 +606,21 @@ const seed = async (): Promise<SeedResult> => {
           geocodingStatus: GEOCODING_STATUS.CONFIRMED,
           geocodingSource: GEOCODING_SOURCE.MANUAL,
           validatedBy: userId
-        }))
-        addOutcome(summary.sales, await upsertSale({
+        }
+        addOutcome(summary.clients, await upsertClient(clientFixture))
+        const saleFixture: SaleFixture = {
           id: fixtureObjectId(`sale:${zone.key}:${index + 1}`),
           userId,
           clientId,
           clientName,
           total: SALE_TOTAL_BASE + clientIndex * SALE_TOTAL_STEP,
           serviceDateInstant
-        }))
+        }
+        addOutcome(summary.sales, await upsertSale(saleFixture))
+        if (zone.code === 'TEST_ROUTE') {
+          testRouteClients.push(clientFixture)
+          testRouteSales.push(saleFixture)
+        }
       }
     }
 
@@ -462,6 +659,10 @@ const seed = async (): Promise<SeedResult> => {
     }))
 
     addOutcome(summary.routingConfigs, await upsertRoutingConfig(fixtureObjectId('routing-config:deposito_1'), userId))
+    const vehicleId = fixtureObjectId('vehicle:TEST-ROUTE-01')
+    addOutcome(summary.vehicles, await upsertRouteTestVehicle(vehicleId))
+    if (testRouteClients.length !== 8 || testRouteSales.length !== 8) throw new Error('TEST_ROUTE fixture must contain exactly 8 clients and sales')
+    await createRouteSnapshots(serviceDateInstant, userId, vehicleId, testRouteClients, testRouteSales, summary.routeSnapshots)
   } finally {
     await mongoose.disconnect()
   }
@@ -482,7 +683,8 @@ const printSummary = (result: SeedResult): void => {
     `clients: ${formatGroup(result.summary.clients)}`,
     `sales: ${formatGroup(result.summary.sales)}`,
     `routingConfigs: ${formatGroup(result.summary.routingConfigs)}`,
-    'routePlans: 0 created (snapshots are created by the save API)'
+    `vehicles: ${formatGroup(result.summary.vehicles)}`,
+    `routeSnapshots: ${formatGroup(result.summary.routeSnapshots)}`
   ]
   process.stdout.write(`${lines.join('\n')}\n`)
 }
