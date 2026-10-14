@@ -102,7 +102,9 @@ const candidateEntry = (saleId: unknown, client: Client): CandidateEntry => ({
   saleId: String(saleId),
   clientId: String(client._id),
   displayName: client.nombreCompleto,
-  addressSummary: client.address
+  addressSummary: client.address,
+  ...(Number.isFinite(client.lat) ? { latitude: client.lat } : {}),
+  ...(Number.isFinite(client.lng) ? { longitude: client.lng } : {})
 })
 
 const blockedCandidate = (saleId: unknown, reason: BlockedCandidateEntry['reasons'][number], client?: Client): BlockedCandidateEntry => {
@@ -111,6 +113,8 @@ const blockedCandidate = (saleId: unknown, reason: BlockedCandidateEntry['reason
     result.clientId = String(client._id)
     result.displayName = client.nombreCompleto
     result.addressSummary = client.address
+    if (Number.isFinite(client.lat)) result.latitude = client.lat
+    if (Number.isFinite(client.lng)) result.longitude = client.lng
   }
   return result
 }

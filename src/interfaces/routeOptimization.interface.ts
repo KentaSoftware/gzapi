@@ -289,6 +289,9 @@ export interface CandidateEntry {
   clientId?: string
   displayName?: string
   addressSummary?: string
+  latitude?: number
+  longitude?: number
+  distanceMeters?: number
 }
 
 export interface BlockedCandidateEntry extends CandidateEntry {

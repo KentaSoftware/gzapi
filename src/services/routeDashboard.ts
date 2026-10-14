@@ -2,6 +2,8 @@ import { fromZonedTime } from 'date-fns-tz'
 import { Types } from 'mongoose'
 import {
   ROUTE_OPERATIONAL_STATUS,
+  type BlockedCandidateEntry,
+  type CandidateEntry,
   type CandidateResult,
   type RouteDashboard,
   type RouteDashboardCard,
@@ -141,6 +143,40 @@ const routeCard = (snapshot: DashboardSnapshotRead, projection: DashboardProject
   return card
 }
 
+const distanceThroughStop = (snapshot: DashboardSnapshotRead, sequence: number): number | undefined => {
+  if (sequence < 1 || snapshot.segments === undefined) return undefined
+
+  const segmentByDestination = new Map(snapshot.segments.map((segment) => [segment.toStopSequence, segment]))
+  let cumulativeDistance = 0
+  for (let stopSequence = 1; stopSequence <= sequence; stopSequence += 1) {
+    const segment = segmentByDestination.get(stopSequence)
+    if (segment?.fromStopSequence !== stopSequence - 1 || !Number.isFinite(segment.distanceMeters) || segment.distanceMeters < 0) return undefined
+    cumulativeDistance += segment.distanceMeters
+  }
+  return cumulativeDistance
+}
+
+const enrichCandidatesWithRouteDistances = (candidates: CandidateResult, snapshots: DashboardSnapshotRead[]): CandidateResult => {
+  const distanceByClientId = new Map<string, number>()
+  for (const snapshot of snapshots) {
+    for (const stop of snapshot.stops) {
+      const distance = distanceThroughStop(snapshot, stop.sequence)
+      if (distance !== undefined && !distanceByClientId.has(stop.clientId)) distanceByClientId.set(stop.clientId, distance)
+    }
+  }
+
+  const withDistance = <T extends CandidateEntry>(candidate: T): T => {
+    const distance = candidate.clientId === undefined ? undefined : distanceByClientId.get(candidate.clientId)
+    return distance === undefined ? candidate : { ...candidate, distanceMeters: distance }
+  }
+
+  return {
+    ...candidates,
+    eligible: candidates.eligible.map(withDistance),
+    blocked: candidates.blocked.map((candidate: BlockedCandidateEntry) => withDistance(candidate))
+  }
+}
+
 const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRequestContext = {}): Promise<RouteDashboard> => {
   const startedAt = Date.now()
   try {
@@ -167,6 +203,7 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
     }).sort({ planningDate: 1, _id: 1 }).limit(MAX_DASHBOARD_SNAPSHOTS + 1).lean()
     const snapshotsTruncated = snapshotRead.length > MAX_DASHBOARD_SNAPSHOTS
     const snapshots = snapshotsTruncated ? snapshotRead.slice(0, MAX_DASHBOARD_SNAPSHOTS) : snapshotRead
+    const enrichedCandidates = enrichCandidatesWithRouteDistances(candidates, snapshots)
     const snapshotIds = snapshots.map((snapshot) => String(snapshot._id))
     const projections = snapshotIds.length === 0
       ? []
@@ -189,19 +226,19 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
       ...(routes.some((route) => oversizedRouteIds.has(route.id)) ? ['DASHBOARD_ROUTE_DETAIL_LIMIT_REACHED'] : []),
       ...(snapshotsTruncated ? ['DASHBOARD_SNAPSHOT_LIMIT_REACHED'] : []),
       ...(candidateContext.truncated === true ? ['DASHBOARD_CANDIDATE_LIMIT_REACHED'] : []),
-      ...(routes.length === 0 && candidates.eligible.length === 0 && candidates.blocked.length === 0 ? ['NO_DASHBOARD_DATA'] : [])
+      ...(routes.length === 0 && enrichedCandidates.eligible.length === 0 && enrichedCandidates.blocked.length === 0 ? ['NO_DASHBOARD_DATA'] : [])
     ])]
 
     const result = {
       filters: input,
       kpis: {
         activeRoutes: routes.length,
-        pendingOrders: candidates.eligible.length,
+        pendingOrders: enrichedCandidates.eligible.length,
         totalDistanceMeters,
         estimatedFuelLiters
       },
       routes,
-      candidates,
+      candidates: enrichedCandidates,
       warnings
     }
     logDashboardEvent('route_dashboard_read', context, startedAt, 'SUCCESS', routes[0]?.id)

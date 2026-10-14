@@ -138,7 +138,9 @@ describe('Route plan candidate query', () => {
       saleId: String(ids[5]),
       clientId: String(eligibleClient._id),
       displayName: 'Eligible',
-      addressSummary: 'Eligible address'
+      addressSummary: 'Eligible address',
+      latitude: -34.61,
+      longitude: -58.41
     }])
     expect(await SaleModel.find({}).sort({ _id: 1 }).lean()).to.deep.equal(salesBefore)
     expect(await ClientModel.find({}).sort({ _id: 1 }).lean()).to.deep.equal(clientsBefore)

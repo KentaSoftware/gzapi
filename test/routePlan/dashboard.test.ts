@@ -120,7 +120,7 @@ describe('Route dashboard aggregation', () => {
       deliveryZoneId: zoneId,
       geocoding: { status: 'CONFIRMED', source: 'GEOCODED', validatedAt: new Date(), validatedBy: userId }
     })
-    const blockedClient = await ClientModel.create({ nombreCompleto: 'Blocked', isActive: true, deliveryZoneId: zoneId })
+    const blockedClient = await ClientModel.create({ nombreCompleto: 'Blocked', address: 'Blocked address', lat: -34.62, lng: -58.42, isActive: true, deliveryZoneId: zoneId })
     await SaleModel.create([{ estado: 'CREATED', total: 100, user: userId, cliente: 'Eligible', idCliente: eligibleClient._id, delivery: { status: 'PENDING', serviceDate: SERVICE_DAY_START } }, { estado: 'CREATED', total: 100, user: userId, cliente: 'Blocked', idCliente: blockedClient._id, delivery: { status: 'PENDING', serviceDate: SERVICE_DAY_START } }])
 
     const response = await request(app)
@@ -129,8 +129,64 @@ describe('Route dashboard aggregation', () => {
 
     expect(response.status).to.equal(200)
     expect(response.body.candidates.eligible).to.have.length(1)
-    expect(response.body.candidates.blocked[0].reasons).to.deep.equal(['CLIENT_LOCATION_MISSING'])
+    expect(response.body.candidates.eligible[0]).to.include({ latitude: -34.61, longitude: -58.41 })
+    expect(response.body.candidates.blocked[0].reasons).to.deep.equal(['CLIENT_LOCATION_UNCONFIRMED'])
+    expect(response.body.candidates.blocked[0]).to.include({ latitude: -34.62, longitude: -58.42 })
     expect(response.body.kpis.pendingOrders).to.equal(1)
+  })
+
+  it('S-25: enriches matched dashboard candidates with cumulative route distance only', async () => {
+    const matchedClient = await ClientModel.create({
+      nombreCompleto: 'Matched',
+      address: 'Matched address',
+      lat: -34.61,
+      lng: -58.41,
+      isActive: true,
+      deliveryZoneId: zoneId,
+      geocoding: { status: 'CONFIRMED', source: 'GEOCODED', validatedAt: new Date(), validatedBy: userId }
+    })
+    const unmatchedClient = await ClientModel.create({
+      nombreCompleto: 'Unmatched',
+      address: 'Unmatched address',
+      lat: -34.62,
+      lng: -58.42,
+      isActive: true,
+      deliveryZoneId: zoneId,
+      geocoding: { status: 'CONFIRMED', source: 'GEOCODED', validatedAt: new Date(), validatedBy: userId }
+    })
+    const sales = await SaleModel.create([
+      { estado: 'CREATED', total: 100, user: userId, cliente: 'Matched', idCliente: matchedClient._id, delivery: { status: 'PENDING', serviceDate: SERVICE_DAY_START } },
+      { estado: 'CREATED', total: 100, user: userId, cliente: 'Unmatched', idCliente: unmatchedClient._id, delivery: { status: 'PENDING', serviceDate: SERVICE_DAY_START } }
+    ])
+    await RoutePlanModel.create({
+      snapshotVersion: 1,
+      planningDate: SERVICE_DAY_START,
+      zoneSnapshot: { code: 'NORTE', normalizedName: 'norte', name: 'Norte' },
+      selectedSaleIds: [String(sales[0]._id)],
+      depot: { name: 'Deposito 1', latitude: -34.6, longitude: -58.4 },
+      stops: [{ clientId: String(matchedClient._id), saleIds: [String(sales[0]._id)], sequence: 1, latitude: -34.61, longitude: -58.41 }],
+      segments: [
+        { fromStopSequence: 0, toStopSequence: 1, distanceMeters: 1200, durationSeconds: 100 },
+        { fromStopSequence: 1, toStopSequence: 0, distanceMeters: 1300, durationSeconds: 110 }
+      ],
+      metrics: { distanceMeters: 2500, durationSeconds: 210, stopCount: 1 },
+      algorithm: { name: 'heuristic', version: '1', provider: 'internal' },
+      routingConfigRevision: 1,
+      ruleVersion: 'candidate-eligibility-v1',
+      encodedPolyline: 'route',
+      warnings: [],
+      audit: { createdBy: String(userId), createdAt: new Date() }
+    })
+
+    const response = await request(app)
+      .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(response.status).to.equal(200)
+    const matched = response.body.candidates.eligible.find((candidate: { clientId: string }) => candidate.clientId === String(matchedClient._id))
+    const unmatched = response.body.candidates.eligible.find((candidate: { clientId: string }) => candidate.clientId === String(unmatchedClient._id))
+    expect(matched).to.include({ distanceMeters: 1200 })
+    expect(unmatched).not.to.have.property('distanceMeters')
   })
 
   it('S-23: reports unavailable aggregate metrics without fabricating route values', async () => {
