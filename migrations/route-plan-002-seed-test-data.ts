@@ -28,6 +28,11 @@ import {
 import { SALE_DELIVERY_STATUS } from '../src/interfaces/sale.interface'
 import ClientModel from '../src/models/client'
 import DeliveryZoneModel from '../src/models/deliveryZone'
+import BrandModel from '../src/models/brand'
+import CategorieModel from '../src/models/categorie'
+import ItemSaleModel from '../src/models/itemSale'
+import ProductModel from '../src/models/product'
+import ProviderModel from '../src/models/provider'
 import RoleModel from '../src/models/role'
 import RoutePlanModel from '../src/models/routePlan'
 import RoutingConfigModel from '../src/models/routingConfig'
@@ -70,6 +75,7 @@ const SALE_ESTADO_CREATED = 'CREATED'
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const ROUTE_TEST_VEHICLE_CODE = 'TEST-ROUTE-01'
 const ROUTE_TEST_VEHICLE_FUEL = 8.5
+const ROUTE_TEST_PRODUCT_PRICE = 100
 const ROUTE_TEST_VEHICLES = [
   { key: 'TEST-ROUTE-01', code: ROUTE_TEST_VEHICLE_CODE, fuel: ROUTE_TEST_VEHICLE_FUEL },
   { key: 'TEST-ROUTE-02', code: 'TEST-ROUTE-02', fuel: 9.2 },
@@ -113,6 +119,11 @@ interface SeedSummary {
   deliveryZones: GroupCount
   clients: GroupCount
   sales: GroupCount
+  catalogCategories: GroupCount
+  catalogBrands: GroupCount
+  catalogProviders: GroupCount
+  products: GroupCount
+  itemSales: GroupCount
   routingConfigs: GroupCount
   vehicles: GroupCount
   routeSnapshots: GroupCount
@@ -146,6 +157,15 @@ interface SaleFixture {
   clientName: string
   total: number
   serviceDateInstant: Date
+}
+
+interface ItemSaleFixture {
+  id: Types.ObjectId
+  saleId: Types.ObjectId
+  productId: Types.ObjectId
+  quantity: number
+  total: number
+  unitPrice: number
 }
 
 interface RoutePoint {
@@ -250,6 +270,11 @@ const createSummary = (): SeedSummary => ({
   deliveryZones: { inserted: 0, updated: 0 },
   clients: { inserted: 0, updated: 0 },
   sales: { inserted: 0, updated: 0 },
+  catalogCategories: { inserted: 0, updated: 0 },
+  catalogBrands: { inserted: 0, updated: 0 },
+  catalogProviders: { inserted: 0, updated: 0 },
+  products: { inserted: 0, updated: 0 },
+  itemSales: { inserted: 0, updated: 0 },
   routingConfigs: { inserted: 0, updated: 0 },
   vehicles: { inserted: 0, updated: 0 },
   routeSnapshots: { inserted: 0, updated: 0 }
@@ -368,6 +393,56 @@ const upsertSale = async (fixture: SaleFixture): Promise<FixtureOutcome> => {
   const existing = await SaleModel.findById(fixture.id)
   if (existing === null) {
     await SaleModel.create({ _id: fixture.id, ...payload })
+    return 'inserted'
+  }
+  existing.set(payload)
+  await existing.save()
+  return 'updated'
+}
+
+const upsertSimpleCatalogFixture = async (model: mongoose.Model<{ descripcion: string }>, id: Types.ObjectId, descripcion: string): Promise<FixtureOutcome> => {
+  const existing = await model.findById(id)
+  if (existing === null) {
+    await model.create({ _id: id, descripcion })
+    return 'inserted'
+  }
+  existing.set({ descripcion })
+  await existing.save()
+  return 'updated'
+}
+
+const upsertRouteTestProduct = async (id: Types.ObjectId, categoria: Types.ObjectId, marca: Types.ObjectId, proveedor: Types.ObjectId): Promise<FixtureOutcome> => {
+  const payload = {
+    descripcion: 'Producto de prueba para rutas',
+    stock: 1000,
+    codigoBarra: 'ROUTE-TEST-PRODUCT-001',
+    precioUnitario: ROUTE_TEST_PRODUCT_PRICE,
+    categoria,
+    marca,
+    proveedor
+  }
+  const existing = await ProductModel.findById(id)
+  if (existing === null) {
+    await ProductModel.create({ _id: id, ...payload })
+    return 'inserted'
+  }
+  existing.set(payload)
+  await existing.save()
+  return 'updated'
+}
+
+const upsertItemSale = async (fixture: ItemSaleFixture): Promise<FixtureOutcome> => {
+  const payload = {
+    idVenta: fixture.saleId,
+    idProducto: fixture.productId,
+    cantidad: fixture.quantity,
+    total: fixture.total,
+    estado: true,
+    precioUnitario: fixture.unitPrice
+  }
+  const existing = await ItemSaleModel.findById(fixture.id)
+  if (existing === null) {
+    await ItemSaleModel.create({ _id: fixture.id, ...payload })
     return 'inserted'
   }
   existing.set(payload)
@@ -562,7 +637,7 @@ const createRouteSnapshots = async (serviceDateInstant: Date, userId: Types.Obje
   }
 }
 
-const seed = async (): Promise<SeedResult> => {
+export const seed = async (): Promise<SeedResult> => {
   const uri = resolveMongoUri()
   const { serviceDate, serviceDateInstant } = resolveServiceDate()
   const testPassword = resolveTestPassword()
@@ -578,6 +653,15 @@ const seed = async (): Promise<SeedResult> => {
 
     const userId = fixtureObjectId('user:route-test')
     addOutcome(summary.routeTestUser, await upsertRouteTestUser(userId, roleId, passwordHash))
+
+    const categoryId = fixtureObjectId('catalog:category:route-test')
+    const brandId = fixtureObjectId('catalog:brand:route-test')
+    const providerId = fixtureObjectId('catalog:provider:route-test')
+    const productId = fixtureObjectId('catalog:product:route-test')
+    addOutcome(summary.catalogCategories, await upsertSimpleCatalogFixture(CategorieModel, categoryId, 'Categoría de prueba para rutas'))
+    addOutcome(summary.catalogBrands, await upsertSimpleCatalogFixture(BrandModel, brandId, 'Marca de prueba para rutas'))
+    addOutcome(summary.catalogProviders, await upsertSimpleCatalogFixture(ProviderModel, providerId, 'Proveedor de prueba para rutas'))
+    addOutcome(summary.products, await upsertRouteTestProduct(productId, categoryId, brandId, providerId))
 
     const zoneIds = new Map<string, Types.ObjectId>()
     for (const zone of ZONE_FIXTURES) {
@@ -622,6 +706,15 @@ const seed = async (): Promise<SeedResult> => {
           serviceDateInstant
         }
         addOutcome(summary.sales, await upsertSale(saleFixture))
+        const quantity = (clientIndex % 3) + 1
+        addOutcome(summary.itemSales, await upsertItemSale({
+          id: fixtureObjectId(`item-sale:${zone.key}:${index + 1}`),
+          saleId: saleFixture.id,
+          productId,
+          quantity,
+          total: quantity * ROUTE_TEST_PRODUCT_PRICE,
+          unitPrice: ROUTE_TEST_PRODUCT_PRICE
+        }))
         if (zone.code === 'TEST_ROUTE') {
           testRouteClients.push(clientFixture)
           testRouteSales.push(saleFixture)
@@ -654,13 +747,22 @@ const seed = async (): Promise<SeedResult> => {
       geocodingStatus: GEOCODING_STATUS.UNVERIFIED,
       geocodingSource: GEOCODING_SOURCE.GEOCODED
     }))
+    const blockedSaleId = fixtureObjectId('sale:blocked')
     addOutcome(summary.sales, await upsertSale({
-      id: fixtureObjectId('sale:blocked'),
+      id: blockedSaleId,
       userId,
       clientId: blockedClientId,
       clientName: blockedClientName,
       total: SALE_TOTAL_BASE + 1000,
       serviceDateInstant
+    }))
+    addOutcome(summary.itemSales, await upsertItemSale({
+      id: fixtureObjectId('item-sale:blocked'),
+      saleId: blockedSaleId,
+      productId,
+      quantity: 1,
+      total: ROUTE_TEST_PRODUCT_PRICE,
+      unitPrice: ROUTE_TEST_PRODUCT_PRICE
     }))
 
     addOutcome(summary.routingConfigs, await upsertRoutingConfig(fixtureObjectId('routing-config:deposito_1'), userId))
@@ -690,6 +792,11 @@ const printSummary = (result: SeedResult): void => {
     `deliveryZones: ${formatGroup(result.summary.deliveryZones)}`,
     `clients: ${formatGroup(result.summary.clients)}`,
     `sales: ${formatGroup(result.summary.sales)}`,
+    `catalogCategories: ${formatGroup(result.summary.catalogCategories)}`,
+    `catalogBrands: ${formatGroup(result.summary.catalogBrands)}`,
+    `catalogProviders: ${formatGroup(result.summary.catalogProviders)}`,
+    `products: ${formatGroup(result.summary.products)}`,
+    `itemSales: ${formatGroup(result.summary.itemSales)}`,
     `routingConfigs: ${formatGroup(result.summary.routingConfigs)}`,
     `vehicles: ${formatGroup(result.summary.vehicles)}`,
     `routeSnapshots: ${formatGroup(result.summary.routeSnapshots)}`
