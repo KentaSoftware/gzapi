@@ -34,6 +34,7 @@ const nonNegativeIntegerSchema = z.number().finite().int().nonnegative()
 const positiveIntegerSchema = z.number().finite().int().positive()
 const isoDateTimeSchema = z.string().refine(isIsoDateTime, 'value must be an ISO date-time')
 const civilDateSchema = z.string().refine(isCivilDate, 'value must be a civil date')
+const safeNonNegativeIntegerSchema = nonNegativeIntegerSchema.refine(Number.isSafeInteger, 'value must be a safe integer')
 
 const availabilityQuerySchema = z.object({
   productIds: z.array(objectIdSchema).min(1).max(100),
@@ -77,11 +78,30 @@ const stockAlertSchema = z.object({
   dataQuality: z.enum(Object.values(STOCK_DATA_QUALITY) as [string, ...string[]])
 }).strict()
 
+const openingCountRowSchema = z.object({
+  productId: objectIdSchema,
+  countedQuantity: safeNonNegativeIntegerSchema,
+  expiryDate: civilDateSchema.nullable().optional()
+}).strict()
+
+const openingCountInputSchema = z.object({
+  operationId: operationIdSchema,
+  rows: z.array(openingCountRowSchema).min(1).max(10000)
+}).strict()
+
+const openingCountConfirmationInputSchema = openingCountInputSchema.extend({
+  approvedBy: objectIdSchema,
+  approvalId: operationIdSchema
+}).strict()
+
 export {
   availabilityQuerySchema,
   purchaseReceiptLineInputSchema,
   purchaseReceiptInputSchema,
   productInventoryConfigSchema,
   stockErrorEnvelopeSchema,
-  stockAlertSchema
+  stockAlertSchema,
+  openingCountRowSchema,
+  openingCountInputSchema,
+  openingCountConfirmationInputSchema
 }

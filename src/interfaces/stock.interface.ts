@@ -145,3 +145,137 @@ export interface StockErrorEnvelope {
   message: string
   correlationId?: string
 }
+
+export interface ProductStockRuleContext {
+  productId: string
+  businessDate: string
+  timeZone: string
+}
+
+export interface StockRuleBucket {
+  bucketId: string
+  expiryDate: string
+  availableQuantity: number
+  committedQuantity: number
+}
+
+export interface AvailabilityInput extends ProductStockRuleContext {
+  physicalQuantity: number
+  committedQuantity: number
+  expiryTracking: ExpiryTracking
+  baselineStatus: BaselineStatus
+  expiryBuckets?: StockRuleBucket[]
+}
+
+export interface FefoAllocationInput extends ProductStockRuleContext {
+  requestedQuantity: number
+  buckets: StockRuleBucket[]
+}
+
+export interface StockAllocation {
+  bucketId: string
+  expiryDate: string
+  quantity: number
+}
+
+export interface FefoAllocationResult {
+  allocations: StockAllocation[]
+  allocatedQuantity: number
+}
+
+export interface StockExpiryEvaluationInput extends ProductStockRuleContext {
+  alertDays: number
+  buckets: StockRuleBucket[]
+}
+
+export interface LowStockInput extends AvailabilityResult {
+  minimum?: number
+}
+
+export interface StockSaleRecord {
+  occurredAt: string
+  quantity: number
+  cancelled?: boolean
+  active?: boolean
+}
+
+export interface StockRotationInput {
+  productId: string
+  productCreatedAt: string
+  businessDate: string
+  timeZone: string
+  rotationDays: number
+  sales: StockSaleRecord[]
+}
+
+export interface StockRotationResult {
+  productId: string
+  dataQuality: StockDataQuality
+  validSaleCount: number
+  alert?: StockAlert
+}
+
+export interface StockAuthContext {
+  actorId: string
+  canManageStock: boolean
+  canApproveStockCount: boolean
+}
+
+export interface OpeningCountRow {
+  productId: string
+  countedQuantity: number
+  expiryDate?: string | null
+}
+
+export interface OpeningCountInput {
+  operationId: string
+  rows: OpeningCountRow[]
+}
+
+export interface OpeningCountConfirmationInput extends OpeningCountInput {
+  approvedBy: string
+  approvalId: string
+}
+
+export interface OpeningCountPlanGroup {
+  productId: string
+  expiryDate: string | null
+  countedQuantity: number
+}
+
+export interface OpeningCountPlan {
+  operationId: string
+  movementType: typeof INVENTORY_MOVEMENT_TYPES.OPENING
+  groups: OpeningCountPlanGroup[]
+  movementCount: number
+  rulesVersion: string
+}
+
+export interface OpeningCountEvidence {
+  status: StockOperationStatus
+  operationId: string
+  approvalId?: string
+  approvedBy?: string
+  actorId: string
+  rulesVersion: string
+  movementCount: number
+  businessDataMutated: boolean
+}
+
+export interface OpeningCountPreview {
+  plan: OpeningCountPlan
+  evidence: OpeningCountEvidence
+}
+
+export interface OpeningCountWriteContext {
+  actorId: string
+  approvedBy: string
+  approvalId: string
+}
+
+export interface OpeningCountWriterResult {
+  status: Exclude<StockOperationStatus, typeof STOCK_OPERATION_STATUSES.PENDING>
+  movementCount: number
+}
+
+export type OpeningCountWriter = (plan: OpeningCountPlan, context: OpeningCountWriteContext) => Promise<OpeningCountWriterResult>
