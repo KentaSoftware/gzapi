@@ -157,6 +157,17 @@ export interface SaleDeliveryInput {
   deliveredBy: string
 }
 
+export interface StockPhysicalReturnLineInput {
+  productId: string
+  quantity: number
+  lineId?: string
+}
+
+export interface StockPhysicalReturnInput extends StockOperationInput {
+  lines: StockPhysicalReturnLineInput[]
+  occurredAt?: Date
+}
+
 export interface StockErrorEnvelope {
   code: StockErrorCode
   message: string

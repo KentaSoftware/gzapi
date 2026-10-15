@@ -546,4 +546,106 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.deliverSale({ saleId: 'sale-actor', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-actor', deliveredBy: '' }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
     expect(repository.transactionCalls).to.equal(0)
   })
+
+  it('restores a full tracked delivery from its original allocations without changing other commitments', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await service.commitSale({ saleId: 'sale-return-full', operationId: 'commit-return-full', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-full', productId: PRODUCT_ID, quantity: 7 }] })
+    await service.commitSale({ saleId: 'sale-other', operationId: 'commit-other', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-other', productId: PRODUCT_ID, quantity: 1 }] })
+    await service.deliverSale({ saleId: 'sale-return-full', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-return-full', deliveredBy: ACTOR.actorId })
+
+    const result = await service.returnSale({
+      saleId: 'sale-return-full',
+      operationId: 'return-full',
+      businessDate: DATE,
+      auth: ACTOR,
+      lines: [{ productId: PRODUCT_ID, quantity: 7 }],
+      occurredAt: new Date('2026-10-15T14:00:00.000Z')
+    })
+
+    expect(result).to.include({ movementCount: 2, appliedMovementCount: 2, alreadyAppliedCount: 0, projectionCount: 4 })
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 10, committedQuantity: 1, availableQuantity: 9 })
+    expect(repository.buckets.get('bucket-first')).to.deep.include({ receivedQuantity: 4, availableQuantity: 4, committedQuantity: 0 })
+    expect(repository.buckets.get('bucket-later')).to.deep.include({ receivedQuantity: 6, availableQuantity: 5, committedQuantity: 1 })
+    expect(repository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.RETURN_IN)).to.have.length(2)
+  })
+
+  it('restores partial tracked returns in the original FEFO allocation order', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await service.commitSale({ saleId: 'sale-return-partial', operationId: 'commit-return-partial', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-partial', productId: PRODUCT_ID, quantity: 7 }] })
+    await service.deliverSale({ saleId: 'sale-return-partial', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-return-partial', deliveredBy: ACTOR.actorId })
+
+    await service.returnSale({ saleId: 'sale-return-partial', operationId: 'return-partial', businessDate: DATE, auth: ACTOR, lines: [{ productId: PRODUCT_ID, quantity: 5 }] })
+
+    expect(repository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.RETURN_IN).map(({ expiryBucketId, quantity }) => ({ expiryBucketId, quantity }))).to.deep.equal([
+      { expiryBucketId: 'bucket-first', quantity: 4 },
+      { expiryBucketId: 'bucket-later', quantity: 1 }
+    ])
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 8, committedQuantity: 0, availableQuantity: 8 })
+  })
+
+  it('restores non-tracked physical stock without creating a commitment or bucket', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await service.commitSale({ saleId: 'sale-return-untracked', operationId: 'commit-return-untracked', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-untracked', productId: UNTRACKED_PRODUCT_ID, quantity: 3 }] })
+    await service.deliverSale({ saleId: 'sale-return-untracked', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-return-untracked', deliveredBy: ACTOR.actorId })
+
+    const result = await service.returnSale({ saleId: 'sale-return-untracked', operationId: 'return-untracked', businessDate: DATE, auth: ACTOR, lines: [{ productId: UNTRACKED_PRODUCT_ID, quantity: 2 }] })
+
+    expect(result).to.include({ movementCount: 1, projectionCount: 1 })
+    expect(repository.products.get(UNTRACKED_PRODUCT_ID)).to.deep.include({ physicalQuantity: 9, committedQuantity: 0, availableQuantity: 9 })
+    expect(repository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.RETURN_IN)[0]).to.include({ expiryBucketId: undefined, quantity: 2 })
+    expect([...repository.buckets.values()]).to.have.length(2)
+  })
+
+  it('rejects returns before delivery, for wrong ownership, and beyond delivered quantity without projection writes', async () => {
+    const beforeDeliveryRepository = newRepository()
+    const beforeDeliveryService = new StockService(beforeDeliveryRepository)
+    await beforeDeliveryService.commitSale({ saleId: 'sale-not-delivered', operationId: 'commit-not-delivered', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-not-delivered', productId: PRODUCT_ID, quantity: 2 }] })
+    await expectRejected(async () => await beforeDeliveryService.returnSale({ saleId: 'sale-not-delivered', operationId: 'return-not-delivered', businessDate: DATE, auth: ACTOR, lines: [{ productId: PRODUCT_ID, quantity: 1 }] }), STOCK_ERROR_CODES.STOCK_INSUFFICIENT)
+    expect(beforeDeliveryRepository.projectionSessions).to.have.length(2)
+    expect(beforeDeliveryRepository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.RETURN_IN)).to.have.length(0)
+
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await service.commitSale({ saleId: 'sale-return-invalid', operationId: 'commit-return-invalid', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-invalid', productId: PRODUCT_ID, quantity: 3 }] })
+    await service.deliverSale({ saleId: 'sale-return-invalid', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-return-invalid', deliveredBy: ACTOR.actorId })
+    const projectionCount = repository.projectionSessions.length
+
+    await expectRejected(async () => await service.returnSale({ saleId: 'other-sale', operationId: 'return-wrong-sale', businessDate: DATE, auth: ACTOR, lines: [{ productId: PRODUCT_ID, quantity: 1 }] }))
+    await expectRejected(async () => await service.returnSale({ saleId: 'sale-return-invalid', operationId: 'return-wrong-product', businessDate: DATE, auth: ACTOR, lines: [{ productId: UNTRACKED_PRODUCT_ID, quantity: 1 }] }))
+    await expectRejected(async () => await service.returnSale({ saleId: 'sale-return-invalid', operationId: 'return-wrong-line', businessDate: DATE, auth: ACTOR, lines: [{ productId: PRODUCT_ID, lineId: 'other-line', quantity: 1 }] }))
+    await expectRejected(async () => await service.returnSale({ saleId: 'sale-return-invalid', operationId: 'return-over', businessDate: DATE, auth: ACTOR, lines: [{ productId: PRODUCT_ID, quantity: 4 }] }))
+
+    expect(repository.projectionSessions).to.have.length(projectionCount)
+    expect(repository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.RETURN_IN)).to.have.length(0)
+  })
+
+  it('reports matching return retries as already applied and rejects conflicting idempotency', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await service.commitSale({ saleId: 'sale-return-retry', operationId: 'commit-return-retry', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-retry', productId: PRODUCT_ID, quantity: 3 }] })
+    await service.deliverSale({ saleId: 'sale-return-retry', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-return-retry', deliveredBy: ACTOR.actorId })
+
+    const input = { saleId: 'sale-return-retry', operationId: 'return-retry', businessDate: DATE, auth: ACTOR, lines: [{ productId: PRODUCT_ID, quantity: 3 }] }
+    const first = await service.returnSale(input)
+    const physicalAfterFirst = repository.products.get(PRODUCT_ID)?.physicalQuantity
+    const projectionCount = repository.projectionSessions.length
+    const second = await service.returnSale(input)
+
+    expect(first).to.include({ appliedMovementCount: 1, alreadyAppliedCount: 0 })
+    expect(second).to.include({ movementCount: 0, appliedMovementCount: 0, alreadyAppliedCount: 1, projectionCount: 0 })
+    expect(repository.products.get(PRODUCT_ID)?.physicalQuantity).to.equal(physicalAfterFirst)
+    expect(repository.projectionSessions).to.have.length(projectionCount)
+    await expectRejected(async () => await service.returnSale({ ...input, lines: [{ productId: PRODUCT_ID, quantity: 2 }] }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+  })
+
+  it('rejects malformed return identity and lines before opening a transaction', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await expectRejected(async () => await service.returnSale({ saleId: 'sale-invalid', operationId: 'return-invalid', businessDate: DATE, auth: { actorId: '', canManageStock: false }, lines: [{ productId: PRODUCT_ID, quantity: 1 }] }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
+    await expectRejected(async () => await service.returnSale({ saleId: 'sale-invalid', operationId: 'return-invalid', businessDate: DATE, auth: ACTOR, lines: [{ productId: PRODUCT_ID, quantity: 0 }] }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    expect(repository.transactionCalls).to.equal(0)
+  })
 })

@@ -4,7 +4,9 @@ import sinon from 'sinon'
 import { STOCK_ERROR_CODES } from '../src/interfaces/stock.interface'
 import { StockService, StockServiceError } from '../src/services/stock'
 import {
+  mapPhysicalReturnToStockInput,
   mapPurchaseReceiptToStockInput,
+  mapSaleReferenceToStockCommitInput,
   stockPortAdapter
 } from '../src/services/commercialPorts'
 import type { CommercialFact } from '../src/interfaces/commercialFact.interface'
@@ -99,5 +101,74 @@ describe('Stock commercial flow', () => {
     }
 
     expect(receivePurchase.called).to.equal(false)
+  })
+
+  it('maps physical return aliases, date, actor, and operation while ignoring price and bulto', () => {
+    const source = fact({
+      type: 'SALE_PHYSICAL_RETURN',
+      aggregateType: 'sale',
+      aggregateId: '507f1f77bcf86cd799439011',
+      idempotencyKey: 'commercial-return-1',
+      lines: [{ productId: '507f1f77bcf86cd799439014', lineId: 'arbitrary-line-id', quantity: 2, quantityReturned: 2, price: 99, bulto: 12 }]
+    })
+    const mapped = mapPhysicalReturnToStockInput(source)
+    const saleMapped = mapSaleReferenceToStockCommitInput(source)
+
+    expect(mapped).to.deep.include({
+      saleId: '507f1f77bcf86cd799439011',
+      operationId: 'commercial-return-1',
+      businessDate: '2026-10-15'
+    })
+    expect(mapped.auth).to.deep.equal({ actorId: '507f1f77bcf86cd799439013', canManageStock: false })
+    expect(mapped.lines).to.deep.equal([{ productId: '507f1f77bcf86cd799439014', lineId: saleMapped.lines[0].lineId, quantity: 2 }])
+    expect(mapped.lines[0].lineId).to.match(/^[0-9a-f]{24}$/)
+    expect(mapped.occurredAt).to.deep.equal(fact().businessDate)
+  })
+
+  it('accepts every explicit physical return product and quantity alias', () => {
+    for (const productField of ['productId', 'idProducto', '_id']) {
+      for (const quantityField of ['quantity', 'quantityReturned', 'cantidad']) {
+        const value = productField === '_id' ? '507f1f77bcf86cd799439014' : 'product-1'
+        const mapped = mapPhysicalReturnToStockInput(fact({ lines: [{ [productField]: value, [quantityField]: 2 }] }))
+        expect(mapped.lines[0]).to.deep.include({ productId: value, quantity: 2 })
+      }
+    }
+  })
+
+  it('rejects malformed physical return lines before calling StockService', async () => {
+    const returnSale = sinon.stub(StockService.prototype, 'returnSale')
+    for (const lines of [[{ quantity: 2 }], [{ productId: 'product-1', quantity: 0 }], [{ productId: 'product-1', quantity: 2, cantidad: 3 }]]) {
+      try {
+        await stockPortAdapter.applyPhysicalReturn(fact({ type: 'SALE_PHYSICAL_RETURN', aggregateType: 'sale', lines }))
+        expect.fail('expected malformed physical return to reject')
+      } catch (error) {
+        expect(error).to.be.instanceOf(StockServiceError)
+        expect(error).to.have.property('code', STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+      }
+    }
+    expect(returnSale.called).to.equal(false)
+  })
+
+  it('routes valid physical return facts to StockService with strict mapping', async () => {
+    const returnSale = sinon.stub(StockService.prototype, 'returnSale').resolves({
+      status: 'APPLIED',
+      operationId: 'commercial-return-2',
+      movementCount: 1,
+      appliedMovementCount: 1,
+      alreadyAppliedCount: 0,
+      projectionCount: 1
+    })
+
+    await stockPortAdapter.applyPhysicalReturn(fact({
+      type: 'SALE_PHYSICAL_RETURN',
+      aggregateType: 'sale',
+      idempotencyKey: 'commercial-return-2',
+      lines: [{ idProducto: 'product-1', cantidad: 2, price: 99, bulto: 12 }]
+    }))
+
+    expect(returnSale.calledOnce).to.equal(true)
+    expect(returnSale.firstCall.args[0]).to.deep.include({ saleId: '507f1f77bcf86cd799439011', operationId: 'commercial-return-2', businessDate: '2026-10-15' })
+    expect(returnSale.firstCall.args[0].auth).to.deep.equal({ actorId: '507f1f77bcf86cd799439013', canManageStock: false })
+    expect(returnSale.firstCall.args[0].lines).to.deep.equal([{ productId: 'product-1', quantity: 2 }])
   })
 })

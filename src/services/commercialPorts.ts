@@ -13,7 +13,7 @@ import {
   type CommercialFactLine,
   type StockSaleReference
 } from '../interfaces/commercialFact.interface'
-import { STOCK_ERROR_CODES, type PurchaseReceiptInput, type SaleDeliveryInput, type StockSaleCommitInput } from '../interfaces/stock.interface'
+import { STOCK_ERROR_CODES, type PurchaseReceiptInput, type SaleDeliveryInput, type StockPhysicalReturnInput, type StockSaleCommitInput } from '../interfaces/stock.interface'
 import { MongooseStockRepository } from './stockMongoRepository'
 import { StockService, StockServiceError } from './stock'
 import { recomputeForSale } from './routePlanOperational'
@@ -119,6 +119,24 @@ const productIdOf = (line: Record<string, unknown>, index: number): string => {
   return identifierOf(productValue, `Sale line ${index} productId`)
 }
 
+const physicalReturnProductIdOf = (line: Record<string, unknown>, index: number): string => {
+  const values = [line.productId, line.idProducto, line._id].filter((value) => value !== undefined)
+  if (values.length === 0) throw invalidStockReference(`Sale line ${index} productId is required`)
+  const identifiers = values.map((value) => identifierOf(value, `Sale line ${index} productId`))
+  if (identifiers.some((value) => value !== identifiers[0])) throw invalidStockReference(`Sale line ${index} productId aliases conflict`)
+  return identifiers[0]
+}
+
+const physicalReturnQuantityOf = (line: Record<string, unknown>, index: number): number => {
+  const values = [line.quantity, line.quantityReturned, line.cantidad].filter((value) => value !== undefined)
+  if (values.length === 0 || values.some((value) => typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0)) {
+    throw invalidStockReference(`Sale line ${index} quantity must be a positive integer`)
+  }
+  const quantity = values[0] as number
+  if (values.some((value) => value !== quantity)) throw invalidStockReference(`Sale line ${index} quantity aliases conflict`)
+  return quantity
+}
+
 const purchaseLineIdentityOf = (line: Record<string, unknown>, buyId: string, index: number): string => {
   const value = line.itemBuyId ?? line.idItemBuy ?? line.lineId ?? line._id
   const identity = identifierOf(value, `Purchase line ${index} itemBuyId`)
@@ -191,6 +209,28 @@ export const mapSaleReferenceToStockCommitInput = (source: CommercialFact | Stoc
   }
 }
 
+export const mapPhysicalReturnToStockInput = (source: CommercialFact): StockPhysicalReturnInput => {
+  const saleId = identifierOf(source.aggregateId, 'saleId')
+  const actorId = identifierOf(source.actorId, 'actorId')
+  const lines = sourceLinesOf(source).map((entry, index) => {
+    const line = lineRecordOf(entry, index)
+    const lineId = line.lineId === undefined ? undefined : sourceLineIdOf(line, saleId, index)
+    return {
+      productId: physicalReturnProductIdOf(line, index),
+      quantity: physicalReturnQuantityOf(line, index),
+      ...(lineId === undefined ? {} : { lineId })
+    }
+  })
+  return {
+    saleId,
+    operationId: identifierOf(source.idempotencyKey, 'operationId'),
+    businessDate: businessDateOf(source),
+    auth: { actorId, canManageStock: false },
+    lines,
+    occurredAt: source.businessDate
+  }
+}
+
 export const stockPortAdapter: StockPort = {
   async commitSale (source: CommercialFact | StockSaleReference): Promise<void> {
     await stockService.commitSale(mapSaleReferenceToStockCommitInput(source))
@@ -199,7 +239,9 @@ export const stockPortAdapter: StockPort = {
     await stockService.receivePurchase(mapPurchaseReceiptToStockInput(source))
   },
   async applyPurchaseAdjustment (): Promise<void> {},
-  async applyPhysicalReturn (): Promise<void> {}
+  async applyPhysicalReturn (source: CommercialFact): Promise<void> {
+    await stockService.returnSale(mapPhysicalReturnToStockInput(source))
+  }
 }
 
 export const deliveryPortAdapter: DeliveryPort = {

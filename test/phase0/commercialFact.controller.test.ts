@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import mongoose from 'mongoose'
+import sinon from 'sinon'
 import request from 'supertest'
 
 import SaleModel from '../../src/models/sale'
@@ -7,6 +8,7 @@ import CommercialFactModel from '../../src/models/commercialFact'
 import RoleModel from '../../src/models/role'
 import UserModel from '../../src/models/user'
 import { generateToken } from '../../src/utils/jwt.handle'
+import { stockPortAdapter } from '../../src/services/commercialPorts'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_commercialfact_controller_test'
 
@@ -239,6 +241,12 @@ describe('Phase 0 — commercial fact controller', () => {
   })
 
   describe('physical return', () => {
+    beforeEach(() => {
+      sinon.stub(stockPortAdapter, 'applyPhysicalReturn').resolves()
+    })
+
+    afterEach(() => sinon.restore())
+
     it('S-31: a physical return delegates to Stock and creates no refund', async () => {
       const sale = await createSale(1000)
 
