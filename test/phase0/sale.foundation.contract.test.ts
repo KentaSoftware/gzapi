@@ -68,7 +68,7 @@ describe('Phase 0 — sale foundation contract', () => {
   })
 
   it('S-32: postItem commits stock without cash inflow', async () => {
-    const commitSaleSpy = sinon.spy(stockPortAdapter, 'commitSale')
+    const commitSaleSpy = sinon.stub(stockPortAdapter, 'commitSale').resolves()
 
     const res = await request(app)
       .post('/sale')
@@ -91,7 +91,7 @@ describe('Phase 0 — sale foundation contract', () => {
   })
 
   it('S-32 flag off: postItem does not call commitSale', async () => {
-    const commitSaleSpy = sinon.spy(stockPortAdapter, 'commitSale')
+    const commitSaleSpy = sinon.stub(stockPortAdapter, 'commitSale').resolves()
 
     process.env.PHASE_0_CONTRACTS_ENABLED = 'false'
     let res

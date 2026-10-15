@@ -1,14 +1,21 @@
+import { createHash } from 'node:crypto'
 import { Types } from 'mongoose'
 import BuyModel from '../models/buy'
 import SaleModel from '../models/sale'
+import { STOCK_TIME_ZONE } from '../config/stock'
 import {
   CommercialFact,
   CommercialFactError,
   DeliveryPort,
   FinancePort,
   RoutePlanReader,
-  StockPort
+  StockPort,
+  type CommercialFactLine,
+  type StockSaleReference
 } from '../interfaces/commercialFact.interface'
+import { STOCK_ERROR_CODES, type StockSaleCommitInput } from '../interfaces/stock.interface'
+import { MongooseStockRepository } from './stockMongoRepository'
+import { StockService, StockServiceError } from './stock'
 import { recomputeForSale } from './routePlanOperational'
 
 // Phase 0 Finance port adapter. Finance derives cash only from explicit payment
@@ -35,11 +42,115 @@ export const financePortAdapter: FinancePort = {
   }
 }
 
-// Phase 0 Stock port contract double. It honors the method signatures and the
-// fail-closed boundary but does not implement the Stock ledger (owned by the
-// Stock module) and never writes business collections.
+const stockService = new StockService(new MongooseStockRepository())
+
+const invalidStockReference = (message: string): StockServiceError => new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, message)
+
+const identifierOf = (value: unknown, field: string): string => {
+  if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  if (value instanceof Types.ObjectId) return value.toString()
+  if (typeof value === 'object' && value !== null && 'toHexString' in value && typeof value.toHexString === 'function') return value.toHexString()
+  throw invalidStockReference(`${field} is required`)
+}
+
+const lineRecordOf = (value: CommercialFactLine, index: number): Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw invalidStockReference(`Sale line ${index} is invalid`)
+  return value
+}
+
+const positiveQuantityOf = (line: Record<string, unknown>, index: number): number => {
+  const hasQuantity = line.quantity !== undefined
+  const hasCantidad = line.cantidad !== undefined
+  if (!hasQuantity && !hasCantidad) throw invalidStockReference(`Sale line ${index} quantity is required`)
+  const quantity = hasQuantity ? line.quantity : line.cantidad
+  const cantidad = hasCantidad ? line.cantidad : quantity
+  if (typeof quantity !== 'number' || !Number.isSafeInteger(quantity) || quantity <= 0 || typeof cantidad !== 'number' || !Number.isSafeInteger(cantidad) || cantidad <= 0 || quantity !== cantidad) {
+    throw invalidStockReference(`Sale line ${index} quantity must be a positive integer`)
+  }
+  return quantity
+}
+
+const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/
+
+const sourceLineIdOf = (line: Record<string, unknown>, saleId: string, index: number): string => {
+  const lineId = line.lineId === undefined ? undefined : identifierOf(line.lineId, `Sale line ${index} lineId`)
+  if (lineId !== undefined && OBJECT_ID_PATTERN.test(lineId)) return lineId
+  const lineIdentity = lineId ?? 'missing'
+  return createHash('sha256')
+    .update(`stock-source-line:v1:${saleId}:${lineIdentity}:${index}`, 'utf8')
+    .digest('hex')
+    .slice(0, 24)
+}
+
+const civilDateOf = (date: Date): string => {
+  if (Number.isNaN(date.getTime())) throw invalidStockReference('businessDate is invalid')
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: STOCK_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date)
+  const year = parts.find(({ type }) => type === 'year')?.value
+  const month = parts.find(({ type }) => type === 'month')?.value
+  const day = parts.find(({ type }) => type === 'day')?.value
+  if (year === undefined || month === undefined || day === undefined) throw invalidStockReference('businessDate could not be normalized')
+  return `${year}-${month}-${day}`
+}
+
+export const buenosAiresCivilDate = (date: Date = new Date()): string => civilDateOf(date)
+
+const businessDateOf = (source: CommercialFact | StockSaleReference): string => {
+  const explicit = source.businessDate
+  if (typeof explicit === 'string') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(explicit)) throw invalidStockReference('businessDate must be a civil date')
+    return explicit
+  }
+  if (explicit instanceof Date) return civilDateOf(explicit)
+  return buenosAiresCivilDate()
+}
+
+const sourceLinesOf = (source: CommercialFact | StockSaleReference): CommercialFactLine[] => {
+  if (!Array.isArray(source.lines) || source.lines.length === 0) throw invalidStockReference('At least one sale line is required')
+  return source.lines
+}
+
+const productIdOf = (line: Record<string, unknown>, index: number): string => {
+  const productValue = line.productId ?? line.idProducto ?? line._id
+  return identifierOf(productValue, `Sale line ${index} productId`)
+}
+
+export const mapSaleReferenceToStockCommitInput = (source: CommercialFact | StockSaleReference): StockSaleCommitInput => {
+  const sourceSaleId = 'aggregateId' in source ? source.aggregateId : source.saleId
+  const saleId = identifierOf(sourceSaleId, 'saleId')
+  const actorId = identifierOf(source.actorId, 'actorId')
+  const explicitOperationId = 'operationId' in source ? source.operationId : undefined
+  const sourceIdempotencyKey = 'idempotencyKey' in source ? source.idempotencyKey : undefined
+  const operationId = typeof explicitOperationId === 'string' && explicitOperationId.trim() !== ''
+    ? explicitOperationId.trim()
+    : typeof sourceIdempotencyKey === 'string' && sourceIdempotencyKey.trim() !== ''
+      ? sourceIdempotencyKey.trim()
+      : `sale-commit:${saleId}`
+  const lines = sourceLinesOf(source).map((entry, index) => {
+    const line = lineRecordOf(entry, index)
+    return {
+      lineId: sourceLineIdOf(line, saleId, index),
+      productId: productIdOf(line, index),
+      quantity: positiveQuantityOf(line, index)
+    }
+  })
+  return {
+    saleId,
+    operationId,
+    businessDate: businessDateOf(source),
+    auth: { actorId, canManageStock: false },
+    lines
+  }
+}
+
 export const stockPortAdapter: StockPort = {
-  async commitSale (): Promise<void> {},
+  async commitSale (source: CommercialFact | StockSaleReference): Promise<void> {
+    await stockService.commitSale(mapSaleReferenceToStockCommitInput(source))
+  },
   async receivePurchase (): Promise<void> {},
   async applyPurchaseAdjustment (): Promise<void> {},
   async applyPhysicalReturn (): Promise<void> {}
@@ -63,12 +174,30 @@ export interface SaleCommitmentReference {
   saleId: string
   lines: Array<Record<string, unknown>>
   actorId: string
+  operationId?: string
+  businessDate?: string
+}
+
+export interface SaleCancellationReference {
+  saleId: string
+  operationId: string
+  businessDate: string
+  actorId: string
 }
 
 // Centralizes the sale-creation wiring's commitment call so the caller never
 // fabricates a full CommercialFact for a reservation that is not a fact.
 export const commitSaleReference = async (commitment: SaleCommitmentReference): Promise<void> => {
-  await stockPortAdapter.commitSale(commitment as unknown as CommercialFact)
+  await stockPortAdapter.commitSale(commitment)
+}
+
+export const cancelSaleReference = async (cancellation: SaleCancellationReference): Promise<void> => {
+  await stockService.cancelSale({
+    saleId: cancellation.saleId,
+    operationId: cancellation.operationId,
+    businessDate: cancellation.businessDate,
+    auth: { actorId: cancellation.actorId, canManageStock: false }
+  })
 }
 
 // Phase 0 contract double for the Rutas saved-plan reader. It reads only from an

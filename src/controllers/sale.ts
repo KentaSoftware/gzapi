@@ -12,7 +12,7 @@ import { getClient } from '../services/client'
 import { getSaleStatsByUser, getSaleStatsOverview } from '../services/saleStats'
 import { parseSaleStatsRequest } from '../utils/statsDateRange'
 import { STATS_SCOPE, type StatsValidationFailure } from '../interfaces/saleStats.interface'
-import { commitSaleReference } from '../services/commercialPorts'
+import { buenosAiresCivilDate, cancelSaleReference, commitSaleReference } from '../services/commercialPorts'
 import { isPhase0ContractsEnabled } from '../config/phase0'
 
 interface RequestExt extends Request {
@@ -24,11 +24,19 @@ const sendStatsValidationError = (res: Response, failure: StatsValidationFailure
   res.send(failure.error)
 }
 
-const deleteSaleController = async ({ params }: RequestExt, res: Response): Promise<void> => {
+const deleteSaleController = async ({ params, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const { id } = params
     const response = await deleteSaleService(new Types.ObjectId(id))
     await deleteItemSaleInSale(new Types.ObjectId(id))
+    if (isPhase0ContractsEnabled()) {
+      await cancelSaleReference({
+        saleId: id,
+        operationId: `sale-cancel:${id}`,
+        businessDate: buenosAiresCivilDate(),
+        actorId: String(user?.id ?? '')
+      })
+    }
 
     res.send(response)
   } catch (e) {

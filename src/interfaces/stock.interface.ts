@@ -321,6 +321,8 @@ export interface StockMovementRecord {
   reason?: string
   reversesMovementId?: string
   createdBy: string
+  createdAt?: Date
+  updatedAt?: Date
 }
 
 export interface StockMovementQuery {
