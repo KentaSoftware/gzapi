@@ -24,6 +24,15 @@ const isIsoDateTime = (value: string): boolean => {
   return !Number.isNaN(parsed.getTime())
 }
 
+const isTimeZone = (value: string): boolean => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format()
+    return true
+  } catch {
+    return false
+  }
+}
+
 const operationIdSchema = z.string()
   .trim()
   .min(1)
@@ -38,7 +47,9 @@ const safeNonNegativeIntegerSchema = nonNegativeIntegerSchema.refine(Number.isSa
 
 const availabilityQuerySchema = z.object({
   productIds: z.array(objectIdSchema).min(1).max(100),
-  saleId: objectIdSchema.optional()
+  saleId: objectIdSchema.optional(),
+  businessDate: civilDateSchema.optional(),
+  timeZone: z.string().trim().min(1).max(64).refine(isTimeZone, 'timeZone must be a valid IANA time zone').optional()
 }).strict()
 
 const purchaseReceiptLineInputSchema = z.object({
@@ -52,8 +63,30 @@ const purchaseReceiptInputSchema = z.object({
   buyId: objectIdSchema,
   lines: z.array(purchaseReceiptLineInputSchema).min(1).max(1000),
   receivedAt: isoDateTimeSchema,
+  businessDate: civilDateSchema.optional(),
   operationId: operationIdSchema,
   receivedBy: objectIdSchema
+}).strict()
+
+const stockReturnLineInputSchema = z.object({
+  productId: objectIdSchema,
+  quantity: positiveIntegerSchema,
+  lineId: operationIdSchema.optional()
+}).strict()
+
+const stockReturnInputSchema = z.object({
+  saleId: objectIdSchema,
+  operationId: operationIdSchema,
+  businessDate: civilDateSchema,
+  lines: z.array(stockReturnLineInputSchema).min(1).max(1000),
+  occurredAt: isoDateTimeSchema.optional()
+}).strict()
+
+const expiredRemovalInputSchema = z.object({
+  operationId: operationIdSchema,
+  businessDate: civilDateSchema,
+  reason: z.string().trim().min(1).max(500),
+  occurredAt: isoDateTimeSchema.optional()
 }).strict()
 
 const productInventoryConfigSchema = z.object({
@@ -95,9 +128,12 @@ const openingCountConfirmationInputSchema = openingCountInputSchema.extend({
 }).strict()
 
 export {
+  objectIdSchema,
   availabilityQuerySchema,
   purchaseReceiptLineInputSchema,
   purchaseReceiptInputSchema,
+  stockReturnInputSchema,
+  expiredRemovalInputSchema,
   productInventoryConfigSchema,
   stockErrorEnvelopeSchema,
   stockAlertSchema,

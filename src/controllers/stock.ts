@@ -1,0 +1,239 @@
+import { Request, Response } from 'express'
+
+import {
+  STOCK_ERROR_CODES,
+  type ExpiredRemovalInput,
+  type PurchaseReceiptInput,
+  type StockAvailabilityQuery,
+  type StockOperationResult,
+  type StockPhysicalReturnInput,
+  type StockServiceAuth
+} from '../interfaces/stock.interface'
+import {
+  availabilityQuerySchema,
+  expiredRemovalInputSchema,
+  objectIdSchema,
+  purchaseReceiptInputSchema,
+  stockReturnInputSchema
+} from '../schemas/stock.schema'
+import { StockService, StockServiceError } from '../services/stock'
+import { createMongooseStockRepository } from '../services/stockMongoRepository'
+import { STOCK_TIME_ZONE } from '../config/stock'
+import { sendErrorEnvelope } from '../utils/error.handle'
+
+interface RequestExt extends Request {
+}
+
+const HTTP_STATUS = {
+  CREATED: 201,
+  OK: 200,
+  BAD_REQUEST: 400,
+  FORBIDDEN: 403,
+  CONFLICT: 409,
+  SERVICE_UNAVAILABLE: 503,
+  INTERNAL_SERVER_ERROR: 500
+} as const
+
+const STOCK_ERROR_MESSAGES = {
+  STOCK_FORBIDDEN: 'Stock permission is required',
+  STOCK_DATA_INCOMPLETE: 'Stock request data is incomplete or invalid',
+  STOCK_INSUFFICIENT: 'Stock is insufficient for this operation',
+  STOCK_AVAILABILITY_UNAVAILABLE: 'Stock availability is currently unavailable',
+  EXPIRED_BUCKET_HAS_COMMITMENTS: 'The expired bucket still has sale commitments',
+  STOCK_IDEMPOTENCY_CONFLICT: 'Stock operation conflicts with an existing idempotency record',
+  STOCK_REPOSITORY_ERROR: 'Stock persistence is currently unavailable'
+} as const
+
+type StockErrorCode = keyof typeof STOCK_ERROR_MESSAGES
+
+const service = new StockService(createMongooseStockRepository())
+
+const correlationOf = (req: Request): string | undefined => {
+  const header = req.headers?.['x-correlation-id']
+  return typeof header === 'string' && header.trim() !== '' ? header : undefined
+}
+
+const actorIdOf = (res: Response): string => {
+  const actorId = res.locals.userId
+  return typeof actorId === 'string' ? actorId.trim() : ''
+}
+
+const authOf = (actorId: string): StockServiceAuth => ({ actorId, canManageStock: true })
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const invalidPayload = (res: Response, correlationId: string | undefined): void => {
+  sendErrorEnvelope(res, HTTP_STATUS.BAD_REQUEST, STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, STOCK_ERROR_MESSAGES.STOCK_DATA_INCOMPLETE, correlationId)
+}
+
+const requireActor = (res: Response, correlationId: string | undefined): string | undefined => {
+  const actorId = actorIdOf(res)
+  if (actorId === '') {
+    sendErrorEnvelope(res, HTTP_STATUS.FORBIDDEN, STOCK_ERROR_CODES.STOCK_FORBIDDEN, STOCK_ERROR_MESSAGES.STOCK_FORBIDDEN, correlationId)
+    return undefined
+  }
+  return actorId
+}
+
+const statusFor = (code: StockErrorCode): number => {
+  switch (code) {
+    case STOCK_ERROR_CODES.STOCK_FORBIDDEN:
+      return HTTP_STATUS.FORBIDDEN
+    case STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE:
+      return HTTP_STATUS.BAD_REQUEST
+    case STOCK_ERROR_CODES.STOCK_INSUFFICIENT:
+    case STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT:
+    case STOCK_ERROR_CODES.EXPIRED_BUCKET_HAS_COMMITMENTS:
+      return HTTP_STATUS.CONFLICT
+    case STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE:
+    case STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR:
+      return HTTP_STATUS.SERVICE_UNAVAILABLE
+  }
+}
+
+const isStockServiceError = (error: unknown): error is StockServiceError => error instanceof StockServiceError
+
+const handleError = (res: Response, correlationId: string | undefined, error: unknown): void => {
+  if (isStockServiceError(error)) {
+    sendErrorEnvelope(res, statusFor(error.code), error.code, STOCK_ERROR_MESSAGES[error.code], correlationId)
+    return
+  }
+  sendErrorEnvelope(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, 'INTERNAL_ERROR', 'Stock operation failed', correlationId)
+}
+
+const respond = (res: Response, operation: StockOperationResult): void => {
+  const status = operation.appliedMovementCount === 0 ? HTTP_STATUS.OK : HTTP_STATUS.CREATED
+  res.status(status).send(operation)
+}
+
+const productIdsOf = (value: unknown): string[] | undefined => {
+  const values = typeof value === 'string' ? [value] : Array.isArray(value) ? value : undefined
+  if (values === undefined || !values.every((entry): entry is string => typeof entry === 'string')) return undefined
+  return values.flatMap((entry) => entry.split(',').map((item) => item.trim())).filter((entry) => entry !== '')
+}
+
+const availabilityQueryOf = (query: Record<string, unknown>): Record<string, unknown> | undefined => {
+  const productIds = productIdsOf(query.productIds)
+  if (productIds === undefined) return undefined
+  return { ...query, productIds }
+}
+
+const getAvailability = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined) return
+
+  const normalizedQuery = availabilityQueryOf(req.query as unknown as Record<string, unknown>)
+  const parsed = normalizedQuery === undefined ? undefined : availabilityQuerySchema.safeParse(normalizedQuery)
+  if (parsed === undefined || !parsed.success || parsed.data.businessDate === undefined) {
+    invalidPayload(res, correlationId)
+    return
+  }
+
+  const timeZone = parsed.data.timeZone ?? STOCK_TIME_ZONE
+  const input: StockAvailabilityQuery = {
+    ...parsed.data,
+    businessDate: parsed.data.businessDate,
+    timeZone,
+    auth: authOf(actorId)
+  }
+
+  try {
+    const availability = await service.getAvailability(input)
+    res.status(HTTP_STATUS.OK).send(availability)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const receivePurchase = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+
+  const parsed = purchaseReceiptInputSchema.safeParse({
+    ...req.body,
+    buyId: req.params.buyId,
+    receivedBy: actorId
+  })
+  if (!parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+
+  try {
+    const operation = await service.receivePurchase(parsed.data as PurchaseReceiptInput)
+    respond(res, operation)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const returnSale = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+
+  const parsed = stockReturnInputSchema.safeParse(req.body)
+  if (!parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+
+  const input: StockPhysicalReturnInput = {
+    ...parsed.data,
+    occurredAt: parsed.data.occurredAt === undefined ? undefined : new Date(parsed.data.occurredAt),
+    auth: authOf(actorId)
+  }
+
+  try {
+    const operation = await service.returnSale(input)
+    respond(res, operation)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const removeExpiredBucket = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+
+  const bucketId = objectIdSchema.safeParse(req.params.id)
+  const parsed = expiredRemovalInputSchema.safeParse(req.body)
+  if (!bucketId.success || !parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+
+  const input: ExpiredRemovalInput = {
+    ...parsed.data,
+    bucketId: bucketId.data,
+    occurredAt: parsed.data.occurredAt === undefined ? undefined : new Date(parsed.data.occurredAt),
+    auth: authOf(actorId)
+  }
+
+  try {
+    const operation = await service.removeExpiredBucket(input)
+    respond(res, operation)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+export {
+  getAvailability,
+  receivePurchase,
+  returnSale,
+  removeExpiredBucket
+}
