@@ -13,7 +13,8 @@
     "migration:phase0:preflight": "node -r ts-node/register migrations/phase-0-001-preflight.ts",
     "migration:phase0:backup": "node -r ts-node/register migrations/phase-0-002-backup-verify.ts",
     "migration:phase0:indexes": "node -r ts-node/register migrations/phase-0-003-create-commercial-fact-indexes.ts",
-    "migration:phase0:verify": "node -r ts-node/register migrations/phase-0-004-verify.ts"
+    "migration:phase0:verify": "node -r ts-node/register migrations/phase-0-004-verify.ts",
+    "seed:route-plan:test": "node -r ts-node/register migrations/route-plan-002-seed-test-data.ts"
   },
   "author": "turo1111",
   "license": "UNLICENSED",
@@ -35,7 +36,8 @@
     "pdfkit": "^0.15.0",
     "sharp": "^0.33.4",
     "socket.io": "^4.7.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",

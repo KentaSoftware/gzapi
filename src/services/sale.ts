@@ -195,9 +195,12 @@ const getSale = async (id: Types.ObjectId): Promise<Sale[]> => {
   return response
 }
 
-const updateSale = async (id: Types.ObjectId, sale: Sale): Promise<any> => {
-  const response = await SaleModel.updateOne({ _id: id }, { $set: sale })
-  return response
+const updateSale = async (id: Types.ObjectId, sale: Partial<Sale>): Promise<Sale | null> => {
+  const existingSale = await SaleModel.findById(id)
+  if (existingSale == null) return null
+
+  existingSale.set(sale)
+  return await existingSale.save()
 }
 
 const qtySale = async (filterUser: any): Promise<any> => {

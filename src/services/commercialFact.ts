@@ -15,7 +15,7 @@ import {
   FinancePort,
   StockPort
 } from '../interfaces/commercialFact.interface'
-import { financePortAdapter, stockPortAdapter } from './commercialPorts'
+import { deliveryPortAdapter, financePortAdapter, stockPortAdapter } from './commercialPorts'
 
 const stableStringify = (value: unknown): string => {
   if (value === null || value === undefined) return 'null'
@@ -318,7 +318,8 @@ export class CommercialFactService {
         if (cancelled) {
           throw new CommercialFactError('SALE_DELIVERY_INVALID', 'Sale is not registered or is already cancelled')
         }
-      }
+      },
+      notify: async (fact) => { await deliveryPortAdapter.recordSaleDelivery(fact) }
     })
   }
 

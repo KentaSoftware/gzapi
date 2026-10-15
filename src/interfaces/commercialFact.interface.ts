@@ -84,6 +84,10 @@ export interface FinancePort {
   recordPurchasePayment: (fact: CommercialFact) => Promise<void>
 }
 
+export interface DeliveryPort {
+  recordSaleDelivery: (fact: CommercialFact) => Promise<void>
+}
+
 export interface RoutePlanReader {
   readSavedPlan: (planId: string) => Promise<unknown>
 }
