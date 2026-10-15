@@ -1,5 +1,41 @@
 import { Schema, model } from 'mongoose'
-import { Product } from '../interfaces/product.interface'
+import { BASELINE_STATUS, EXPIRY_TRACKING } from '../interfaces/stock.interface'
+import type { Product, ProductInventoryConfig } from '../interfaces/product.interface'
+
+const ProductInventoryConfigSchema = new Schema<ProductInventoryConfig>(
+  {
+    minimum: {
+      type: Number,
+      required: true,
+      min: 0,
+      validate: {
+        validator: Number.isInteger,
+        message: 'minimum must be a non-negative integer'
+      }
+    },
+    expiryTracking: {
+      type: String,
+      required: true,
+      enum: Object.values(EXPIRY_TRACKING)
+    },
+    baselineStatus: {
+      type: String,
+      required: true,
+      enum: Object.values(BASELINE_STATUS)
+    },
+    lastReconciledAt: {
+      type: Date
+    },
+    lastReconciledBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'user'
+    }
+  },
+  {
+    _id: false,
+    versionKey: false
+  }
+)
 
 const ProductSchema = new Schema<Product>(
   {
@@ -64,6 +100,10 @@ const ProductSchema = new Schema<Product>(
     },
     path: {
       type: String
+    },
+    inventory: {
+      type: ProductInventoryConfigSchema,
+      required: false
     }
   },
   {

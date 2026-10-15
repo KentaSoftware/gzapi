@@ -20,6 +20,7 @@ export interface Product {
   NameProveedor?: string
   NameMarca?: string
   NameCategoria?: string
+  inventory?: ProductInventoryConfig
   createdAt?: Date
   updatedAt?: Date
 }
@@ -28,8 +29,8 @@ export interface ProductInventoryConfig {
   minimum: number
   expiryTracking: ExpiryTracking
   baselineStatus: BaselineStatus
-  lastReconciledAt?: string
-  lastReconciledBy?: string
+  lastReconciledAt?: Date
+  lastReconciledBy?: ObjectId
 }
 
 interface Peso {
