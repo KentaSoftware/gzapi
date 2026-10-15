@@ -1,3 +1,5 @@
+import type { Types } from 'mongoose'
+
 export const INVENTORY_MOVEMENT_TYPES = {
   OPENING: 'OPENING',
   PURCHASE_IN: 'PURCHASE_IN',
@@ -11,6 +13,36 @@ export const INVENTORY_MOVEMENT_TYPES = {
 } as const
 
 export type InventoryMovementType = (typeof INVENTORY_MOVEMENT_TYPES)[keyof typeof INVENTORY_MOVEMENT_TYPES]
+
+export interface InventoryMovement {
+  productId: Types.ObjectId
+  expiryBucketId?: Types.ObjectId
+  type: InventoryMovementType
+  quantity: number
+  occurredAt: Date
+  sourceType: string
+  sourceId: string
+  sourceEvent: string
+  operationId: string
+  idempotencyKey: string
+  rulesVersion: string
+  sourceLineId?: Types.ObjectId
+  reason?: string
+  reversesMovementId?: Types.ObjectId
+  createdBy: Types.ObjectId
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface StockExpiryBucket {
+  productId: Types.ObjectId
+  expiryDate: Date
+  receivedQuantity: number
+  availableQuantity: number
+  committedQuantity: number
+  createdAt: Date
+  updatedAt: Date
+}
 
 export const STOCK_ERROR_CODES = {
   STOCK_INSUFFICIENT: 'STOCK_INSUFFICIENT',
