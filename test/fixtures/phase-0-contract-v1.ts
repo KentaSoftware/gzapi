@@ -1,9 +1,13 @@
 import BuyModel from '../../src/models/buy'
 import CommercialFactModel from '../../src/models/commercialFact'
 import ItemBuyModel from '../../src/models/itemBuy'
+import InventoryMovementModel from '../../src/models/inventoryMovement'
+import ProductModel from '../../src/models/product'
 import RoleModel from '../../src/models/role'
 import SaleModel from '../../src/models/sale'
+import StockExpiryBucketModel from '../../src/models/stockExpiryBucket'
 import UserModel from '../../src/models/user'
+import { BASELINE_STATUS, EXPIRY_TRACKING } from '../../src/interfaces/stock.interface'
 
 const PHASE0_CONTRACT_V1 = {
   version: 'phase-0-contract-v1',
@@ -39,6 +43,9 @@ const ALL_COMMERCIAL_PERMISSIONS = [
 
 const resetPhase0ContractV1 = async (): Promise<void> => {
   await CommercialFactModel.deleteMany({})
+  await InventoryMovementModel.deleteMany({})
+  await StockExpiryBucketModel.deleteMany({})
+  await ProductModel.deleteMany({})
   await ItemBuyModel.deleteMany({})
   await BuyModel.deleteMany({})
   await SaleModel.deleteMany({})
@@ -69,6 +76,22 @@ const seedPhase0ContractV1 = async (): Promise<typeof PHASE0_CONTRACT_V1> => {
     { _id: ids.otherSale, estado: 'Pendiente', total: PHASE0_CONTRACT_V1.saleTotal, user: ids.ownerUser }
   ])
   await BuyModel.create({ _id: ids.buy, estado: 'Pendiente', total: PHASE0_CONTRACT_V1.buyTotal, user: ids.adminUser })
+  await ProductModel.create({
+    _id: ids.product,
+    descripcion: 'Producto de fixture Phase 0',
+    stock: 0,
+    precioUnitario: PHASE0_CONTRACT_V1.buyTotal / PHASE0_CONTRACT_V1.buyQuantity,
+    categoria: ids.product,
+    marca: ids.product,
+    proveedor: ids.product,
+    inventory: {
+      minimum: 0,
+      expiryTracking: EXPIRY_TRACKING.NOT_TRACKED,
+      baselineStatus: BASELINE_STATUS.RECONCILED,
+      lastReconciledAt: new Date(PHASE0_CONTRACT_V1.businessDate),
+      lastReconciledBy: ids.adminUser
+    }
+  })
   await ItemBuyModel.create({
     _id: ids.buyItem,
     idBuy: ids.buy,

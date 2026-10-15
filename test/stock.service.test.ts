@@ -10,6 +10,8 @@ import {
   type InventoryMovementType,
   type StockBucketSnapshot,
   type StockMovementRecord,
+  type PurchaseReceiptInput,
+  type SaleDeliveryInput,
   type StockProductSnapshot,
   type StockRepository,
   type StockRepositorySession,
@@ -28,6 +30,8 @@ class MemoryRepository implements StockRepository {
   buckets = new Map<string, StockBucketSnapshot>()
   movements: StockMovementRecord[] = []
   transactionCalls = 0
+  projectionSessions: Array<{ method: string, session: StockRepositorySession | undefined }> = []
+  receiptSessions: StockRepositorySession[] = []
   private movementSequence = 0
 
   async withTransaction<T> (work: (context: StockTransactionContext) => Promise<T>): Promise<T> {
@@ -61,17 +65,42 @@ class MemoryRepository implements StockRepository {
     return inserted
   }
 
-  async applyBucketProjectionDelta (bucketId: string, delta: { availableQuantityDelta: number, committedQuantityDelta: number }): Promise<void> {
+  async applyBucketProjectionDelta (bucketId: string, delta: { availableQuantityDelta: number, committedQuantityDelta: number, receivedQuantityDelta?: number }, session?: StockRepositorySession): Promise<void> {
+    this.projectionSessions.push({ method: 'bucket', session })
     const bucket = this.buckets.get(bucketId)
     if (bucket === undefined) throw new Error(`Missing bucket ${bucketId}`)
     this.buckets.set(bucketId, {
       ...bucket,
+      receivedQuantity: bucket.receivedQuantity + (delta.receivedQuantityDelta ?? 0),
       availableQuantity: bucket.availableQuantity + delta.availableQuantityDelta,
       committedQuantity: bucket.committedQuantity + delta.committedQuantityDelta
     })
   }
 
-  async applyProductProjectionDelta (productId: string, delta: { availableQuantityDelta: number, committedQuantityDelta: number, physicalQuantityDelta: number }): Promise<void> {
+  async applyPhysicalBucketReceipt (productId: string, expiryDate: string, quantity: number, session?: StockRepositorySession): Promise<StockBucketSnapshot> {
+    if (session !== undefined) this.receiptSessions.push(session)
+    const bucketId = `bucket-${productId}-${expiryDate}`
+    const existing = [...this.buckets.values()].find((entry) => entry.productId === productId && entry.expiryDate === expiryDate)
+    const next = existing === undefined
+      ? {
+          bucketId,
+          productId,
+          expiryDate,
+          receivedQuantity: quantity,
+          availableQuantity: quantity,
+          committedQuantity: 0
+        }
+      : {
+          ...existing,
+          receivedQuantity: existing.receivedQuantity + quantity,
+          availableQuantity: existing.availableQuantity + quantity
+        }
+    this.buckets.set(next.bucketId, next)
+    return next
+  }
+
+  async applyProductProjectionDelta (productId: string, delta: { availableQuantityDelta: number, committedQuantityDelta: number, physicalQuantityDelta: number }, session?: StockRepositorySession): Promise<void> {
+    this.projectionSessions.push({ method: 'product', session })
     const product = this.products.get(productId)
     if (product === undefined) throw new Error(`Missing product ${productId}`)
     this.products.set(productId, {
@@ -184,6 +213,8 @@ describe('Stock service', () => {
     expect(repository.buckets.get('bucket-first')?.availableQuantity).to.equal(0)
     expect(repository.buckets.get('bucket-first')?.committedQuantity).to.equal(4)
     expect(repository.transactionCalls).to.equal(1)
+    expect(repository.projectionSessions).to.have.length(4)
+    expect(repository.projectionSessions.every(({ session }) => session?.transactionId === 'tx-1')).to.equal(true)
   })
 
   it('filters expired buckets from FEFO while retaining them in projections', async () => {
@@ -363,6 +394,156 @@ describe('Stock service', () => {
       auth: { actorId: '', canManageStock: true },
       lines: [{ lineId: 'line-1', productId: PRODUCT_ID, quantity: 1 }]
     }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
+    expect(repository.transactionCalls).to.equal(0)
+  })
+
+  it('receives tracked purchase lines into buckets and physical stock without commitments', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const input: PurchaseReceiptInput = {
+      buyId: 'buy-1',
+      lines: [{ itemBuyId: 'item-buy-1', productId: PRODUCT_ID, quantityReceived: 3, expiryDate: '2026-11-01' }],
+      receivedAt: '2026-10-15T12:00:00.000Z',
+      operationId: 'receipt-1',
+      receivedBy: 'actor-1'
+    }
+
+    const result = await service.receivePurchase(input)
+
+    expect(result.appliedMovementCount).to.equal(1)
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 13, committedQuantity: 0, availableQuantity: 13 })
+    expect([...repository.buckets.values()]).to.have.deep.include({
+      bucketId: 'bucket-product-1-2026-11-01',
+      productId: PRODUCT_ID,
+      expiryDate: '2026-11-01',
+      receivedQuantity: 3,
+      availableQuantity: 3,
+      committedQuantity: 0
+    })
+    expect(repository.movements[0]).to.include({
+      type: INVENTORY_MOVEMENT_TYPES.PURCHASE_IN,
+      sourceType: 'PURCHASE',
+      sourceId: 'buy-1',
+      sourceEvent: 'PURCHASE_RECEIPT',
+      operationId: 'receipt-1',
+      createdBy: 'actor-1'
+    })
+    expect(repository.receiptSessions).to.deep.equal([{ transactionId: 'tx-1' }])
+    expect(repository.projectionSessions).to.deep.equal([{ method: 'product', session: { transactionId: 'tx-1' } }])
+  })
+
+  it('receives non-tracked purchase lines physically and rejects expiry dates', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const input: PurchaseReceiptInput = {
+      buyId: 'buy-2',
+      lines: [{ itemBuyId: 'item-buy-2', productId: UNTRACKED_PRODUCT_ID, quantityReceived: 4 }],
+      receivedAt: '2026-10-15T12:00:00.000Z',
+      operationId: 'receipt-2',
+      receivedBy: 'actor-1'
+    }
+
+    await service.receivePurchase(input)
+    expect(repository.products.get(UNTRACKED_PRODUCT_ID)).to.deep.include({ physicalQuantity: 14, committedQuantity: 0, availableQuantity: 14 })
+    expect(repository.buckets).to.have.property('size', 2)
+    await expectRejected(async () => await service.receivePurchase({
+      ...input,
+      operationId: 'receipt-3',
+      lines: [{ ...input.lines[0], expiryDate: '2026-11-01' }]
+    }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+  })
+
+  it('rejects invalid receipt identity, quantities, expiry, and unknown tracking before writing', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const base: PurchaseReceiptInput = {
+      buyId: 'buy-invalid',
+      lines: [{ itemBuyId: 'item-invalid', productId: PRODUCT_ID, quantityReceived: 1, expiryDate: '2026-11-01' }],
+      receivedAt: '2026-10-15T12:00:00.000Z',
+      operationId: 'receipt-invalid',
+      receivedBy: 'actor-1'
+    }
+
+    await expectRejected(async () => await service.receivePurchase({ ...base, receivedBy: '' }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
+    await expectRejected(async () => await service.receivePurchase({ ...base, lines: [] }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    await expectRejected(async () => await service.receivePurchase({ ...base, lines: [{ ...base.lines[0], quantityReceived: 0 }] }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    await expectRejected(async () => await service.receivePurchase({ ...base, lines: [{ ...base.lines[0], expiryDate: '2026-02-30' }] }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    repository.products.set('unknown-tracking', { ...trackedProduct(), productId: 'unknown-tracking', expiryTracking: EXPIRY_TRACKING.UNKNOWN })
+    await expectRejected(async () => await service.receivePurchase({ ...base, lines: [{ ...base.lines[0], productId: 'unknown-tracking' }] }), STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE)
+    expect(repository.movements).to.have.length(0)
+  })
+
+  it('makes matching receipt retries no-ops and conflicting retries fail closed', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const input: PurchaseReceiptInput = {
+      buyId: 'buy-retry',
+      lines: [{ itemBuyId: 'item-retry', productId: PRODUCT_ID, quantityReceived: 2, expiryDate: '2026-11-01' }],
+      receivedAt: '2026-10-15T12:00:00.000Z',
+      operationId: 'receipt-retry',
+      receivedBy: 'actor-1'
+    }
+
+    const first = await service.receivePurchase(input)
+    const second = await service.receivePurchase(input)
+    expect(first.appliedMovementCount).to.equal(1)
+    expect(second).to.include({ appliedMovementCount: 0, alreadyAppliedCount: 1 })
+    expect(repository.products.get(PRODUCT_ID)?.physicalQuantity).to.equal(12)
+    await expectRejected(async () => await service.receivePurchase({ ...input, lines: [{ ...input.lines[0], quantityReceived: 3 }] }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+  })
+
+  it('delivers tracked commitments once while preserving available quantities', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await service.commitSale({ saleId: 'sale-delivery', operationId: 'commit-delivery', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-delivery', productId: PRODUCT_ID, quantity: 3 }] })
+    const input: SaleDeliveryInput = { saleId: 'sale-delivery', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-1', deliveredBy: 'actor-1' }
+    repository.projectionSessions = []
+
+    const first = await service.deliverSale(input)
+    const second = await service.deliverSale(input)
+
+    expect(first.appliedMovementCount).to.equal(1)
+    expect(second.appliedMovementCount).to.equal(0)
+    expect(second.alreadyAppliedCount).to.equal(1)
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 7, committedQuantity: 0, availableQuantity: 7 })
+    expect(repository.buckets.get('bucket-first')).to.deep.include({ receivedQuantity: 1, availableQuantity: 1, committedQuantity: 0 })
+    expect(repository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT)).to.have.length(1)
+    expect(repository.movements.find(({ type }) => type === INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT)).to.include({ operationId: 'delivery-1', createdBy: 'actor-1', sourceEvent: 'SALE_DELIVERY' })
+    expect(repository.projectionSessions).to.have.length(2)
+    expect(repository.projectionSessions.every(({ session }) => session?.transactionId === 'tx-2')).to.equal(true)
+  })
+
+  it('delivers non-tracked commitments by closing the ledger commitment and physical stock', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await service.commitSale({ saleId: 'sale-untracked-delivery', operationId: 'commit-untracked-delivery', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-delivery', productId: UNTRACKED_PRODUCT_ID, quantity: 3 }] })
+    const input: SaleDeliveryInput = { saleId: 'sale-untracked-delivery', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-untracked', deliveredBy: 'actor-1' }
+
+    await service.deliverSale(input)
+
+    expect(repository.products.get(UNTRACKED_PRODUCT_ID)).to.deep.include({ physicalQuantity: 7, committedQuantity: 0, availableQuantity: 7 })
+    expect(repository.movements).to.have.length(2)
+    expect(repository.movements[1]).to.include({ type: INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT, quantity: 3, reversesMovementId: repository.movements[0].movementId })
+  })
+
+  it('does not consume cancelled or already delivered commitments', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await service.commitSale({ saleId: 'sale-cancelled', operationId: 'commit-cancelled', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-cancelled', productId: PRODUCT_ID, quantity: 2 }] })
+    await service.cancelSale({ saleId: 'sale-cancelled', operationId: 'cancel-cancelled', businessDate: DATE, auth: ACTOR })
+    const cancelledDelivery = await service.deliverSale({ saleId: 'sale-cancelled', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-cancelled', deliveredBy: 'actor-1' })
+    expect(cancelledDelivery.appliedMovementCount).to.equal(0)
+
+    await service.commitSale({ saleId: 'sale-delivered', operationId: 'commit-delivered', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-delivered', productId: PRODUCT_ID, quantity: 2 }] })
+    await service.deliverSale({ saleId: 'sale-delivered', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-delivered', deliveredBy: 'actor-1' })
+    const repeatedDelivery = await service.deliverSale({ saleId: 'sale-delivered', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-other', deliveredBy: 'actor-1' })
+    expect(repeatedDelivery.appliedMovementCount).to.equal(0)
+  })
+
+  it('requires an authenticated delivery actor', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    await expectRejected(async () => await service.deliverSale({ saleId: 'sale-actor', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-actor', deliveredBy: '' }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
     expect(repository.transactionCalls).to.equal(0)
   })
 })

@@ -118,6 +118,12 @@ const positiveIntegerOf = (value: unknown, field: string): number => {
   return value
 }
 
+const isCivilDate = (value: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
 const nonNegativeIntegerOf = (value: unknown, field: string): number => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw repositoryError(`${field} must be a non-negative integer`)
   return value
@@ -129,8 +135,15 @@ const dateOf = (value: unknown, field: string): Date => {
   return date
 }
 
+const isCanonicalCivilDate = (date: Date): boolean =>
+  date.getUTCHours() === 0 &&
+  date.getUTCMinutes() === 0 &&
+  date.getUTCSeconds() === 0 &&
+  date.getUTCMilliseconds() === 0
+
 const civilDateOf = (value: unknown, timeZone: string = STOCK_TIME_ZONE): string => {
   const date = dateOf(value, 'expiryDate')
+  if (isCanonicalCivilDate(date)) return date.toISOString().slice(0, 10)
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
     year: 'numeric',
@@ -244,6 +257,7 @@ const ledgerCommittedQuantity = (movements: StockMovementRecord[]): number => mo
   if (movement.type === INVENTORY_MOVEMENT_TYPES.SALE_CANCEL) return total - movement.quantity
   if (movement.type === INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT && movement.reason === 'addition') return total + movement.quantity
   if (movement.type === INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT && movement.reason === 'release') return total - movement.quantity
+  if (movement.type === INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT) return total - movement.quantity
   return total
 }, 0)
 
@@ -365,18 +379,63 @@ export class MongooseStockRepository implements StockRepository {
     }
   }
 
+  async applyPhysicalBucketReceipt (productId: string, expiryDate: string, quantity: number, session?: StockRepositorySession): Promise<StockBucketSnapshot> {
+    if (!isCivilDate(expiryDate)) throw repositoryError('expiryDate must be a valid civil date')
+    positiveIntegerOf(quantity, 'quantity')
+    try {
+      const productObjectId = objectIdOf(productId, 'productId')
+      const query = StockExpiryBucketModel.findOneAndUpdate(
+        {
+          productId: productObjectId,
+          expiryDate,
+          receivedQuantity: { $gte: 0 },
+          availableQuantity: { $gte: 0 },
+          committedQuantity: { $gte: 0 }
+        },
+        {
+          $setOnInsert: {
+            productId: productObjectId,
+            expiryDate,
+            receivedQuantity: 0,
+            availableQuantity: 0,
+            committedQuantity: 0
+          },
+          $inc: {
+            receivedQuantity: quantity,
+            availableQuantity: quantity
+          }
+        },
+        { new: true, upsert: true }
+      )
+      const mongoSession = this.mongoSessionOf(session)
+      if (mongoSession !== undefined) void query.session(mongoSession)
+      const document = await query.lean<MongoBucketDocument>().exec()
+      if (document === null) throw repositoryError(`Stock bucket for ${productId} and ${expiryDate} was not updated`)
+      const snapshot = mapBucketDocumentToStockSnapshot(document)
+      if (snapshot.receivedQuantity !== snapshot.availableQuantity + snapshot.committedQuantity) throw repositoryError(`Stock bucket for ${productId} and ${expiryDate} is inconsistent`)
+      return snapshot
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not receive stock bucket for ${productId}`, error)
+    }
+  }
+
   async applyBucketProjectionDelta (bucketId: string, delta: StockBucketProjectionDelta, session?: StockRepositorySession): Promise<void> {
     validateProjectionDelta(delta.availableQuantityDelta, 'availableQuantityDelta')
     validateProjectionDelta(delta.committedQuantityDelta, 'committedQuantityDelta')
+    validateProjectionDelta(delta.receivedQuantityDelta ?? 0, 'receivedQuantityDelta')
     try {
       const filter: Record<string, unknown> = { _id: objectIdOf(bucketId, 'bucketId') }
       if (delta.availableQuantityDelta < 0) filter.availableQuantity = { $gte: -delta.availableQuantityDelta }
       if (delta.committedQuantityDelta < 0) filter.committedQuantity = { $gte: -delta.committedQuantityDelta }
+      if ((delta.receivedQuantityDelta ?? 0) < 0) filter.receivedQuantity = { $gte: -(delta.receivedQuantityDelta ?? 0) }
+      const increments: Record<string, number> = {
+        availableQuantity: delta.availableQuantityDelta,
+        committedQuantity: delta.committedQuantityDelta
+      }
+      if ((delta.receivedQuantityDelta ?? 0) !== 0) increments.receivedQuantity = delta.receivedQuantityDelta as number
       const query = StockExpiryBucketModel.updateOne(filter, {
-        $inc: {
-          availableQuantity: delta.availableQuantityDelta,
-          committedQuantity: delta.committedQuantityDelta
-        }
+        $inc: increments
       })
       const mongoSession = this.mongoSessionOf(session)
       if (mongoSession !== undefined) void query.session(mongoSession)
@@ -424,6 +483,7 @@ export class MongooseStockRepository implements StockRepository {
       findMovementByIdempotencyKey: async (key, session) => await this.findMovementByIdempotencyKey(key, session),
       findMovements: async (query, session) => await this.findMovements(query, session),
       insertMovement: async (movement, session) => await this.insertMovement(movement, session),
+      applyPhysicalBucketReceipt: async (productId, expiryDate, quantity, session) => await this.applyPhysicalBucketReceipt(productId, expiryDate, quantity, session),
       applyBucketProjectionDelta: async (bucketId, delta, session) => await this.applyBucketProjectionDelta(bucketId, delta, session),
       applyProductProjectionDelta: async (productId, delta, session) => await this.applyProductProjectionDelta(productId, delta, session)
     }
@@ -450,7 +510,8 @@ export class MongooseStockRepository implements StockRepository {
         $in: [
           INVENTORY_MOVEMENT_TYPES.SALE_COMMIT,
           INVENTORY_MOVEMENT_TYPES.SALE_CANCEL,
-          INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT
+          INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT,
+          INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT
         ]
       }
     })

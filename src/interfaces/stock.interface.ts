@@ -144,8 +144,17 @@ export interface PurchaseReceiptInput {
   buyId: string
   lines: PurchaseReceiptLineInput[]
   receivedAt: string
+  businessDate?: string
   operationId: string
   receivedBy: string
+}
+
+export interface SaleDeliveryInput {
+  saleId: string
+  deliveredAt: string
+  businessDate?: string
+  operationId: string
+  deliveredBy: string
 }
 
 export interface StockErrorEnvelope {
@@ -339,6 +348,7 @@ export interface StockIdempotentMovementResult {
 export interface StockBucketProjectionDelta {
   availableQuantityDelta: number
   committedQuantityDelta: number
+  receivedQuantityDelta?: number
 }
 
 export interface StockProductProjectionDelta {
@@ -371,6 +381,7 @@ export interface StockRepository {
   findMovementByIdempotencyKey: (idempotencyKey: string, session?: StockRepositorySession) => Promise<StockMovementRecord | undefined>
   findMovements: (query: StockMovementQuery, session?: StockRepositorySession) => Promise<StockMovementRecord[]>
   insertMovement: (movement: StockMovementRecord, session?: StockRepositorySession) => Promise<StockMovementRecord>
+  applyPhysicalBucketReceipt: (productId: string, expiryDate: string, quantity: number, session?: StockRepositorySession) => Promise<StockBucketSnapshot>
   applyBucketProjectionDelta: (bucketId: string, delta: StockBucketProjectionDelta, session?: StockRepositorySession) => Promise<void>
   applyProductProjectionDelta: (productId: string, delta: StockProductProjectionDelta, session?: StockRepositorySession) => Promise<void>
 }

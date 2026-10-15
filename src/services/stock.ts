@@ -16,7 +16,9 @@ import {
   type StockOperationInput,
   type StockOperationResult,
   type StockProductSnapshot,
+  type PurchaseReceiptInput,
   type StockRepository,
+  type SaleDeliveryInput,
   type StockSaleAdjustmentInput,
   type StockSaleAvailabilityInput,
   type StockSaleCancelInput,
@@ -30,10 +32,19 @@ import { STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
 import { allocateFefo, calculateAvailability, StockRuleError } from './stockRules'
 
 const SOURCE_TYPE = 'SALE'
+const PURCHASE_SOURCE_TYPE = 'PURCHASE'
 const SOURCE_EVENTS = {
   COMMIT: 'SALE_COMMIT',
   CANCEL: 'SALE_CANCEL',
   ADJUSTMENT: 'SALE_ADJUSTMENT'
+} as const
+
+const PURCHASE_SOURCE_EVENTS = {
+  RECEIPT: 'PURCHASE_RECEIPT'
+} as const
+
+const DELIVERY_SOURCE_EVENTS = {
+  DELIVERED: 'SALE_DELIVERY'
 } as const
 
 type StockSourceEvent = (typeof SOURCE_EVENTS)[keyof typeof SOURCE_EVENTS]
@@ -92,6 +103,45 @@ const hasSameMovementSemantics = (left: StockMovementRecord, right: StockMovemen
 
 const validAuth = (auth: StockServiceAuth | undefined): boolean =>
   auth !== undefined && typeof auth.actorId === 'string' && auth.actorId.trim() !== ''
+
+const validIdentity = (value: unknown): value is string => typeof value === 'string' && value.trim() !== ''
+
+const isCivilDate = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
+const dateTimeOf = (value: unknown, field: string): Date => {
+  if (!validIdentity(value)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `${field} is required`)
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `${field} is invalid`)
+  return date
+}
+
+const validateReceipt = (input: PurchaseReceiptInput): Date => {
+  if (!validIdentity(input.receivedBy)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
+  if (!validIdentity(input.buyId) || !validIdentity(input.operationId) || !Array.isArray(input.lines) || input.lines.length === 0) {
+    throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Purchase receipt identity is incomplete')
+  }
+  for (const line of input.lines) {
+    if (typeof line !== 'object' || line === null || !validIdentity(line.itemBuyId) || !validIdentity(line.productId) || !isPositiveInteger(line.quantityReceived)) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Purchase receipt lines are incomplete')
+    }
+    if (line.expiryDate !== undefined && !isCivilDate(line.expiryDate)) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Purchase receipt expiryDate must be a valid civil date')
+    }
+  }
+  if (input.businessDate !== undefined && !isCivilDate(input.businessDate)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'businessDate must be a valid civil date')
+  return dateTimeOf(input.receivedAt, 'receivedAt')
+}
+
+const validateDelivery = (input: SaleDeliveryInput): Date => {
+  if (!validIdentity(input.deliveredBy)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
+  if (!validIdentity(input.saleId) || !validIdentity(input.operationId)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Sale delivery identity is incomplete')
+  if (input.businessDate !== undefined && !isCivilDate(input.businessDate)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'businessDate must be a valid civil date')
+  return dateTimeOf(input.deliveredAt, 'deliveredAt')
+}
 
 const aggregateLines = (lines: StockSaleLineInput[]): StockAggregatedLine[] => {
   const quantities = new Map<string, number>()
@@ -197,6 +247,183 @@ export class StockService {
       await this.assertAvailabilityInTransaction(transaction, pendingLines, input.businessDate, input.timeZone ?? this.timeZone)
       const counters = await this.applyAdditions(transaction, input, pendingLines, INVENTORY_MOVEMENT_TYPES.SALE_COMMIT, SOURCE_EVENTS.COMMIT)
       return operationResult(input.operationId, counters.applied, alreadyAppliedCount + counters.alreadyApplied, counters.projections)
+    })
+  }
+
+  async receivePurchase (input: PurchaseReceiptInput): Promise<StockOperationResult> {
+    const occurredAt = validateReceipt(input)
+    return await this.runTransaction(input.operationId, async (transaction) => {
+      let applied = 0
+      let alreadyApplied = 0
+      let projections = 0
+      for (const line of input.lines) {
+        const product = await transaction.getProduct(line.productId, transaction.session)
+        if (product === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Availability is unavailable for ${line.productId}`)
+        if (!this.validProductSnapshot(product, line.productId)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Product projection is invalid for ${line.productId}`)
+        if (product.expiryTracking === EXPIRY_TRACKING.UNKNOWN) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Expiry tracking is unavailable for ${line.productId}`)
+        if (product.expiryTracking === EXPIRY_TRACKING.TRACKED && line.expiryDate === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Expiry date is required for ${line.productId}`)
+        if (product.expiryTracking === EXPIRY_TRACKING.NOT_TRACKED && line.expiryDate !== undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Expiry date is not valid for ${line.productId}`)
+
+        const idempotencyKey = `purchase-receipt:${input.operationId}:${input.buyId}:${line.itemBuyId}`
+        const existing = await transaction.findMovementByIdempotencyKey(idempotencyKey, transaction.session)
+        if (existing !== undefined) {
+          const buckets = product.expiryTracking === EXPIRY_TRACKING.TRACKED ? await transaction.getBuckets(line.productId, transaction.session) : []
+          const existingBucket = existing.expiryBucketId === undefined ? undefined : buckets.find((bucket) => bucket.bucketId === existing.expiryBucketId)
+          const expectedBucketId = product.expiryTracking === EXPIRY_TRACKING.TRACKED ? existing.expiryBucketId : undefined
+          const compatible = hasSameMovementSemantics(existing, {
+            ...existing,
+            productId: line.productId,
+            expiryBucketId: expectedBucketId,
+            type: INVENTORY_MOVEMENT_TYPES.PURCHASE_IN,
+            quantity: line.quantityReceived,
+            occurredAt,
+            sourceType: PURCHASE_SOURCE_TYPE,
+            sourceId: input.buyId,
+            sourceEvent: PURCHASE_SOURCE_EVENTS.RECEIPT,
+            operationId: input.operationId,
+            idempotencyKey,
+            rulesVersion: this.rulesVersion,
+            sourceLineId: line.itemBuyId,
+            createdBy: input.receivedBy
+          }) && (product.expiryTracking !== EXPIRY_TRACKING.TRACKED || (existingBucket !== undefined && existingBucket.expiryDate === line.expiryDate))
+          if (!compatible) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT, `Idempotency key conflicts: ${idempotencyKey}`)
+          alreadyApplied += 1
+          continue
+        }
+
+        let expiryBucketId: string | undefined
+        if (product.expiryTracking === EXPIRY_TRACKING.TRACKED) {
+          const bucket = await transaction.applyPhysicalBucketReceipt(line.productId, line.expiryDate as string, line.quantityReceived, transaction.session)
+          if (!this.validBucketSnapshot(bucket) || bucket.productId !== line.productId || bucket.expiryDate !== line.expiryDate || bucket.receivedQuantity !== bucket.availableQuantity + bucket.committedQuantity) {
+            throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Physical bucket projection is invalid for ${line.productId}`)
+          }
+          expiryBucketId = bucket.bucketId
+        }
+        const movement: StockMovementRecord = {
+          productId: line.productId,
+          expiryBucketId,
+          type: INVENTORY_MOVEMENT_TYPES.PURCHASE_IN,
+          quantity: line.quantityReceived,
+          occurredAt,
+          sourceType: PURCHASE_SOURCE_TYPE,
+          sourceId: input.buyId,
+          sourceEvent: PURCHASE_SOURCE_EVENTS.RECEIPT,
+          operationId: input.operationId,
+          idempotencyKey,
+          rulesVersion: this.rulesVersion,
+          sourceLineId: line.itemBuyId,
+          createdBy: input.receivedBy
+        }
+        const persisted = await this.persistMovement(transaction, movement)
+        if (persisted.alreadyApplied) {
+          alreadyApplied += 1
+          continue
+        }
+        await this.applyPhysicalProjection(transaction, movement)
+        applied += 1
+        projections += product.expiryTracking === EXPIRY_TRACKING.TRACKED ? 2 : 1
+      }
+      return operationResult(input.operationId, applied, alreadyApplied, projections)
+    })
+  }
+
+  async deliverSale (input: SaleDeliveryInput): Promise<StockOperationResult> {
+    const occurredAt = validateDelivery(input)
+    const existingCommitments = await this.repository.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId, type: INVENTORY_MOVEMENT_TYPES.SALE_COMMIT })
+    if (existingCommitments.length === 0) return operationResult(input.operationId, 0, 0, 0)
+    return await this.runTransaction(input.operationId, async (transaction) => {
+      const commitments = await transaction.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId, type: INVENTORY_MOVEMENT_TYPES.SALE_COMMIT }, transaction.session)
+      const related = await transaction.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId }, transaction.session)
+      const releases = related.filter((movement) => movement.type === INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT && movement.reason === 'release')
+      const releaseRemaining = new Map<string, number>()
+      for (const release of releases) {
+        const releaseKey = `${release.productId}:${release.expiryBucketId ?? 'untracked'}:${release.sourceLineId ?? ''}`
+        releaseRemaining.set(releaseKey, (releaseRemaining.get(releaseKey) ?? 0) + release.quantity)
+      }
+      let applied = 0
+      let alreadyApplied = 0
+      let projections = 0
+      for (const commitment of commitments) {
+        if (commitment.movementId === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Commitment movement identity is missing')
+        const key = `sale-delivery:${input.operationId}:${input.saleId}:${commitment.movementId}`
+        const existing = await transaction.findMovementByIdempotencyKey(key, transaction.session)
+        if (existing !== undefined) {
+          const compatible = hasSameMovementSemantics(existing, {
+            ...existing,
+            productId: commitment.productId,
+            expiryBucketId: commitment.expiryBucketId,
+            type: INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT,
+            sourceType: SOURCE_TYPE,
+            sourceId: input.saleId,
+            sourceEvent: DELIVERY_SOURCE_EVENTS.DELIVERED,
+            operationId: input.operationId,
+            idempotencyKey: key,
+            rulesVersion: this.rulesVersion,
+            sourceLineId: commitment.sourceLineId,
+            reversesMovementId: commitment.movementId,
+            createdBy: input.deliveredBy
+          })
+          if (!compatible) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT, `Idempotency key conflicts: ${key}`)
+          alreadyApplied += 1
+          continue
+        }
+
+        const cancellations = related.filter((movement) => movement.type === INVENTORY_MOVEMENT_TYPES.SALE_CANCEL && movement.reversesMovementId === commitment.movementId)
+        const deliveries = related.filter((movement) => movement.type === INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT && movement.reversesMovementId === commitment.movementId)
+        const cancelledQuantity = cancellations.reduce((total, movement) => total + movement.quantity, 0)
+        const deliveredQuantity = deliveries.reduce((total, movement) => total + movement.quantity, 0)
+        const releaseKey = `${commitment.productId}:${commitment.expiryBucketId ?? 'untracked'}:${commitment.sourceLineId ?? ''}`
+        const releaseQuantity = Math.min(releaseRemaining.get(releaseKey) ?? 0, Math.max(0, commitment.quantity - cancelledQuantity - deliveredQuantity))
+        releaseRemaining.set(releaseKey, Math.max(0, (releaseRemaining.get(releaseKey) ?? 0) - releaseQuantity))
+        const consumedQuantity = cancelledQuantity + deliveredQuantity + releaseQuantity
+        if (consumedQuantity > commitment.quantity) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Commitment compensations exceed ${commitment.movementId}`)
+        const quantity = commitment.quantity - consumedQuantity
+        if (quantity === 0) continue
+
+        const product = await transaction.getProduct(commitment.productId, transaction.session)
+        if (product === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Availability is unavailable for ${commitment.productId}`)
+        if (!this.validProductSnapshot(product, commitment.productId)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Product projection is invalid for ${commitment.productId}`)
+        const buckets = await transaction.getBuckets(commitment.productId, transaction.session)
+        if (product.expiryTracking === EXPIRY_TRACKING.TRACKED) {
+          if (commitment.expiryBucketId === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Delivery bucket is required for ${commitment.productId}`)
+          const bucket = buckets.find((entry) => entry.bucketId === commitment.expiryBucketId)
+          if (bucket === undefined || !this.validBucketSnapshot(bucket) || bucket.productId !== commitment.productId || bucket.committedQuantity < quantity || bucket.receivedQuantity < quantity || bucket.receivedQuantity !== bucket.availableQuantity + bucket.committedQuantity) {
+            throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Physical bucket projection is invalid for ${commitment.productId}`)
+          }
+          if (product.physicalQuantity < quantity || product.committedQuantity < quantity) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_INSUFFICIENT, `Physical stock is insufficient for ${commitment.productId}`)
+        } else if (product.expiryTracking === EXPIRY_TRACKING.NOT_TRACKED) {
+          if (commitment.expiryBucketId !== undefined || buckets.length > 0) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Delivery bucket data is invalid for ${commitment.productId}`)
+          if (product.physicalQuantity < quantity || product.committedQuantity < quantity) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_INSUFFICIENT, `Physical stock is insufficient for ${commitment.productId}`)
+        } else {
+          throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Expiry tracking is unavailable for ${commitment.productId}`)
+        }
+
+        const movement: StockMovementRecord = {
+          productId: commitment.productId,
+          expiryBucketId: commitment.expiryBucketId,
+          type: INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT,
+          quantity,
+          occurredAt,
+          sourceType: SOURCE_TYPE,
+          sourceId: input.saleId,
+          sourceEvent: DELIVERY_SOURCE_EVENTS.DELIVERED,
+          operationId: input.operationId,
+          idempotencyKey: key,
+          rulesVersion: this.rulesVersion,
+          sourceLineId: commitment.sourceLineId,
+          reversesMovementId: commitment.movementId,
+          createdBy: input.deliveredBy
+        }
+        const persisted = await this.persistMovement(transaction, movement)
+        if (persisted.alreadyApplied) {
+          alreadyApplied += 1
+          continue
+        }
+        await this.applyDeliveryProjection(transaction, movement)
+        applied += 1
+        projections += commitment.expiryBucketId === undefined ? 1 : 2
+      }
+      return operationResult(input.operationId, applied, alreadyApplied, projections)
     })
   }
 
@@ -454,12 +681,43 @@ export class StockService {
         availableQuantityDelta: -quantity,
         committedQuantityDelta: quantity,
         physicalQuantityDelta: 0
-      })
+      }, transaction.session)
       if (movement.expiryBucketId !== undefined) {
         await transaction.applyBucketProjectionDelta(movement.expiryBucketId, {
           availableQuantityDelta: -quantity,
           committedQuantityDelta: quantity
-        })
+        }, transaction.session)
+      }
+    } catch (error) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))
+    }
+  }
+
+  private async applyPhysicalProjection (transaction: StockRepository & StockTransactionContext, movement: StockMovementRecord): Promise<void> {
+    try {
+      await transaction.applyProductProjectionDelta(movement.productId, {
+        availableQuantityDelta: movement.quantity,
+        committedQuantityDelta: 0,
+        physicalQuantityDelta: movement.quantity
+      }, transaction.session)
+    } catch (error) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))
+    }
+  }
+
+  private async applyDeliveryProjection (transaction: StockRepository & StockTransactionContext, movement: StockMovementRecord): Promise<void> {
+    try {
+      await transaction.applyProductProjectionDelta(movement.productId, {
+        availableQuantityDelta: 0,
+        committedQuantityDelta: -movement.quantity,
+        physicalQuantityDelta: -movement.quantity
+      }, transaction.session)
+      if (movement.expiryBucketId !== undefined) {
+        await transaction.applyBucketProjectionDelta(movement.expiryBucketId, {
+          availableQuantityDelta: 0,
+          committedQuantityDelta: -movement.quantity,
+          receivedQuantityDelta: -movement.quantity
+        }, transaction.session)
       }
     } catch (error) {
       throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))

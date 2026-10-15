@@ -16,6 +16,7 @@ import {
 } from '../src/services/stockMongoRepository'
 import { STOCK_TIME_ZONE } from '../src/config/stock'
 import ProductModel from '../src/models/product'
+import InventoryMovementModel from '../src/models/inventoryMovement'
 import StockExpiryBucketModel from '../src/models/stockExpiryBucket'
 import {
   mapSaleReferenceToStockCommitInput,
@@ -49,7 +50,7 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     })
   })
 
-  it('normalizes an expiry bucket to a Buenos Aires civil date and stable id', () => {
+  it('normalizes a non-canonical near-midnight UTC expiry through Buenos Aires time', () => {
     const snapshot = mapBucketDocumentToStockSnapshot({
       _id: new Types.ObjectId('507f1f77bcf86cd799439012'),
       productId: new Types.ObjectId('507f1f77bcf86cd799439011'),
@@ -67,6 +68,19 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
       availableQuantity: 4,
       committedQuantity: 6
     })
+  })
+
+  it('interprets a Mongoose-canonical midnight UTC expiry as its stored civil date', () => {
+    const snapshot = mapBucketDocumentToStockSnapshot({
+      _id: new Types.ObjectId('507f1f77bcf86cd799439014'),
+      productId: new Types.ObjectId('507f1f77bcf86cd799439011'),
+      expiryDate: new Date('2026-10-16T00:00:00.000Z'),
+      receivedQuantity: 10,
+      availableQuantity: 4,
+      committedQuantity: 6
+    })
+
+    expect(snapshot.expiryDate).to.equal('2026-10-16')
   })
 
   it('maps a lightweight sale reference with a deterministic date and ignores price or bulto fields', () => {
@@ -201,12 +215,115 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
 
     await repository.applyBucketProjectionDelta('507f1f77bcf86cd799439012', {
       availableQuantityDelta: -2,
-      committedQuantityDelta: 2
+      committedQuantityDelta: 2,
+      receivedQuantityDelta: -2
     })
 
     expect(updateStub.calledOnce).to.equal(true)
     expect(updateStub.firstCall.args[1]).to.deep.equal({
-      $inc: { availableQuantity: -2, committedQuantity: 2 }
+      $inc: { availableQuantity: -2, committedQuantity: 2, receivedQuantity: -2 }
+    })
+  })
+
+  it('upserts physical receipt buckets with session-aware atomic increments', async () => {
+    const updateQuery = {
+      session: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves({
+        _id: new Types.ObjectId('507f1f77bcf86cd799439012'),
+        productId: new Types.ObjectId('507f1f77bcf86cd799439011'),
+        expiryDate: new Date('2026-11-01T12:00:00.000Z'),
+        receivedQuantity: 4,
+        availableQuantity: 4,
+        committedQuantity: 0
+      })
+    }
+    const updateStub = sinon.stub(StockExpiryBucketModel, 'findOneAndUpdate').returns(updateQuery as unknown as ReturnType<typeof StockExpiryBucketModel.findOneAndUpdate>)
+    const repository = new MongooseStockRepository()
+
+    const snapshot = await repository.applyPhysicalBucketReceipt('507f1f77bcf86cd799439011', '2026-11-01', 4)
+
+    expect(snapshot).to.deep.include({ expiryDate: '2026-11-01', receivedQuantity: 4, availableQuantity: 4, committedQuantity: 0 })
+    expect(updateStub.calledOnce).to.equal(true)
+    expect(updateStub.firstCall.args[0]).to.deep.equal({
+      productId: new Types.ObjectId('507f1f77bcf86cd799439011'),
+      expiryDate: '2026-11-01',
+      receivedQuantity: { $gte: 0 },
+      availableQuantity: { $gte: 0 },
+      committedQuantity: { $gte: 0 }
+    })
+    expect(updateStub.firstCall.args[1]).to.deep.equal({
+      $setOnInsert: {
+        productId: new Types.ObjectId('507f1f77bcf86cd799439011'),
+        expiryDate: '2026-11-01',
+        receivedQuantity: 0,
+        availableQuantity: 0,
+        committedQuantity: 0
+      },
+      $inc: { receivedQuantity: 4, availableQuantity: 4 }
+    })
+  })
+
+  it('rejects impossible civil expiry dates before writing', async () => {
+    const updateStub = sinon.stub(StockExpiryBucketModel, 'findOneAndUpdate')
+    const repository = new MongooseStockRepository()
+
+    try {
+      await repository.applyPhysicalBucketReceipt('507f1f77bcf86cd799439011', '2026-02-30', 4)
+      expect.fail('expected impossible expiry date to reject')
+    } catch (error) {
+      expect(error).to.be.instanceOf(StockServiceError)
+      expect(error).to.have.property('code', STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR)
+    }
+
+    expect(updateStub.called).to.equal(false)
+  })
+
+  it('derives non-tracked commitments after delivered-out movements', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const actorId = new Types.ObjectId('507f1f77bcf86cd799439013')
+    const occurredAt = new Date('2026-10-15T12:00:00.000Z')
+    const movement = {
+      _id: new Types.ObjectId('507f1f77bcf86cd799439014'),
+      productId,
+      type: INVENTORY_MOVEMENT_TYPES.SALE_COMMIT,
+      quantity: 3,
+      occurredAt,
+      sourceType: 'SALE',
+      sourceId: 'sale-1',
+      sourceEvent: 'SALE_COMMIT',
+      operationId: 'operation-1',
+      idempotencyKey: 'idempotency-1',
+      rulesVersion: 'stock-rules-v1',
+      createdBy: actorId,
+      createdAt: occurredAt,
+      updatedAt: occurredAt
+    }
+    const delivered = { ...movement, _id: new Types.ObjectId('507f1f77bcf86cd799439015'), type: INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT, sourceEvent: 'SALE_DELIVERY', idempotencyKey: 'idempotency-2', reversesMovementId: movement._id }
+    const productQuery = {
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves({ _id: productId, stock: 10, inventory: { expiryTracking: EXPIRY_TRACKING.NOT_TRACKED, baselineStatus: BASELINE_STATUS.RECONCILED } })
+    }
+    const movementQuery = {
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([movement, delivered])
+    }
+    sinon.stub(ProductModel, 'findById').returns(productQuery as unknown as ReturnType<typeof ProductModel.findById>)
+    const findStub = sinon.stub(InventoryMovementModel, 'find').returns(movementQuery as unknown as ReturnType<typeof InventoryMovementModel.find>)
+    const repository = new MongooseStockRepository()
+
+    const snapshot = await repository.getProduct(productId.toString())
+
+    expect(snapshot).to.deep.include({ physicalQuantity: 10, committedQuantity: 0, availableQuantity: 10 })
+    expect(findStub.firstCall.args[0]).to.deep.include({
+      type: {
+        $in: [
+          INVENTORY_MOVEMENT_TYPES.SALE_COMMIT,
+          INVENTORY_MOVEMENT_TYPES.SALE_CANCEL,
+          INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT,
+          INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT
+        ]
+      }
     })
   })
 

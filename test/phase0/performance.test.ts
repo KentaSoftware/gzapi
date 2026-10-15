@@ -125,7 +125,7 @@ describe('Phase 0 — local performance measurement', () => {
       return await post(tokens['fixture-admin'], `/commercialFact/buys/${ids.buy}/receipt`, {
         businessDate,
         idempotencyKey: 'performance-purchase-receipt',
-        lines: [{ quantity: buyQuantity }]
+        lines: [{ itemBuyId: ids.buyItem, productId: ids.product, quantity: buyQuantity }]
       })
     })
 
