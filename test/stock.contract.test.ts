@@ -7,6 +7,9 @@ import { StockService, StockServiceError } from '../src/services/stock'
 import { STOCK_ERROR_CODES, type StockOperationResult } from '../src/interfaces/stock.interface'
 import {
   getAvailability,
+  getOverview,
+  getProductDetail,
+  updateMinimum,
   receivePurchase,
   removeExpiredBucket,
   returnSale
@@ -57,6 +60,20 @@ const result = (appliedMovementCount: number, alreadyAppliedCount: number): Stoc
 
 const bodyOf = (response: TestResponse): unknown => response.send.firstCall.args[0]
 
+const overviewResult = {
+  page: 1,
+  pageSize: 50,
+  total: 0,
+  items: [],
+  summary: {
+    productCount: 0,
+    physicalQuantity: 0,
+    committedQuantity: 0,
+    availableToSell: 0,
+    alertCount: 0
+  }
+}
+
 describe('Stock contract — HTTP adapter', () => {
   afterEach(() => sinon.restore())
 
@@ -78,6 +95,9 @@ describe('Stock contract — HTTP adapter', () => {
     expect(stockMount).to.equal(true)
     expect(paths).to.deep.equal([
       '/availability',
+      '/overview',
+      '/products/:id',
+      '/products/:id/minimum',
       '/purchases/:buyId/receive',
       '/returns',
       '/expired-buckets/:id/remove'
@@ -85,6 +105,97 @@ describe('Stock contract — HTTP adapter', () => {
     expect(source).to.include("checkPermission('read_stock')")
     expect(source).to.include("checkPermission('receive_stock')")
     expect(source).to.include("checkPermission('manage_stock')")
+    expect(source).to.include("checkPermission('manage_stock_config')")
+  })
+
+  it('validates strict overview queries, defaults pagination, and never invokes the service for invalid input', async () => {
+    const serviceCall = sinon.stub(StockService.prototype, 'getOverview').resolves(overviewResult)
+
+    for (const query of [
+      { businessDate: '2026-10-15', unexpected: 'nope' },
+      { unexpected: 'nope' },
+      { businessDate: '2026-10-15', page: '0' },
+      { businessDate: '2026-10-15', pageSize: '101' },
+      { businessDate: '2026-02-30' }
+    ]) {
+      const response = makeResponse()
+      await getOverview(makeRequest({ query }), response as unknown as Response)
+      expect(response.status.calledWith(400)).to.equal(true)
+    }
+    expect(serviceCall.called).to.equal(false)
+
+    const response = makeResponse()
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), response as unknown as Response)
+
+    expect(response.status.calledWith(200)).to.equal(true)
+    expect(serviceCall.calledOnce).to.equal(true)
+    expect(serviceCall.firstCall.args[0]).to.deep.include({ page: 1, pageSize: 50, businessDate: '2026-10-15' })
+    expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
+  })
+
+  it('validates strict product detail queries and maps missing products to a stable 404 envelope', async () => {
+    const serviceCall = sinon.stub(StockService.prototype, 'getProductDetail').resolves({
+      productId: PRODUCT_ID,
+      minimum: 2,
+      availability: {
+        productId: PRODUCT_ID,
+        physicalQuantity: 10,
+        committedQuantity: 1,
+        availableToSell: 9,
+        expiredQuantity: 0,
+        dataQuality: 'COMPLETE'
+      },
+      buckets: [],
+      movements: [],
+      alerts: []
+    })
+
+    for (const request of [
+      { params: { id: 'invalid' }, query: { businessDate: '2026-10-15' } },
+      { params: { id: PRODUCT_ID }, query: { businessDate: '2026-02-30' } },
+      { params: { id: PRODUCT_ID }, query: { businessDate: '2026-10-15', movementLimit: '101' } },
+      { params: { id: PRODUCT_ID }, query: { businessDate: '2026-10-15', unexpected: 'nope' } }
+    ]) {
+      const response = makeResponse()
+      await getProductDetail(makeRequest(request), response as unknown as Response)
+      expect(response.status.calledWith(400)).to.equal(true)
+    }
+    expect(serviceCall.called).to.equal(false)
+
+    const validResponse = makeResponse()
+    await getProductDetail(makeRequest({ params: { id: PRODUCT_ID }, query: { businessDate: '2026-10-15' } }), validResponse as unknown as Response)
+    expect(validResponse.status.calledWith(200)).to.equal(true)
+    expect(serviceCall.calledOnce).to.equal(true)
+    expect(serviceCall.firstCall.args[0]).to.deep.include({ productId: PRODUCT_ID, movementLimit: 50 })
+
+    serviceCall.resetHistory()
+    serviceCall.rejects(new StockServiceError('STOCK_PRODUCT_NOT_FOUND', 'missing'))
+    const missingResponse = makeResponse()
+    await getProductDetail(makeRequest({ params: { id: PRODUCT_ID }, query: { businessDate: '2026-10-15' } }), missingResponse as unknown as Response)
+    expect(missingResponse.status.calledWith(404)).to.equal(true)
+    expect(bodyOf(missingResponse)).to.deep.include({ code: 'STOCK_PRODUCT_NOT_FOUND' })
+  })
+
+  it('strictly validates minimum updates, propagates the authenticated actor, and maps service failures', async () => {
+    const serviceCall = sinon.stub(StockService.prototype, 'updateMinimum').resolves({ productId: PRODUCT_ID, minimum: 4 })
+    for (const body of [{ minimum: -1 }, { minimum: 1.5 }, { minimum: Number.MAX_SAFE_INTEGER + 1 }, { minimum: 1, extra: true }]) {
+      const response = makeResponse()
+      await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body }), response as unknown as Response)
+      expect(response.status.calledWith(400)).to.equal(true)
+    }
+    expect(serviceCall.called).to.equal(false)
+
+    const response = makeResponse()
+    await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body: { minimum: 4 } }), response as unknown as Response)
+    expect(response.status.calledWith(200)).to.equal(true)
+    expect(bodyOf(response)).to.deep.equal({ productId: PRODUCT_ID, minimum: 4 })
+    expect(serviceCall.firstCall.args).to.deep.equal([PRODUCT_ID, 4, { actorId: ACTOR_ID, canManageStock: true }])
+
+    serviceCall.resetHistory()
+    serviceCall.rejects(new StockServiceError('STOCK_PRODUCT_NOT_FOUND', 'missing'))
+    const missingResponse = makeResponse()
+    await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body: { minimum: 4 } }), missingResponse as unknown as Response)
+    expect(missingResponse.status.calledWith(404)).to.equal(true)
   })
 
   it('requires strict availability queries to provide businessDate before invoking StockService', async () => {

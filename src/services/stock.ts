@@ -11,12 +11,19 @@ import {
   type StockAggregatedLine,
   type StockAvailabilityQuery,
   type StockAvailabilityValidationResult,
+  type StockAlert,
   type StockBucketSnapshot,
   type StockIdempotentMovementResult,
   type StockMovementRecord,
   type StockOperationInput,
   type StockOperationResult,
   type StockProductSnapshot,
+  type StockOverviewItem,
+  type StockOverviewQuery,
+  type StockOverviewResult,
+  type StockProductDetailQuery,
+  type StockProductDetailResult,
+  type StockMinimumResult,
   type StockPhysicalReturnInput,
   type StockPhysicalReturnLineInput,
   type PurchaseReceiptInput,
@@ -33,8 +40,8 @@ import {
   type StockServiceAuth,
   type StockTransactionContext
 } from '../interfaces/stock.interface'
-import { STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
-import { allocateFefo, calculateAvailability, StockRuleError } from './stockRules'
+import { STOCK_EXPIRY_ALERT_DAYS, STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
+import { allocateFefo, calculateAvailability, evaluateExpiry, evaluateLowStock, StockRuleError } from './stockRules'
 
 const SOURCE_TYPE = 'SALE'
 const PURCHASE_SOURCE_TYPE = 'PURCHASE'
@@ -79,6 +86,8 @@ export class StockServiceError extends Error {
 const isPositiveInteger = (value: number): boolean => Number.isSafeInteger(value) && value > 0
 
 const isNonZeroSafeInteger = (value: number): boolean => Number.isSafeInteger(value) && value !== 0
+
+const isNonNegativeSafeInteger = (value: number): boolean => Number.isSafeInteger(value) && value >= 0
 
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/
 
@@ -274,6 +283,93 @@ export class StockService {
       throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Availability query is incomplete')
     }
     return await Promise.all(query.productIds.map(async (productId) => await this.readAvailability(this.repository, productId, query.businessDate as string, query.timeZone ?? this.timeZone)))
+  }
+
+  async getOverview (query: StockOverviewQuery): Promise<StockOverviewResult> {
+    if (!validAuth(query.auth)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
+    if (!isCivilDate(query.businessDate) || !isPositiveInteger(query.page) || !isPositiveInteger(query.pageSize) || query.pageSize > 100) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Stock overview query is incomplete or invalid')
+    }
+    const timeZone = query.timeZone ?? this.timeZone
+    const page = await this.repository.listProducts(query.page, query.pageSize)
+    const items = await Promise.all(page.items.map(async (record): Promise<StockOverviewItem> => {
+      const availability = await this.readAvailability(this.repository, record.productId, query.businessDate, timeZone)
+      const buckets = await this.repository.getBuckets(record.productId)
+      const alerts = this.alertsFor(record.productId, availability, record.minimum, buckets, query.businessDate, timeZone)
+      return {
+        productId: record.productId,
+        physicalQuantity: availability.physicalQuantity,
+        committedQuantity: availability.committedQuantity,
+        availableToSell: availability.availableToSell,
+        expiredQuantity: availability.expiredQuantity,
+        dataQuality: availability.dataQuality,
+        minimum: record.minimum,
+        alerts
+      }
+    }))
+    return {
+      page: query.page,
+      pageSize: query.pageSize,
+      total: page.total,
+      items,
+      summary: {
+        // Summary values intentionally describe only this page; total is the global count.
+        productCount: items.length,
+        physicalQuantity: items.reduce((total, item) => total + item.physicalQuantity, 0),
+        committedQuantity: items.reduce((total, item) => total + item.committedQuantity, 0),
+        availableToSell: items.reduce((total, item) => total + item.availableToSell, 0),
+        alertCount: items.reduce((total, item) => total + item.alerts.length, 0)
+      }
+    }
+  }
+
+  async getProductDetail (query: StockProductDetailQuery): Promise<StockProductDetailResult> {
+    if (!validAuth(query.auth)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
+    if (!validIdentity(query.productId) || !isCivilDate(query.businessDate) || !isPositiveInteger(query.movementLimit) || query.movementLimit > 100) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Stock product detail query is incomplete or invalid')
+    }
+    const timeZone = query.timeZone ?? this.timeZone
+    const product = await this.repository.getProduct(query.productId)
+    if (product === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${query.productId} was not found`)
+    const minimum = await this.repository.getProductMinimum(query.productId)
+    if (minimum === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${query.productId} was not found`)
+    const [availability, buckets, movements] = await Promise.all([
+      this.readAvailability(this.repository, query.productId, query.businessDate, timeZone),
+      this.repository.getBuckets(query.productId),
+      this.repository.findMovements({ productId: query.productId, limit: query.movementLimit })
+    ])
+    const orderedBuckets = [...buckets].sort((left, right) => {
+      const expiryComparison = left.expiryDate.localeCompare(right.expiryDate)
+      return expiryComparison !== 0 ? expiryComparison : left.bucketId.localeCompare(right.bucketId)
+    })
+    const orderedMovements = [...movements]
+      .sort((left, right) => {
+        const occurredAtComparison = right.occurredAt.getTime() - left.occurredAt.getTime()
+        return occurredAtComparison !== 0 ? occurredAtComparison : (right.movementId ?? '').localeCompare(left.movementId ?? '')
+      })
+      .slice(0, query.movementLimit)
+    return {
+      productId: query.productId,
+      minimum: minimum.minimum,
+      availability,
+      buckets: orderedBuckets,
+      movements: orderedMovements,
+      alerts: this.alertsFor(query.productId, availability, minimum.minimum, buckets, query.businessDate, timeZone)
+    }
+  }
+
+  /** Updates only the inventory threshold; audit persistence is intentionally deferred until an audit collection exists. */
+  async updateMinimum (productId: string, minimum: number, auth: StockServiceAuth): Promise<StockMinimumResult> {
+    if (!validAuth(auth)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
+    if (!isNonNegativeSafeInteger(minimum)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'minimum must be a safe non-negative integer')
+    try {
+      const result = await this.repository.updateProductMinimum(productId, minimum)
+      if (result === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${productId} was not found`)
+      return result
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))
+    }
   }
 
   async assertSaleAvailability (input: StockSaleAvailabilityInput): Promise<StockAvailabilityValidationResult> {
@@ -1001,6 +1097,34 @@ export class StockService {
       if (error instanceof StockServiceError) throw error
       throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))
     }
+  }
+
+  private alertsFor (productId: string, availability: AvailabilityResult, minimum: number | null, buckets: StockBucketSnapshot[], businessDate: string, timeZone: string): StockAlert[] {
+    const alerts: StockAlert[] = []
+    if (availability.dataQuality === STOCK_DATA_QUALITY.COMPLETE) {
+      const product = availability
+      const lowStock = evaluateLowStock({ ...product, minimum: minimum ?? undefined })
+      if (lowStock !== undefined) alerts.push(lowStock)
+      // Expiry rules are applicable only when availability is trustworthy and bucket data is tracked.
+      if (buckets.length > 0) {
+        alerts.push(...evaluateExpiry({
+          productId,
+          businessDate,
+          timeZone,
+          alertDays: STOCK_EXPIRY_ALERT_DAYS,
+          buckets: buckets.map((bucket) => ({
+            bucketId: bucket.bucketId,
+            expiryDate: bucket.expiryDate,
+            availableQuantity: bucket.availableQuantity,
+            committedQuantity: bucket.committedQuantity
+          }))
+        }))
+      }
+      return alerts
+    }
+    const lowStock = evaluateLowStock({ ...availability, minimum: minimum ?? undefined })
+    if (lowStock !== undefined) alerts.push(lowStock)
+    return alerts
   }
 
   private async assertAvailabilityInTransaction (repository: StockRepository & StockTransactionContext, lines: StockSaleLineInput[], businessDate: string, timeZone: string): Promise<void> {

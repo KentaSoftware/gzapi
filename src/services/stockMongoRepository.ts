@@ -14,8 +14,11 @@ import {
   type InventoryMovementType,
   type StockBucketProjectionDelta,
   type StockBucketSnapshot,
+  type StockMinimumResult,
   type StockMovementQuery,
   type StockMovementRecord,
+  type StockProductOverviewPage,
+  type StockProductMinimum,
   type StockProductProjectionDelta,
   type StockProductSnapshot,
   type StockRepository,
@@ -28,6 +31,7 @@ interface MongoProductDocument {
   _id: Types.ObjectId
   stock: number
   inventory?: {
+    minimum?: number
     expiryTracking: ExpiryTracking
     baselineStatus: BaselineStatus
   }
@@ -309,21 +313,90 @@ export class MongooseStockRepository implements StockRepository {
       if (mongoSession !== undefined) void productQuery.session(mongoSession)
       const document = await productQuery.lean<MongoProductDocument>().exec()
       if (document === null) return undefined
-      const product = document as unknown as MongoProductDocument
-      const inventoryTracking = product.inventory?.expiryTracking
-      let committedQuantity = 0
-      if (inventoryTracking === EXPIRY_TRACKING.TRACKED) {
-        const buckets = await this.bucketDocuments(productObjectId, mongoSession)
-        committedQuantity = buckets.reduce((total, bucket) => total + nonNegativeIntegerOf(bucket.committedQuantity, 'committedQuantity'), 0)
-      } else if (inventoryTracking === EXPIRY_TRACKING.NOT_TRACKED) {
-        const movements = await this.ledgerMovements(productObjectId, mongoSession)
-        committedQuantity = ledgerCommittedQuantity(movements)
-        if (committedQuantity < 0) throw repositoryError(`Ledger commitments are negative for ${productId}`)
-      }
-      return mapProductDocumentToStockSnapshot(product, committedQuantity)
+      return await this.snapshotOf(document as unknown as MongoProductDocument, productObjectId, mongoSession)
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw repositoryError(`Could not read product ${productId}`, error)
+    }
+  }
+
+  async listProducts (page: number, pageSize: number, session?: StockRepositorySession): Promise<StockProductOverviewPage> {
+    positiveIntegerOf(page, 'page')
+    positiveIntegerOf(pageSize, 'pageSize')
+    const skip = (page - 1) * pageSize
+    if (!Number.isSafeInteger(skip)) throw repositoryError('Product page offset exceeds safe integer bounds')
+    try {
+      const mongoSession = this.mongoSessionOf(session)
+      const productQuery = ProductModel.find({})
+        .select('_id stock inventory')
+        .sort({ _id: 1 })
+        .skip(skip)
+        .limit(pageSize)
+      const countQuery = ProductModel.countDocuments({})
+      if (mongoSession !== undefined) {
+        void productQuery.session(mongoSession)
+        void countQuery.session(mongoSession)
+      }
+      const [documents, total] = await Promise.all([
+        productQuery.lean<MongoProductDocument[]>().exec(),
+        countQuery.exec()
+      ])
+      const items = []
+      for (const document of documents) {
+        const product = document as unknown as MongoProductDocument
+        const productObjectId = objectIdOf(product._id, 'Product._id')
+        const snapshot = await this.snapshotOf(product, productObjectId, mongoSession)
+        const minimum = product.inventory?.minimum === undefined
+          ? null
+          : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
+        items.push({ productId: snapshot.productId, minimum, snapshot })
+      }
+      return { total, items }
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError('Could not list stock products', error)
+    }
+  }
+
+  async getProductMinimum (productId: string, session?: StockRepositorySession): Promise<StockProductMinimum | undefined> {
+    try {
+      const productObjectId = objectIdOf(productId, 'productId')
+      const mongoSession = this.mongoSessionOf(session)
+      const query = ProductModel.findById(productObjectId).select('_id inventory.minimum')
+      if (mongoSession !== undefined) void query.session(mongoSession)
+      const document = await query.lean<MongoProductDocument>().exec()
+      if (document === null) return undefined
+      const product = document as unknown as MongoProductDocument
+      const minimum = product.inventory?.minimum === undefined
+        ? null
+        : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
+      return { productId: identifierOf(product._id, 'Product._id'), minimum }
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not read minimum for product ${productId}`, error)
+    }
+  }
+
+  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession): Promise<StockMinimumResult | undefined> {
+    const productObjectId = objectIdOf(productId, 'productId')
+    nonNegativeIntegerOf(minimum, 'minimum')
+    try {
+      const mongoSession = this.mongoSessionOf(session)
+      const query = ProductModel.findOneAndUpdate(
+        { _id: productObjectId },
+        { $set: { 'inventory.minimum': minimum } },
+        { new: true, runValidators: true }
+      )
+      if (mongoSession !== undefined) void query.session(mongoSession)
+      const document = await query.select('_id inventory.minimum').lean<MongoProductDocument>().exec()
+      if (document === null) return undefined
+      const product = document as unknown as MongoProductDocument
+      const storedMinimum = product.inventory?.minimum
+      if (storedMinimum === undefined) throw repositoryError(`Product ${productId} minimum was not returned`)
+      return { productId: identifierOf(product._id, 'Product._id'), minimum: nonNegativeIntegerOf(storedMinimum, 'Product.inventory.minimum') }
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not update minimum for product ${productId}`, error)
     }
   }
 
@@ -367,9 +440,15 @@ export class MongooseStockRepository implements StockRepository {
 
   async findMovements (query: StockMovementQuery, session?: StockRepositorySession): Promise<StockMovementRecord[]> {
     try {
-      const movementQueryResult = InventoryMovementModel.find(movementQuery(query))
+      const filter = movementQuery(query)
+      if (query.productId !== undefined) filter.productId = objectIdOf(query.productId, 'productId')
+      const movementQueryResult = InventoryMovementModel.find(filter)
       const mongoSession = this.mongoSessionOf(session)
       if (mongoSession !== undefined) void movementQueryResult.session(mongoSession)
+      if (query.productId !== undefined) {
+        void movementQueryResult.sort({ occurredAt: -1, _id: -1 })
+        if (query.limit !== undefined) void movementQueryResult.limit(positiveIntegerOf(query.limit, 'limit'))
+      }
       const documents = await movementQueryResult.lean<MongoMovementDocument[]>().exec()
       return documents.map(mapMovementDocumentToStockRecord)
     } catch (error) {
@@ -493,6 +572,9 @@ export class MongooseStockRepository implements StockRepository {
       session: { transactionId },
       withTransaction: this.withTransaction.bind(this),
       getProduct: async (productId, session) => await this.getProduct(productId, session),
+      getProductMinimum: async (productId, session) => await this.getProductMinimum(productId, session),
+      listProducts: async (page, pageSize, session) => await this.listProducts(page, pageSize, session),
+      updateProductMinimum: async (productId, minimum, session) => await this.updateProductMinimum(productId, minimum, session),
       getBuckets: async (productId, session) => await this.getBuckets(productId, session),
       getBucket: async (bucketId, session) => await this.getBucket(bucketId, session),
       findMovementByIdempotencyKey: async (key, session) => await this.findMovementByIdempotencyKey(key, session),
@@ -516,6 +598,20 @@ export class MongooseStockRepository implements StockRepository {
     if (session !== undefined) void query.session(session)
     const documents = await query.lean<MongoBucketDocument[]>().exec()
     return documents as unknown as MongoBucketDocument[]
+  }
+
+  private async snapshotOf (product: MongoProductDocument, productObjectId: Types.ObjectId, session?: ClientSession): Promise<StockProductSnapshot> {
+    const inventoryTracking = product.inventory?.expiryTracking
+    let committedQuantity = 0
+    if (inventoryTracking === EXPIRY_TRACKING.TRACKED) {
+      const buckets = await this.bucketDocuments(productObjectId, session)
+      committedQuantity = buckets.reduce((total, bucket) => total + nonNegativeIntegerOf(bucket.committedQuantity, 'committedQuantity'), 0)
+    } else if (inventoryTracking === EXPIRY_TRACKING.NOT_TRACKED) {
+      const movements = await this.ledgerMovements(productObjectId, session)
+      committedQuantity = ledgerCommittedQuantity(movements)
+      if (committedQuantity < 0) throw repositoryError(`Ledger commitments are negative for ${product._id.toString()}`)
+    }
+    return mapProductDocumentToStockSnapshot(product, committedQuantity)
   }
 
   private async ledgerMovements (productId: Types.ObjectId, session?: ClientSession): Promise<StockMovementRecord[]> {

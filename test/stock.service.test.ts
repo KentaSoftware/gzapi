@@ -18,7 +18,9 @@ import {
   type StockServiceAuth,
   type StockTransactionContext,
   type PurchaseAdjustmentInput,
-  type ExpiredRemovalInput
+  type ExpiredRemovalInput,
+  type StockOverviewResult,
+  type StockProductDetailResult
 } from '../src/interfaces/stock.interface'
 import { StockService, StockServiceError } from '../src/services/stock'
 
@@ -27,10 +29,17 @@ const UNTRACKED_PRODUCT_ID = 'product-2'
 const ACTOR: StockServiceAuth = { actorId: 'actor-1', canManageStock: false }
 const DATE = '2026-10-15'
 
+interface TestProductRecord {
+  productId: string
+  minimum: number | null
+  snapshot: StockProductSnapshot
+}
+
 class MemoryRepository implements StockRepository {
   products = new Map<string, StockProductSnapshot>()
   buckets = new Map<string, StockBucketSnapshot>()
   movements: StockMovementRecord[] = []
+  minimums = new Map<string, number>()
   transactionCalls = 0
   projectionSessions: Array<{ method: string, session: StockRepositorySession | undefined }> = []
   receiptSessions: StockRepositorySession[] = []
@@ -46,6 +55,11 @@ class MemoryRepository implements StockRepository {
     return this.products.get(productId)
   }
 
+  async getProductMinimum (productId: string): Promise<{ productId: string, minimum: number | null } | undefined> {
+    if (!this.products.has(productId)) return undefined
+    return { productId, minimum: this.minimums.get(productId) ?? null }
+  }
+
   async getBuckets (productId: string): Promise<StockBucketSnapshot[]> {
     return [...this.buckets.values()].filter((bucket) => bucket.productId === productId)
   }
@@ -58,11 +72,32 @@ class MemoryRepository implements StockRepository {
     return this.movements.find((movement) => movement.idempotencyKey === idempotencyKey)
   }
 
-  async findMovements (query: { sourceType?: string, sourceId?: string, type?: InventoryMovementType }): Promise<StockMovementRecord[]> {
-    return this.movements.filter((movement) =>
+  async findMovements (query: { productId?: string, sourceType?: string, sourceId?: string, type?: InventoryMovementType, limit?: number }): Promise<StockMovementRecord[]> {
+    const movements = this.movements.filter((movement) =>
+      (query.productId === undefined || movement.productId === query.productId) &&
       (query.sourceType === undefined || movement.sourceType === query.sourceType) &&
       (query.sourceId === undefined || movement.sourceId === query.sourceId) &&
       (query.type === undefined || movement.type === query.type))
+    const ordered = [...movements].sort((left, right) => {
+      const occurredAtComparison = right.occurredAt.getTime() - left.occurredAt.getTime()
+      return occurredAtComparison !== 0 ? occurredAtComparison : (right.movementId ?? '').localeCompare(left.movementId ?? '')
+    })
+    return query.limit === undefined ? ordered : ordered.slice(0, query.limit)
+  }
+
+  async listProducts (page: number, pageSize: number): Promise<{ total: number, items: TestProductRecord[] }> {
+    const items = [...this.products.values()].map((snapshot) => ({
+      productId: snapshot.productId,
+      minimum: this.minimums.get(snapshot.productId) ?? null,
+      snapshot
+    }))
+    return { total: items.length, items: items.slice((page - 1) * pageSize, page * pageSize) }
+  }
+
+  async updateProductMinimum (productId: string, minimum: number): Promise<{ productId: string, minimum: number } | undefined> {
+    if (!this.products.has(productId)) return undefined
+    this.minimums.set(productId, minimum)
+    return { productId, minimum }
   }
 
   async insertMovement (movement: StockMovementRecord): Promise<StockMovementRecord> {
@@ -149,6 +184,8 @@ const newRepository = (): MemoryRepository => {
   const repository = new MemoryRepository()
   repository.products.set(PRODUCT_ID, trackedProduct())
   repository.products.set(UNTRACKED_PRODUCT_ID, untrackedProduct())
+  repository.minimums.set(PRODUCT_ID, 2)
+  repository.minimums.set(UNTRACKED_PRODUCT_ID, 1)
   repository.buckets.set('bucket-first', bucket('bucket-first', '2026-10-20', 4))
   repository.buckets.set('bucket-later', bucket('bucket-later', '2026-12-20', 6))
   return repository
@@ -165,6 +202,88 @@ const expectRejected = async (action: () => Promise<unknown>, code?: string): Pr
 }
 
 describe('Stock service', () => {
+  it('builds a page-scoped overview through pure availability, expiry, and low-stock rules', async () => {
+    const repository = newRepository()
+    repository.buckets.clear()
+    repository.buckets.set('bucket-expired', bucket('bucket-expired', '2026-10-10', 2))
+    repository.buckets.set('bucket-near', bucket('bucket-near', '2026-10-20', 2))
+    repository.buckets.set('bucket-later', bucket('bucket-later', '2026-12-20', 6))
+    repository.minimums.set(PRODUCT_ID, 8)
+    const service = new StockService(repository)
+
+    const overview: StockOverviewResult = await service.getOverview({
+      businessDate: DATE,
+      page: 1,
+      pageSize: 2,
+      auth: ACTOR
+    })
+
+    expect(overview.total).to.equal(2)
+    expect(overview.summary).to.deep.equal({
+      productCount: 2,
+      physicalQuantity: 20,
+      committedQuantity: 0,
+      availableToSell: 18,
+      alertCount: 3
+    })
+    expect(overview.items[0]).to.include({ productId: PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, minimum: 8 })
+    expect(overview.items[0].alerts.map(({ type }) => type)).to.deep.equal(['LOW_STOCK', 'EXPIRED', 'EXPIRING_SOON'])
+    expect(overview.items[1]).to.include({ productId: UNTRACKED_PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, expiredQuantity: 0 })
+  })
+
+  it('keeps overview totals page-scoped and fails closed for unreconciled projections', async () => {
+    const repository = newRepository()
+    repository.products.set('unreconciled', { ...untrackedProduct(), productId: 'unreconciled', baselineStatus: BASELINE_STATUS.UNVERIFIED })
+    repository.minimums.set('unreconciled', 0)
+    const service = new StockService(repository)
+
+    const overview = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+
+    expect(overview.total).to.equal(3)
+    expect(overview.summary.productCount).to.equal(1)
+    expect(overview.summary.physicalQuantity).to.equal(10)
+    expect(overview.items[0].dataQuality).to.equal(STOCK_DATA_QUALITY.COMPLETE)
+
+    const secondPage = await service.getOverview({ businessDate: DATE, page: 3, pageSize: 1, auth: ACTOR })
+    const unreconciled = secondPage.items[0]
+    expect(unreconciled.dataQuality).to.equal(STOCK_DATA_QUALITY.INCOMPLETE)
+    expect(unreconciled.availableToSell).to.equal(0)
+    expect(unreconciled.alerts.every((alert) => alert.dataQuality === STOCK_DATA_QUALITY.INCOMPLETE)).to.equal(true)
+  })
+
+  it('returns deterministic detail buckets and movement limits without changing product projections', async () => {
+    const repository = newRepository()
+    repository.movements.push(
+      { productId: PRODUCT_ID, type: INVENTORY_MOVEMENT_TYPES.SALE_COMMIT, quantity: 1, occurredAt: new Date('2026-10-15T10:00:00.000Z'), sourceType: 'SALE', sourceId: 'sale-1', sourceEvent: 'SALE_COMMIT', operationId: 'op-1', idempotencyKey: 'key-1', rulesVersion: 'v1', createdBy: 'actor-1', movementId: 'movement-b' },
+      { productId: PRODUCT_ID, type: INVENTORY_MOVEMENT_TYPES.PURCHASE_IN, quantity: 2, occurredAt: new Date('2026-10-15T12:00:00.000Z'), sourceType: 'PURCHASE', sourceId: 'buy-1', sourceEvent: 'PURCHASE_RECEIPT', operationId: 'op-2', idempotencyKey: 'key-2', rulesVersion: 'v1', createdBy: 'actor-1', movementId: 'movement-a' }
+    )
+    const before = repository.products.get(PRODUCT_ID)
+    const service = new StockService(repository)
+
+    const detail: StockProductDetailResult = await service.getProductDetail({ productId: PRODUCT_ID, businessDate: DATE, movementLimit: 1, auth: ACTOR })
+
+    expect(detail.buckets.map(({ bucketId }) => bucketId)).to.deep.equal(['bucket-first', 'bucket-later'])
+    expect(detail.movements).to.have.length(1)
+    expect(detail.movements[0].movementId).to.equal('movement-a')
+    expect(detail.availability.availableToSell).to.equal(10)
+    expect(repository.products.get(PRODUCT_ID)).to.deep.equal(before)
+  })
+
+  it('validates minimum updates, propagates actor context, and never mutates Product.stock projections', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const before = repository.products.get(PRODUCT_ID)
+
+    const result = await service.updateMinimum(PRODUCT_ID, 7, ACTOR)
+    expect(result).to.deep.equal({ productId: PRODUCT_ID, minimum: 7 })
+    expect(repository.minimums.get(PRODUCT_ID)).to.equal(7)
+    expect(repository.products.get(PRODUCT_ID)).to.deep.equal(before)
+    await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, -1, ACTOR), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 1.5, ACTOR), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 1, { ...ACTOR, actorId: '' }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
+    await expectRejected(async () => await service.updateMinimum('missing', 1, ACTOR), STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND)
+  })
+
   it('reads availability without writing and reports incomplete snapshots', async () => {
     const repository = newRepository()
     const service = new StockService(repository)

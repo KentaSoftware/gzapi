@@ -49,6 +49,7 @@ export const STOCK_ERROR_CODES = {
   STOCK_AVAILABILITY_UNAVAILABLE: 'STOCK_AVAILABILITY_UNAVAILABLE',
   STOCK_DATA_INCOMPLETE: 'STOCK_DATA_INCOMPLETE',
   STOCK_FORBIDDEN: 'STOCK_FORBIDDEN',
+  STOCK_PRODUCT_NOT_FOUND: 'STOCK_PRODUCT_NOT_FOUND',
   EXPIRED_BUCKET_HAS_COMMITMENTS: 'EXPIRED_BUCKET_HAS_COMMITMENTS',
   STOCK_IDEMPOTENCY_CONFLICT: 'STOCK_IDEMPOTENCY_CONFLICT',
   STOCK_REPOSITORY_ERROR: 'STOCK_REPOSITORY_ERROR'
@@ -113,6 +114,22 @@ export interface AvailabilityQuery {
 export interface StockAvailabilityQuery extends AvailabilityQuery {
   businessDate?: string
   timeZone?: string
+  auth: StockServiceAuth
+}
+
+export interface StockOverviewQuery {
+  businessDate: string
+  timeZone?: string
+  page: number
+  pageSize: number
+  auth: StockServiceAuth
+}
+
+export interface StockProductDetailQuery {
+  productId: string
+  businessDate: string
+  timeZone?: string
+  movementLimit: number
   auth: StockServiceAuth
 }
 
@@ -341,6 +358,64 @@ export interface StockProductSnapshot {
   baselineStatus: BaselineStatus
 }
 
+export interface StockProductOverviewRecord {
+  productId: string
+  minimum: number | null
+  snapshot: StockProductSnapshot
+}
+
+export interface StockProductOverviewPage {
+  total: number
+  items: StockProductOverviewRecord[]
+}
+
+export interface StockOverviewItem {
+  productId: string
+  physicalQuantity: number
+  committedQuantity: number
+  availableToSell: number
+  expiredQuantity: number
+  dataQuality: StockDataQuality
+  minimum: number | null
+  alerts: StockAlert[]
+}
+
+export interface StockOverviewSummary {
+  /** Totals are deliberately scoped to the returned page, not the full repository. */
+  productCount: number
+  physicalQuantity: number
+  committedQuantity: number
+  availableToSell: number
+  alertCount: number
+}
+
+export interface StockOverviewResult {
+  page: number
+  pageSize: number
+  total: number
+  items: StockOverviewItem[]
+  summary: StockOverviewSummary
+}
+
+export interface StockMinimumResult {
+  productId: string
+  minimum: number
+}
+
+export interface StockProductMinimum {
+  productId: string
+  minimum: number | null
+}
+
+export interface StockProductDetailResult {
+  productId: string
+  minimum: number | null
+  availability: AvailabilityResult
+  buckets: StockBucketSnapshot[]
+  movements: StockMovementRecord[]
+  alerts: StockAlert[]
+}
+
 export interface StockBucketSnapshot {
   bucketId: string
   productId: string
@@ -372,9 +447,11 @@ export interface StockMovementRecord {
 }
 
 export interface StockMovementQuery {
+  productId?: string
   sourceType?: string
   sourceId?: string
   type?: InventoryMovementType
+  limit?: number
 }
 
 export interface StockIdempotentMovementResult {
@@ -414,6 +491,9 @@ export interface StockTransactionContext {
 export interface StockRepository {
   withTransaction: <T>(work: (context: StockRepository & StockTransactionContext) => Promise<T>) => Promise<T>
   getProduct: (productId: string, session?: StockRepositorySession) => Promise<StockProductSnapshot | undefined>
+  getProductMinimum: (productId: string, session?: StockRepositorySession) => Promise<StockProductMinimum | undefined>
+  listProducts: (page: number, pageSize: number, session?: StockRepositorySession) => Promise<StockProductOverviewPage>
+  updateProductMinimum: (productId: string, minimum: number, session?: StockRepositorySession) => Promise<StockMinimumResult | undefined>
   getBuckets: (productId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot[]>
   getBucket: (bucketId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot | undefined>
   findMovementByIdempotencyKey: (idempotencyKey: string, session?: StockRepositorySession) => Promise<StockMovementRecord | undefined>

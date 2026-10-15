@@ -205,6 +205,46 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     expect(updateStub.firstCall.args[1]).to.deep.equal({ $inc: { stock: 3 } })
   })
 
+  it('updates only inventory.minimum and preserves transaction session propagation', async () => {
+    const updateQuery = {
+      session: sinon.stub().returnsThis(),
+      select: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves({
+        _id: new Types.ObjectId('507f1f77bcf86cd799439011'),
+        inventory: { minimum: 9 }
+      })
+    }
+    const updateStub = sinon.stub(ProductModel, 'findOneAndUpdate').returns(updateQuery as unknown as ReturnType<typeof ProductModel.findOneAndUpdate>)
+    const repository = new MongooseStockRepository()
+
+    const result = await repository.updateProductMinimum('507f1f77bcf86cd799439011', 9, { transactionId: 'missing-session' }).catch((error: unknown) => error)
+
+    expect(result).to.be.instanceOf(StockServiceError)
+    expect(updateStub.called).to.equal(false)
+
+    const success = await repository.updateProductMinimum('507f1f77bcf86cd799439011', 9)
+    expect(success).to.deep.equal({ productId: '507f1f77bcf86cd799439011', minimum: 9 })
+    expect(updateStub.firstCall.args[1]).to.deep.equal({ $set: { 'inventory.minimum': 9 } })
+  })
+
+  it('queries product-scoped movements in deterministic descending order with a bounded limit', async () => {
+    const movementQuery = {
+      sort: sinon.stub().returnsThis(),
+      limit: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([])
+    }
+    const findStub = sinon.stub(InventoryMovementModel, 'find').returns(movementQuery as unknown as ReturnType<typeof InventoryMovementModel.find>)
+    const repository = new MongooseStockRepository()
+
+    await repository.findMovements({ productId: '507f1f77bcf86cd799439011', limit: 2 })
+
+    expect(findStub.firstCall.args[0]).to.deep.equal({ productId: new Types.ObjectId('507f1f77bcf86cd799439011') })
+    expect(movementQuery.sort.calledWith({ occurredAt: -1, _id: -1 })).to.equal(true)
+    expect(movementQuery.limit.calledWith(2)).to.equal(true)
+  })
+
   it('applies bucket availability and commitment deltas atomically through one update', async () => {
     const updateQuery = {
       session: sinon.stub().returnsThis(),

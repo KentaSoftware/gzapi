@@ -44,12 +44,37 @@ const positiveIntegerSchema = z.number().finite().int().positive()
 const isoDateTimeSchema = z.string().refine(isIsoDateTime, 'value must be an ISO date-time')
 const civilDateSchema = z.string().refine(isCivilDate, 'value must be a civil date')
 const safeNonNegativeIntegerSchema = nonNegativeIntegerSchema.refine(Number.isSafeInteger, 'value must be a safe integer')
+const queryPositiveIntegerSchema = z.preprocess((value) => {
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value)
+  return value
+}, positiveIntegerSchema)
+const queryPageSizeSchema = z.preprocess((value) => {
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value)
+  return value
+}, positiveIntegerSchema.max(100))
 
 const availabilityQuerySchema = z.object({
   productIds: z.array(objectIdSchema).min(1).max(100),
   saleId: objectIdSchema.optional(),
   businessDate: civilDateSchema.optional(),
   timeZone: z.string().trim().min(1).max(64).refine(isTimeZone, 'timeZone must be a valid IANA time zone').optional()
+}).strict()
+
+const stockOverviewQuerySchema = z.object({
+  businessDate: civilDateSchema,
+  timeZone: z.string().trim().min(1).max(64).refine(isTimeZone, 'timeZone must be a valid IANA time zone').optional(),
+  page: queryPositiveIntegerSchema.default(1),
+  pageSize: queryPageSizeSchema.default(50)
+}).strict()
+
+const stockProductDetailQuerySchema = z.object({
+  businessDate: civilDateSchema,
+  timeZone: z.string().trim().min(1).max(64).refine(isTimeZone, 'timeZone must be a valid IANA time zone').optional(),
+  movementLimit: queryPageSizeSchema.default(50)
+}).strict()
+
+const stockMinimumUpdateSchema = z.object({
+  minimum: safeNonNegativeIntegerSchema
 }).strict()
 
 const purchaseReceiptLineInputSchema = z.object({
@@ -130,6 +155,9 @@ const openingCountConfirmationInputSchema = openingCountInputSchema.extend({
 export {
   objectIdSchema,
   availabilityQuerySchema,
+  stockOverviewQuerySchema,
+  stockProductDetailQuerySchema,
+  stockMinimumUpdateSchema,
   purchaseReceiptLineInputSchema,
   purchaseReceiptInputSchema,
   stockReturnInputSchema,

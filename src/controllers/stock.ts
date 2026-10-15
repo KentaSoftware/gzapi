@@ -5,6 +5,8 @@ import {
   type ExpiredRemovalInput,
   type PurchaseReceiptInput,
   type StockAvailabilityQuery,
+  type StockOverviewQuery,
+  type StockProductDetailQuery,
   type StockOperationResult,
   type StockPhysicalReturnInput,
   type StockServiceAuth
@@ -14,6 +16,9 @@ import {
   expiredRemovalInputSchema,
   objectIdSchema,
   purchaseReceiptInputSchema,
+  stockMinimumUpdateSchema,
+  stockOverviewQuerySchema,
+  stockProductDetailQuerySchema,
   stockReturnInputSchema
 } from '../schemas/stock.schema'
 import { StockService, StockServiceError } from '../services/stock'
@@ -29,6 +34,7 @@ const HTTP_STATUS = {
   OK: 200,
   BAD_REQUEST: 400,
   FORBIDDEN: 403,
+  NOT_FOUND: 404,
   CONFLICT: 409,
   SERVICE_UNAVAILABLE: 503,
   INTERNAL_SERVER_ERROR: 500
@@ -37,6 +43,7 @@ const HTTP_STATUS = {
 const STOCK_ERROR_MESSAGES = {
   STOCK_FORBIDDEN: 'Stock permission is required',
   STOCK_DATA_INCOMPLETE: 'Stock request data is incomplete or invalid',
+  STOCK_PRODUCT_NOT_FOUND: 'Stock product was not found',
   STOCK_INSUFFICIENT: 'Stock is insufficient for this operation',
   STOCK_AVAILABILITY_UNAVAILABLE: 'Stock availability is currently unavailable',
   EXPIRED_BUCKET_HAS_COMMITMENTS: 'The expired bucket still has sale commitments',
@@ -82,6 +89,8 @@ const statusFor = (code: StockErrorCode): number => {
       return HTTP_STATUS.FORBIDDEN
     case STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE:
       return HTTP_STATUS.BAD_REQUEST
+    case STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND:
+      return HTTP_STATUS.NOT_FOUND
     case STOCK_ERROR_CODES.STOCK_INSUFFICIENT:
     case STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT:
     case STOCK_ERROR_CODES.EXPIRED_BUCKET_HAS_COMMITMENTS:
@@ -142,6 +151,61 @@ const getAvailability = async (req: RequestExt, res: Response): Promise<void> =>
   try {
     const availability = await service.getAvailability(input)
     res.status(HTTP_STATUS.OK).send(availability)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const getOverview = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined) return
+  const parsed = stockOverviewQuerySchema.safeParse(req.query as unknown as Record<string, unknown>)
+  if (!parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  const input: StockOverviewQuery = { ...parsed.data, auth: authOf(actorId) }
+  try {
+    res.status(HTTP_STATUS.OK).send(await service.getOverview(input))
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const getProductDetail = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined) return
+  const productId = objectIdSchema.safeParse(req.params.id)
+  const parsed = stockProductDetailQuerySchema.safeParse(req.query as unknown as Record<string, unknown>)
+  if (!productId.success || !parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  const input: StockProductDetailQuery = { ...parsed.data, productId: productId.data, auth: authOf(actorId) }
+  try {
+    res.status(HTTP_STATUS.OK).send(await service.getProductDetail(input))
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const updateMinimum = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+  const productId = objectIdSchema.safeParse(req.params.id)
+  const parsed = stockMinimumUpdateSchema.safeParse(req.body)
+  if (!productId.success || !parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  try {
+    res.status(HTTP_STATUS.OK).send(await service.updateMinimum(productId.data, parsed.data.minimum, authOf(actorId)))
   } catch (error) {
     handleError(res, correlationId, error)
   }
@@ -233,6 +297,9 @@ const removeExpiredBucket = async (req: RequestExt, res: Response): Promise<void
 
 export {
   getAvailability,
+  getOverview,
+  getProductDetail,
+  updateMinimum,
   receivePurchase,
   returnSale,
   removeExpiredBucket
