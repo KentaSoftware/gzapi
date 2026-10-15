@@ -12,7 +12,8 @@ import {
   updateMinimum,
   receivePurchase,
   removeExpiredBucket,
-  returnSale
+  returnSale,
+  previewOpeningCount
 } from '../src/controllers/stock'
 
 const PRODUCT_ID = '507f1f77bcf86cd799439011'
@@ -98,6 +99,7 @@ describe('Stock contract — HTTP adapter', () => {
       '/overview',
       '/products/:id',
       '/products/:id/minimum',
+      '/opening-counts/preview',
       '/purchases/:buyId/receive',
       '/returns',
       '/expired-buckets/:id/remove'
@@ -106,6 +108,59 @@ describe('Stock contract — HTTP adapter', () => {
     expect(source).to.include("checkPermission('receive_stock')")
     expect(source).to.include("checkPermission('manage_stock')")
     expect(source).to.include("checkPermission('manage_stock_config')")
+    expect(source).to.include("router.post('/opening-counts/preview'")
+    expect(source).to.include('checkJwt(req, res, next)')
+  })
+
+  it('previews opening counts as a pending dry run without mutating business data', async () => {
+    const response = makeResponse()
+
+    await previewOpeningCount(makeRequest({
+      body: {
+        operationId: 'opening-preview-1',
+        rows: [{ productId: PRODUCT_ID, countedQuantity: 4, expiryDate: '2027-01-31' }]
+      }
+    }), response as unknown as Response)
+
+    expect(response.status.calledWith(200)).to.equal(true)
+    const preview = bodyOf(response) as { evidence: Record<string, unknown> }
+    expect(preview.evidence).to.include({ status: 'PENDING', actorId: ACTOR_ID, businessDataMutated: false })
+  })
+
+  it('rejects malformed, duplicate, and incomplete opening-count payloads before preview execution', async () => {
+    const invalidBodies = [
+      { operationId: 'opening-preview-2', rows: [{ productId: 'invalid', countedQuantity: 1 }] },
+      { operationId: 'opening-preview-3', rows: [{ productId: PRODUCT_ID, countedQuantity: -1 }] },
+      { operationId: 'opening-preview-4', rows: [{ productId: PRODUCT_ID, countedQuantity: 1 }, { productId: PRODUCT_ID, countedQuantity: 2 }] },
+      { operationId: 'opening-preview-5', rows: [{ productId: PRODUCT_ID, countedQuantity: 1, unknown: true }] },
+      { rows: [{ productId: PRODUCT_ID, countedQuantity: 1 }] }
+    ]
+
+    for (const body of invalidBodies) {
+      const response = makeResponse()
+      await previewOpeningCount(makeRequest({ body }), response as unknown as Response)
+      expect(response.status.calledWith(400)).to.equal(true)
+      expect(bodyOf(response)).to.deep.include({ code: STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE })
+    }
+  })
+
+  it('rejects opening-count previews without an authenticated actor and does not expose a confirmation route', async () => {
+    const response = makeResponse('')
+    await previewOpeningCount(makeRequest({
+      body: {
+        operationId: 'opening-preview-6',
+        rows: [{ productId: PRODUCT_ID, countedQuantity: 1 }]
+      }
+    }), response as unknown as Response)
+
+    expect(response.status.calledWith(403)).to.equal(true)
+    expect(bodyOf(response)).to.deep.include({ code: STOCK_ERROR_CODES.STOCK_FORBIDDEN })
+
+    const { router } = await import('../src/routes/stock')
+    const paths = router.stack
+      .filter((layer) => layer.route !== undefined)
+      .map((layer) => layer.route.path)
+    expect(paths).to.not.include('/opening-counts/confirm')
   })
 
   it('validates strict overview queries, defaults pagination, and never invokes the service for invalid input', async () => {

@@ -3,6 +3,7 @@ import { Request, Response } from 'express'
 import {
   STOCK_ERROR_CODES,
   type ExpiredRemovalInput,
+  type OpeningCountInput,
   type PurchaseReceiptInput,
   type StockAvailabilityQuery,
   type StockOverviewQuery,
@@ -22,6 +23,7 @@ import {
   stockReturnInputSchema
 } from '../schemas/stock.schema'
 import { StockService, StockServiceError } from '../services/stock'
+import { OpeningCountError, previewOpeningCount } from '../services/stockOpening'
 import { createMongooseStockRepository } from '../services/stockMongoRepository'
 import { STOCK_TIME_ZONE } from '../config/stock'
 import { sendErrorEnvelope } from '../utils/error.handle'
@@ -102,9 +104,10 @@ const statusFor = (code: StockErrorCode): number => {
 }
 
 const isStockServiceError = (error: unknown): error is StockServiceError => error instanceof StockServiceError
+const isOpeningCountError = (error: unknown): error is OpeningCountError => error instanceof OpeningCountError
 
 const handleError = (res: Response, correlationId: string | undefined, error: unknown): void => {
-  if (isStockServiceError(error)) {
+  if (isStockServiceError(error) || isOpeningCountError(error)) {
     sendErrorEnvelope(res, statusFor(error.code), error.code, STOCK_ERROR_MESSAGES[error.code], correlationId)
     return
   }
@@ -295,6 +298,23 @@ const removeExpiredBucket = async (req: RequestExt, res: Response): Promise<void
   }
 }
 
+const previewOpeningCountController = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined) return
+
+  try {
+    const preview = previewOpeningCount(req.body as OpeningCountInput, {
+      actorId,
+      canManageStock: true,
+      canApproveStockCount: false
+    })
+    res.status(HTTP_STATUS.OK).send(preview)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
 export {
   getAvailability,
   getOverview,
@@ -302,5 +322,6 @@ export {
   updateMinimum,
   receivePurchase,
   returnSale,
-  removeExpiredBucket
+  removeExpiredBucket,
+  previewOpeningCountController as previewOpeningCount
 }
