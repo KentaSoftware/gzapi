@@ -225,6 +225,28 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     })
   })
 
+  it('reads a bucket by identity and propagates the Mongo session', async () => {
+    const bucketQuery = {
+      session: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves({
+        _id: new Types.ObjectId('507f1f77bcf86cd799439012'),
+        productId: new Types.ObjectId('507f1f77bcf86cd799439011'),
+        expiryDate: new Date('2026-10-10T00:00:00.000Z'),
+        receivedQuantity: 4,
+        availableQuantity: 4,
+        committedQuantity: 0
+      })
+    }
+    const findStub = sinon.stub(StockExpiryBucketModel, 'findById').returns(bucketQuery as unknown as ReturnType<typeof StockExpiryBucketModel.findById>)
+    const repository = new MongooseStockRepository()
+
+    const snapshot = await repository.getBucket('507f1f77bcf86cd799439012', { transactionId: 'missing-session' }).catch((error: unknown) => error)
+
+    expect(snapshot).to.be.instanceOf(StockServiceError)
+    expect(findStub.called).to.equal(false)
+  })
+
   it('upserts physical receipt buckets with session-aware atomic increments', async () => {
     const updateQuery = {
       session: sinon.stub().returnsThis(),

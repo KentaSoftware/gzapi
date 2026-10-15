@@ -13,7 +13,7 @@ import {
   type CommercialFactLine,
   type StockSaleReference
 } from '../interfaces/commercialFact.interface'
-import { STOCK_ERROR_CODES, type PurchaseReceiptInput, type SaleDeliveryInput, type StockPhysicalReturnInput, type StockSaleCommitInput } from '../interfaces/stock.interface'
+import { STOCK_ERROR_CODES, type PurchaseAdjustmentInput, type PurchaseReceiptInput, type SaleDeliveryInput, type StockPhysicalReturnInput, type StockSaleCommitInput } from '../interfaces/stock.interface'
 import { MongooseStockRepository } from './stockMongoRepository'
 import { StockService, StockServiceError } from './stock'
 import { recomputeForSale } from './routePlanOperational'
@@ -157,6 +157,65 @@ const purchaseQuantityOf = (line: Record<string, unknown>, index: number): numbe
   return quantity
 }
 
+const strictAliasIdentifierOf = (line: Record<string, unknown>, aliases: string[], field: string, index: number): string => {
+  const values = aliases.map((alias) => line[alias]).filter((value) => value !== undefined)
+  if (values.length === 0) throw invalidStockReference(`Purchase adjustment line ${index} ${field} is required`)
+  const identifiers = values.map((value) => identifierOf(value, `Purchase adjustment line ${index} ${field}`))
+  if (identifiers.some((value) => value !== identifiers[0])) throw invalidStockReference(`Purchase adjustment line ${index} ${field} aliases conflict`)
+  return identifiers[0]
+}
+
+const purchaseAdjustmentQuantityOf = (line: Record<string, unknown>, index: number): number => {
+  const values = ['quantity', 'adjustmentQuantity', 'cantidad']
+    .map((field) => line[field])
+    .filter((value) => value !== undefined)
+  if (values.length === 0 || values.some((value) => typeof value !== 'number' || !Number.isSafeInteger(value) || value === 0)) {
+    throw invalidStockReference(`Purchase adjustment line ${index} quantity must be a non-zero safe integer`)
+  }
+  const quantity = values[0] as number
+  if (values.some((value) => value !== quantity)) throw invalidStockReference(`Purchase adjustment line ${index} quantity aliases conflict`)
+  return quantity
+}
+
+const purchaseAdjustmentLineIdOf = (line: Record<string, unknown>, buyId: string, productId: string, index: number): string => {
+  const aliases = ['lineId', 'itemBuyId', 'idItemBuy', ...(line.lineId === undefined && line.itemBuyId === undefined && line.idItemBuy === undefined && line._id !== undefined ? ['_id'] : [])]
+  if (aliases.some((alias) => line[alias] !== undefined)) return strictAliasIdentifierOf(line, aliases, 'lineId', index)
+  return createHash('sha256')
+    .update(`stock-purchase-adjustment-source-line:v1:${buyId}:${productId}:${index}`, 'utf8')
+    .digest('hex')
+    .slice(0, 24)
+}
+
+const purchaseAdjustmentProductIdOf = (line: Record<string, unknown>, index: number): string =>
+  strictAliasIdentifierOf(line, ['productId', 'idProducto', ...(line.productId === undefined && line.idProducto === undefined ? ['_id'] : [])], 'productId', index)
+
+export const mapPurchaseAdjustmentToStockInput = (source: CommercialFact): PurchaseAdjustmentInput => {
+  const buyId = identifierOf(source.aggregateId, 'buyId')
+  const actorId = identifierOf(source.actorId, 'actorId')
+  if (typeof source.reason !== 'string' || source.reason.trim() === '') throw invalidStockReference('Purchase adjustment reason is required')
+  const lines = sourceLinesOf(source).map((entry, index) => {
+    const line = lineRecordOf(entry, index)
+    const productId = purchaseAdjustmentProductIdOf(line, index)
+    const expiryDate = line.expiryDate
+    if (expiryDate !== undefined && typeof expiryDate !== 'string') throw invalidStockReference(`Purchase adjustment line ${index} expiryDate is invalid`)
+    return {
+      lineId: purchaseAdjustmentLineIdOf(line, buyId, productId, index),
+      productId,
+      quantity: purchaseAdjustmentQuantityOf(line, index),
+      ...(expiryDate === undefined ? {} : { expiryDate })
+    }
+  })
+  return {
+    buyId,
+    operationId: identifierOf(source.idempotencyKey, 'operationId'),
+    businessDate: businessDateOf(source),
+    auth: { actorId, canManageStock: false },
+    lines,
+    reason: source.reason.trim(),
+    occurredAt: source.businessDate
+  }
+}
+
 export const mapPurchaseReceiptToStockInput = (source: CommercialFact): PurchaseReceiptInput => {
   const buyId = identifierOf(source.aggregateId, 'buyId')
   const actorId = identifierOf(source.actorId, 'actorId')
@@ -238,7 +297,9 @@ export const stockPortAdapter: StockPort = {
   async receivePurchase (source: CommercialFact): Promise<void> {
     await stockService.receivePurchase(mapPurchaseReceiptToStockInput(source))
   },
-  async applyPurchaseAdjustment (): Promise<void> {},
+  async applyPurchaseAdjustment (source: CommercialFact): Promise<void> {
+    await stockService.adjustPurchase(mapPurchaseAdjustmentToStockInput(source))
+  },
   async applyPhysicalReturn (source: CommercialFact): Promise<void> {
     await stockService.returnSale(mapPhysicalReturnToStockInput(source))
   }

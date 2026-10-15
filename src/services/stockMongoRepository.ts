@@ -338,6 +338,20 @@ export class MongooseStockRepository implements StockRepository {
     }
   }
 
+  async getBucket (bucketId: string, session?: StockRepositorySession): Promise<StockBucketSnapshot | undefined> {
+    try {
+      const bucketObjectId = objectIdOf(bucketId, 'bucketId')
+      const mongoSession = this.mongoSessionOf(session)
+      const query = StockExpiryBucketModel.findById(bucketObjectId)
+      if (mongoSession !== undefined) void query.session(mongoSession)
+      const document = await query.lean<MongoBucketDocument>().exec()
+      return document === null ? undefined : mapBucketDocumentToStockSnapshot(document)
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not read bucket ${bucketId}`, error)
+    }
+  }
+
   async findMovementByIdempotencyKey (idempotencyKey: string, session?: StockRepositorySession): Promise<StockMovementRecord | undefined> {
     try {
       const query = InventoryMovementModel.findOne({ idempotencyKey })
@@ -480,6 +494,7 @@ export class MongooseStockRepository implements StockRepository {
       withTransaction: this.withTransaction.bind(this),
       getProduct: async (productId, session) => await this.getProduct(productId, session),
       getBuckets: async (productId, session) => await this.getBuckets(productId, session),
+      getBucket: async (bucketId, session) => await this.getBucket(bucketId, session),
       findMovementByIdempotencyKey: async (key, session) => await this.findMovementByIdempotencyKey(key, session),
       findMovements: async (query, session) => await this.findMovements(query, session),
       insertMovement: async (movement, session) => await this.insertMovement(movement, session),

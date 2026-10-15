@@ -16,7 +16,9 @@ import {
   type StockRepository,
   type StockRepositorySession,
   type StockServiceAuth,
-  type StockTransactionContext
+  type StockTransactionContext,
+  type PurchaseAdjustmentInput,
+  type ExpiredRemovalInput
 } from '../src/interfaces/stock.interface'
 import { StockService, StockServiceError } from '../src/services/stock'
 
@@ -46,6 +48,10 @@ class MemoryRepository implements StockRepository {
 
   async getBuckets (productId: string): Promise<StockBucketSnapshot[]> {
     return [...this.buckets.values()].filter((bucket) => bucket.productId === productId)
+  }
+
+  async getBucket (bucketId: string): Promise<StockBucketSnapshot | undefined> {
+    return this.buckets.get(bucketId)
   }
 
   async findMovementByIdempotencyKey (idempotencyKey: string): Promise<StockMovementRecord | undefined> {
@@ -647,5 +653,240 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.returnSale({ saleId: 'sale-invalid', operationId: 'return-invalid', businessDate: DATE, auth: { actorId: '', canManageStock: false }, lines: [{ productId: PRODUCT_ID, quantity: 1 }] }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
     await expectRejected(async () => await service.returnSale({ saleId: 'sale-invalid', operationId: 'return-invalid', businessDate: DATE, auth: ACTOR, lines: [{ productId: PRODUCT_ID, quantity: 0 }] }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
     expect(repository.transactionCalls).to.equal(0)
+  })
+
+  it('adjusts non-tracked purchase stock in both directions without changing commitments', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const positive: PurchaseAdjustmentInput = {
+      buyId: 'buy-adjust-untracked',
+      operationId: 'adjust-untracked-add',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Corrected receiving count',
+      lines: [{ lineId: 'adjust-line-add', productId: UNTRACKED_PRODUCT_ID, quantity: 3 }]
+    }
+
+    const added = await service.adjustPurchase(positive)
+    const removed = await service.adjustPurchase({
+      ...positive,
+      operationId: 'adjust-untracked-remove',
+      reason: 'Removed damaged units',
+      lines: [{ lineId: 'adjust-line-remove', productId: UNTRACKED_PRODUCT_ID, quantity: -2 }]
+    })
+
+    expect(added).to.include({ appliedMovementCount: 1, projectionCount: 1 })
+    expect(removed).to.include({ appliedMovementCount: 1, projectionCount: 1 })
+    expect(repository.products.get(UNTRACKED_PRODUCT_ID)).to.deep.include({ physicalQuantity: 11, availableQuantity: 11, committedQuantity: 0 })
+    expect(repository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.PROJECTION_REPAIR).map(({ quantity, reason, sourceEvent }) => ({ quantity, reason, sourceEvent }))).to.deep.equal([
+      { quantity: 3, reason: 'Corrected receiving count', sourceEvent: 'PURCHASE_ADJUSTMENT' },
+      { quantity: 2, reason: 'Removed damaged units', sourceEvent: 'PURCHASE_ADJUSTMENT' }
+    ])
+  })
+
+  it('adjusts an existing tracked bucket while preserving its commitments', async () => {
+    const repository = newRepository()
+    repository.products.set(PRODUCT_ID, { ...trackedProduct(), physicalQuantity: 12, availableQuantity: 10, committedQuantity: 2 })
+    repository.buckets.set('bucket-first', bucket('bucket-first', '2026-10-20', 4, 2))
+    const service = new StockService(repository)
+
+    const result = await service.adjustPurchase({
+      buyId: 'buy-adjust-tracked',
+      operationId: 'adjust-tracked',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Supplier reconciliation',
+      lines: [{ lineId: 'adjust-tracked-line', productId: PRODUCT_ID, expiryDate: '2026-10-20', quantity: 3 }]
+    })
+
+    expect(result).to.include({ appliedMovementCount: 1, projectionCount: 2 })
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 15, availableQuantity: 13, committedQuantity: 2 })
+    expect(repository.buckets.get('bucket-first')).to.deep.include({ receivedQuantity: 9, availableQuantity: 7, committedQuantity: 2 })
+  })
+
+  it('validates non-tracked purchase adjustments using the final cumulative quantity', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+
+    const result = await service.adjustPurchase({
+      buyId: 'buy-adjust-compensating-untracked',
+      operationId: 'adjust-compensating-untracked',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Compensating correction',
+      lines: [
+        { lineId: 'adjust-add-large', productId: UNTRACKED_PRODUCT_ID, quantity: 100 },
+        { lineId: 'adjust-remove-large', productId: UNTRACKED_PRODUCT_ID, quantity: -105 }
+      ]
+    })
+
+    expect(result).to.include({ appliedMovementCount: 2, projectionCount: 2 })
+    expect(repository.products.get(UNTRACKED_PRODUCT_ID)).to.deep.include({ physicalQuantity: 5, availableQuantity: 5, committedQuantity: 0 })
+    expect(repository.movements).to.have.length(2)
+  })
+
+  it('validates tracked purchase adjustments using final cumulative bucket quantities', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+
+    const result = await service.adjustPurchase({
+      buyId: 'buy-adjust-compensating-tracked',
+      operationId: 'adjust-compensating-tracked',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Compensating bucket correction',
+      lines: [
+        { lineId: 'adjust-add-tracked-large', productId: PRODUCT_ID, expiryDate: '2026-10-20', quantity: 100 },
+        { lineId: 'adjust-remove-tracked-large', productId: PRODUCT_ID, expiryDate: '2026-10-20', quantity: -103 }
+      ]
+    })
+
+    expect(result).to.include({ appliedMovementCount: 2, projectionCount: 4 })
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 7, availableQuantity: 7, committedQuantity: 0 })
+    expect(repository.buckets.get('bucket-first')).to.deep.include({ receivedQuantity: 1, availableQuantity: 1, committedQuantity: 0 })
+    expect(repository.movements).to.have.length(2)
+  })
+
+  it('rejects a non-tracked batch whose final cumulative quantity is negative without writes', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const initialProduct = repository.products.get(UNTRACKED_PRODUCT_ID)
+
+    await expectRejected(async () => await service.adjustPurchase({
+      buyId: 'buy-adjust-invalid-cumulative-untracked',
+      operationId: 'adjust-invalid-cumulative-untracked',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Invalid cumulative correction',
+      lines: [
+        { lineId: 'adjust-add-invalid-large', productId: UNTRACKED_PRODUCT_ID, quantity: 100 },
+        { lineId: 'adjust-remove-invalid-large', productId: UNTRACKED_PRODUCT_ID, quantity: -111 }
+      ]
+    }), STOCK_ERROR_CODES.STOCK_INSUFFICIENT)
+
+    expect(repository.products.get(UNTRACKED_PRODUCT_ID)).to.deep.equal(initialProduct)
+    expect(repository.movements).to.have.length(0)
+    expect(repository.projectionSessions).to.have.length(0)
+  })
+
+  it('rejects a tracked batch whose final cumulative bucket quantity is negative without writes', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const initialProduct = repository.products.get(PRODUCT_ID)
+    const initialBucket = repository.buckets.get('bucket-first')
+
+    await expectRejected(async () => await service.adjustPurchase({
+      buyId: 'buy-adjust-invalid-cumulative-tracked',
+      operationId: 'adjust-invalid-cumulative-tracked',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Invalid cumulative bucket correction',
+      lines: [
+        { lineId: 'adjust-add-invalid-tracked-large', productId: PRODUCT_ID, expiryDate: '2026-10-20', quantity: 100 },
+        { lineId: 'adjust-remove-invalid-tracked-large', productId: PRODUCT_ID, expiryDate: '2026-10-20', quantity: -105 }
+      ]
+    }), STOCK_ERROR_CODES.STOCK_INSUFFICIENT)
+
+    expect(repository.products.get(PRODUCT_ID)).to.deep.equal(initialProduct)
+    expect(repository.buckets.get('bucket-first')).to.deep.equal(initialBucket)
+    expect(repository.movements).to.have.length(0)
+    expect(repository.projectionSessions).to.have.length(0)
+  })
+
+  it('validates every purchase adjustment line before writing', async () => {
+    const repository = newRepository()
+    repository.products.set('unknown-tracking', { ...trackedProduct(), productId: 'unknown-tracking', expiryTracking: EXPIRY_TRACKING.UNKNOWN })
+    const service = new StockService(repository)
+    const base: PurchaseAdjustmentInput = {
+      buyId: 'buy-adjust-invalid',
+      operationId: 'adjust-invalid',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Correction',
+      lines: [{ lineId: 'line-invalid', productId: UNTRACKED_PRODUCT_ID, quantity: 1 }]
+    }
+
+    for (const input of [
+      { ...base, auth: { ...ACTOR, actorId: '' } },
+      { ...base, reason: '   ' },
+      { ...base, lines: [{ ...base.lines[0], quantity: 0 }] },
+      { ...base, lines: [{ ...base.lines[0], quantity: 1.5 }] },
+      { ...base, lines: [{ ...base.lines[0], expiryDate: '2026-11-01' }] },
+      { ...base, lines: [{ ...base.lines[0], productId: PRODUCT_ID, expiryDate: '2026-11-01' }] },
+      { ...base, lines: [{ ...base.lines[0], productId: 'unknown-tracking' }] },
+      { ...base, lines: [{ ...base.lines[0], productId: PRODUCT_ID, expiryDate: '2026-10-21' }] },
+      { ...base, lines: [{ ...base.lines[0], productId: UNTRACKED_PRODUCT_ID, quantity: -11 }] }
+    ]) {
+      await expectRejected(async () => await service.adjustPurchase(input))
+    }
+
+    expect(repository.movements).to.have.length(0)
+    expect(repository.projectionSessions).to.have.length(0)
+  })
+
+  it('rejects insufficient negative purchase adjustments and protects matching retries from conflicts', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const input: PurchaseAdjustmentInput = {
+      buyId: 'buy-adjust-retry',
+      operationId: 'adjust-retry',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Count correction',
+      lines: [{ lineId: 'adjust-retry-line', productId: UNTRACKED_PRODUCT_ID, quantity: 2 }]
+    }
+
+    const first = await service.adjustPurchase(input)
+    const retry = await service.adjustPurchase(input)
+    expect(first).to.include({ appliedMovementCount: 1, alreadyAppliedCount: 0 })
+    expect(retry).to.include({ appliedMovementCount: 0, alreadyAppliedCount: 1, projectionCount: 0 })
+    await expectRejected(async () => await service.adjustPurchase({ ...input, reason: 'Different correction' }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+    await expectRejected(async () => await service.adjustPurchase({ ...input, operationId: 'adjust-too-much', lines: [{ ...input.lines[0], quantity: -20 }] }), STOCK_ERROR_CODES.STOCK_INSUFFICIENT)
+    expect(repository.products.get(UNTRACKED_PRODUCT_ID)?.physicalQuantity).to.equal(12)
+    expect(repository.movements).to.have.length(1)
+  })
+
+  it('removes a complete expired bucket physically and is idempotent and conflict-safe', async () => {
+    const repository = newRepository()
+    repository.buckets.clear()
+    repository.buckets.set('bucket-expired-remove', bucket('bucket-expired-remove', '2026-10-10', 8))
+    const service = new StockService(repository)
+    const input: ExpiredRemovalInput = {
+      bucketId: 'bucket-expired-remove',
+      operationId: 'expired-removal-1',
+      businessDate: DATE,
+      auth: ACTOR,
+      reason: 'Destroyed expired goods'
+    }
+
+    const first = await service.removeExpiredBucket(input)
+    const second = await service.removeExpiredBucket(input)
+
+    expect(first).to.include({ appliedMovementCount: 1, projectionCount: 2 })
+    expect(second).to.include({ appliedMovementCount: 0, alreadyAppliedCount: 1, projectionCount: 0 })
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 2, availableQuantity: 2, committedQuantity: 0 })
+    expect(repository.buckets.get('bucket-expired-remove')).to.deep.include({ receivedQuantity: 0, availableQuantity: 0, committedQuantity: 0 })
+    expect(repository.movements[0]).to.include({ type: INVENTORY_MOVEMENT_TYPES.EXPIRED_REMOVAL, sourceType: 'EXPIRY_BUCKET', sourceId: 'bucket-expired-remove', expiryBucketId: 'bucket-expired-remove', quantity: 8, reason: 'Destroyed expired goods' })
+    await expectRejected(async () => await service.removeExpiredBucket({ ...input, reason: 'Another reason' }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+  })
+
+  it('blocks future, non-expired, committed, and malformed expired buckets before writes', async () => {
+    const futureRepository = newRepository()
+    futureRepository.buckets.set('bucket-future', bucket('bucket-future', '2026-12-20', 1))
+    const futureService = new StockService(futureRepository)
+    await expectRejected(async () => await futureService.removeExpiredBucket({ bucketId: 'bucket-future', operationId: 'remove-future', businessDate: DATE, auth: ACTOR, reason: 'Too early' }))
+    expect(futureRepository.movements).to.have.length(0)
+
+    const committedRepository = newRepository()
+    committedRepository.buckets.set('bucket-committed', bucket('bucket-committed', '2026-10-10', 2, 1))
+    const committedService = new StockService(committedRepository)
+    await expectRejected(async () => await committedService.removeExpiredBucket({ bucketId: 'bucket-committed', operationId: 'remove-committed', businessDate: DATE, auth: ACTOR, reason: 'Blocked' }), STOCK_ERROR_CODES.EXPIRED_BUCKET_HAS_COMMITMENTS)
+    expect(committedRepository.movements).to.have.length(0)
+
+    const malformedRepository = newRepository()
+    const malformedService = new StockService(malformedRepository)
+    await expectRejected(async () => await malformedService.removeExpiredBucket({ bucketId: 'missing', operationId: 'remove-missing', businessDate: DATE, auth: ACTOR, reason: 'Missing' }))
+    await expectRejected(async () => await malformedService.removeExpiredBucket({ bucketId: 'bucket-first', operationId: 'remove-no-reason', businessDate: DATE, auth: ACTOR, reason: ' ' }))
+    expect(malformedRepository.movements).to.have.length(0)
   })
 })

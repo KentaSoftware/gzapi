@@ -5,6 +5,7 @@ import { STOCK_ERROR_CODES } from '../src/interfaces/stock.interface'
 import { StockService, StockServiceError } from '../src/services/stock'
 import {
   mapPhysicalReturnToStockInput,
+  mapPurchaseAdjustmentToStockInput,
   mapPurchaseReceiptToStockInput,
   mapSaleReferenceToStockCommitInput,
   stockPortAdapter
@@ -101,6 +102,44 @@ describe('Stock commercial flow', () => {
     }
 
     expect(receivePurchase.called).to.equal(false)
+  })
+
+  it('maps purchase adjustments with signed quantities and preserves audit context', () => {
+    const mapped = mapPurchaseAdjustmentToStockInput(fact({
+      type: 'PURCHASE_ADJUSTMENT',
+      reason: 'Supplier count correction',
+      idempotencyKey: 'commercial-adjustment-1',
+      businessDate: new Date('2026-10-15T12:00:00.000Z'),
+      lines: [{ _id: 'line-adjustment-1', idProducto: 'product-1', adjustmentQuantity: -2, expiryDate: '2026-10-20', precio: 99, bulto: 12 }]
+    }))
+
+    expect(mapped).to.deep.include({ buyId: '507f1f77bcf86cd799439011', operationId: 'commercial-adjustment-1', businessDate: '2026-10-15', reason: 'Supplier count correction' })
+    expect(mapped.auth).to.deep.equal({ actorId: '507f1f77bcf86cd799439013', canManageStock: false })
+    expect(mapped.lines).to.deep.equal([{ lineId: 'line-adjustment-1', productId: 'product-1', quantity: -2, expiryDate: '2026-10-20' }])
+  })
+
+  it('routes purchase adjustments and rejects quantity-only lines before StockService', async () => {
+    const adjustPurchase = sinon.stub(StockService.prototype, 'adjustPurchase').resolves({
+      status: 'APPLIED', operationId: 'commercial-adjustment-2', movementCount: 1, appliedMovementCount: 1, alreadyAppliedCount: 0, projectionCount: 1
+    })
+    await stockPortAdapter.applyPurchaseAdjustment(fact({
+      type: 'PURCHASE_ADJUSTMENT',
+      reason: 'Correction',
+      idempotencyKey: 'commercial-adjustment-2',
+      lines: [{ idProducto: 'product-1', cantidad: 2, precio: 99, bulto: 12 }]
+    }))
+    expect(adjustPurchase.calledOnce).to.equal(true)
+    expect(adjustPurchase.firstCall.args[0]).to.deep.include({ buyId: '507f1f77bcf86cd799439011', operationId: 'commercial-adjustment-2', businessDate: '2026-10-15', reason: 'Correction' })
+
+    adjustPurchase.resetHistory()
+    try {
+      await stockPortAdapter.applyPurchaseAdjustment(fact({ type: 'PURCHASE_ADJUSTMENT', reason: 'Correction', lines: [{ quantity: 2 }] }))
+      expect.fail('expected quantity-only adjustment to reject')
+    } catch (error) {
+      expect(error).to.be.instanceOf(StockServiceError)
+      expect(error).to.have.property('code', STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    }
+    expect(adjustPurchase.called).to.equal(false)
   })
 
   it('maps physical return aliases, date, actor, and operation while ignoring price and bulto', () => {

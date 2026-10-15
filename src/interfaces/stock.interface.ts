@@ -149,6 +149,32 @@ export interface PurchaseReceiptInput {
   receivedBy: string
 }
 
+export interface PurchaseAdjustmentLineInput {
+  lineId: string
+  productId: string
+  quantity: number
+  expiryDate?: string
+}
+
+export interface PurchaseAdjustmentInput {
+  buyId: string
+  operationId: string
+  businessDate: string
+  auth: StockServiceAuth
+  lines: PurchaseAdjustmentLineInput[]
+  reason: string
+  occurredAt?: Date
+}
+
+export interface ExpiredRemovalInput {
+  bucketId: string
+  operationId: string
+  businessDate: string
+  auth: StockServiceAuth
+  reason: string
+  occurredAt?: Date
+}
+
 export interface SaleDeliveryInput {
   saleId: string
   deliveredAt: string
@@ -389,6 +415,7 @@ export interface StockRepository {
   withTransaction: <T>(work: (context: StockRepository & StockTransactionContext) => Promise<T>) => Promise<T>
   getProduct: (productId: string, session?: StockRepositorySession) => Promise<StockProductSnapshot | undefined>
   getBuckets: (productId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot[]>
+  getBucket: (bucketId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot | undefined>
   findMovementByIdempotencyKey: (idempotencyKey: string, session?: StockRepositorySession) => Promise<StockMovementRecord | undefined>
   findMovements: (query: StockMovementQuery, session?: StockRepositorySession) => Promise<StockMovementRecord[]>
   insertMovement: (movement: StockMovementRecord, session?: StockRepositorySession) => Promise<StockMovementRecord>
