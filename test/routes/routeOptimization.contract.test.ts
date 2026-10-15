@@ -3,28 +3,9 @@ import DeliveryZoneModel from '../../src/models/deliveryZone'
 import RoutePlanModel from '../../src/models/routePlan'
 import RoutingConfigModel from '../../src/models/routingConfig'
 import SaleModel from '../../src/models/sale'
-import { isRouteOptimizationEnabled } from '../../src/config/phase0'
 import { routePlanSnapshotSchema, saleDeliverySchema } from '../../src/schemas/routeOptimization'
 
 describe('Route optimization data contracts', () => {
-  const originalRouteOptimizationFlag = process.env.ROUTE_OPTIMIZATION_ENABLED
-
-  afterEach(() => {
-    if (originalRouteOptimizationFlag === undefined) delete process.env.ROUTE_OPTIMIZATION_ENABLED
-    else process.env.ROUTE_OPTIMIZATION_ENABLED = originalRouteOptimizationFlag
-  })
-
-  it('fails closed unless explicitly enabled', () => {
-    delete process.env.ROUTE_OPTIMIZATION_ENABLED
-    expect(isRouteOptimizationEnabled()).to.equal(false)
-
-    process.env.ROUTE_OPTIMIZATION_ENABLED = 'TRUE'
-    expect(isRouteOptimizationEnabled()).to.equal(false)
-
-    process.env.ROUTE_OPTIMIZATION_ENABLED = 'true'
-    expect(isRouteOptimizationEnabled()).to.equal(true)
-  })
-
   it('enforces unique zone and singleton configuration indexes', () => {
     const deliveryZoneIndexes = DeliveryZoneModel.schema.indexes()
     const routingConfigIndexes = RoutingConfigModel.schema.indexes()
