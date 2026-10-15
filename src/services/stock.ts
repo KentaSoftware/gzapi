@@ -1,0 +1,497 @@
+import {
+  BASELINE_STATUS,
+  EXPIRY_TRACKING,
+  INVENTORY_MOVEMENT_TYPES,
+  STOCK_DATA_QUALITY,
+  STOCK_ERROR_CODES,
+  STOCK_OPERATION_STATUSES,
+  type AvailabilityResult,
+  type FefoAllocationResult,
+  type StockAggregatedLine,
+  type StockAvailabilityQuery,
+  type StockAvailabilityValidationResult,
+  type StockBucketSnapshot,
+  type StockIdempotentMovementResult,
+  type StockMovementRecord,
+  type StockOperationInput,
+  type StockOperationResult,
+  type StockProductSnapshot,
+  type StockRepository,
+  type StockSaleAdjustmentInput,
+  type StockSaleAvailabilityInput,
+  type StockSaleCancelInput,
+  type StockSaleCommitInput,
+  type StockSaleLineInput,
+  type StockSaleReleaseInput,
+  type StockServiceAuth,
+  type StockTransactionContext
+} from '../interfaces/stock.interface'
+import { STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
+import { allocateFefo, calculateAvailability, StockRuleError } from './stockRules'
+
+const SOURCE_TYPE = 'SALE'
+const SOURCE_EVENTS = {
+  COMMIT: 'SALE_COMMIT',
+  CANCEL: 'SALE_CANCEL',
+  ADJUSTMENT: 'SALE_ADJUSTMENT'
+} as const
+
+type StockSourceEvent = (typeof SOURCE_EVENTS)[keyof typeof SOURCE_EVENTS]
+
+export interface StockServiceOptions {
+  timeZone?: string
+  rulesVersion?: string
+}
+
+export class StockServiceError extends Error {
+  readonly code: (typeof STOCK_ERROR_CODES)[keyof typeof STOCK_ERROR_CODES]
+
+  constructor (code: (typeof STOCK_ERROR_CODES)[keyof typeof STOCK_ERROR_CODES], message: string) {
+    super(message)
+    this.name = 'StockServiceError'
+    this.code = code
+  }
+}
+
+const isPositiveInteger = (value: number): boolean => Number.isSafeInteger(value) && value > 0
+
+const operationResult = (operationId: string, appliedMovementCount: number, alreadyAppliedCount: number, projectionCount: number): StockOperationResult => ({
+  status: STOCK_OPERATION_STATUSES.APPLIED,
+  operationId,
+  movementCount: appliedMovementCount,
+  appliedMovementCount,
+  alreadyAppliedCount,
+  projectionCount
+})
+
+const incompleteAvailability = (productId: string): AvailabilityResult => ({
+  productId,
+  availableToSell: 0,
+  physicalQuantity: 0,
+  committedQuantity: 0,
+  expiredQuantity: 0,
+  dataQuality: STOCK_DATA_QUALITY.INCOMPLETE
+})
+
+const errorMessage = (error: unknown): string => error instanceof Error ? error.message : 'Stock repository operation failed'
+
+const hasSameMovementSemantics = (left: StockMovementRecord, right: StockMovementRecord): boolean =>
+  left.productId === right.productId &&
+  left.expiryBucketId === right.expiryBucketId &&
+  left.type === right.type &&
+  left.quantity === right.quantity &&
+  left.sourceType === right.sourceType &&
+  left.sourceId === right.sourceId &&
+  left.sourceEvent === right.sourceEvent &&
+  left.operationId === right.operationId &&
+  left.sourceLineId === right.sourceLineId &&
+  left.rulesVersion === right.rulesVersion &&
+  left.createdBy === right.createdBy &&
+  left.reason === right.reason &&
+  left.reversesMovementId === right.reversesMovementId
+
+const validAuth = (auth: StockServiceAuth | undefined): boolean =>
+  auth !== undefined && typeof auth.actorId === 'string' && auth.actorId.trim() !== ''
+
+const aggregateLines = (lines: StockSaleLineInput[]): StockAggregatedLine[] => {
+  const quantities = new Map<string, number>()
+  for (const line of lines) {
+    if (typeof line.lineId !== 'string' || line.lineId.trim() === '' || typeof line.productId !== 'string' || line.productId.trim() === '' || !isPositiveInteger(line.quantity)) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Sale lines are incomplete')
+    }
+    quantities.set(line.productId, (quantities.get(line.productId) ?? 0) + line.quantity)
+  }
+  if (quantities.size === 0) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'At least one sale line is required')
+  return [...quantities.entries()].map(([productId, quantity]) => ({ productId, quantity }))
+}
+
+const validateOperation = (input: StockOperationInput): void => {
+  if (!validAuth(input.auth)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
+  if (typeof input.saleId !== 'string' || input.saleId.trim() === '' || typeof input.operationId !== 'string' || input.operationId.trim() === '' || typeof input.businessDate !== 'string' || input.businessDate.trim() === '') {
+    throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Stock operation identity is incomplete')
+  }
+}
+
+const sourceLineId = (movement: StockMovementRecord): string | undefined => movement.sourceLineId
+
+const compatibleRetryMovement = (movement: StockMovementRecord, input: StockOperationInput, line: StockSaleLineInput, type: StockMovementRecord['type'], sourceEvent: StockSourceEvent, rulesVersion: string, reason?: string): boolean => {
+  const expected: StockMovementRecord = {
+    ...movement,
+    productId: line.productId,
+    expiryBucketId: movement.expiryBucketId,
+    type,
+    sourceType: SOURCE_TYPE,
+    sourceId: input.saleId,
+    sourceEvent,
+    operationId: input.operationId,
+    sourceLineId: line.lineId,
+    rulesVersion,
+    createdBy: input.auth.actorId,
+    reason,
+    reversesMovementId: undefined
+  }
+  return hasSameMovementSemantics(movement, expected)
+}
+
+const compatibleRetryBatch = (movements: StockMovementRecord[], input: StockOperationInput, line: StockSaleLineInput, type: StockMovementRecord['type'], sourceEvent: StockSourceEvent, rulesVersion: string, reason?: string): boolean => {
+  if (movements.length === 0 || movements.reduce((total, movement) => total + movement.quantity, 0) !== line.quantity) return false
+  return movements.every((movement) => compatibleRetryMovement(movement, input, line, type, sourceEvent, rulesVersion, reason))
+}
+
+export class StockService {
+  private readonly repository: StockRepository
+  private readonly timeZone: string
+  private readonly rulesVersion: string
+
+  constructor (repository: StockRepository, options: StockServiceOptions = {}) {
+    this.repository = repository
+    this.timeZone = options.timeZone ?? STOCK_TIME_ZONE
+    this.rulesVersion = options.rulesVersion ?? STOCK_RULES_VERSION
+  }
+
+  async getAvailability (query: StockAvailabilityQuery): Promise<AvailabilityResult[]> {
+    if (!validAuth(query.auth)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
+    if (!Array.isArray(query.productIds) || query.productIds.length === 0 || query.businessDate === undefined || query.businessDate.trim() === '') {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Availability query is incomplete')
+    }
+    return await Promise.all(query.productIds.map(async (productId) => await this.readAvailability(this.repository, productId, query.businessDate as string, query.timeZone ?? this.timeZone)))
+  }
+
+  async assertSaleAvailability (input: StockSaleAvailabilityInput): Promise<StockAvailabilityValidationResult> {
+    if (!validAuth(input.auth)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
+    const lines = aggregateLines(input.lines)
+    const availability = await Promise.all(lines.map(async ({ productId }) => await this.readAvailability(this.repository, productId, input.businessDate, input.timeZone ?? this.timeZone)))
+    for (const result of availability) {
+      if (result.dataQuality !== STOCK_DATA_QUALITY.COMPLETE) {
+        throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Availability is unavailable for ${result.productId}`)
+      }
+      const requested = lines.find((line) => line.productId === result.productId)?.quantity ?? 0
+      if (requested > result.availableToSell) {
+        throw new StockServiceError(STOCK_ERROR_CODES.STOCK_INSUFFICIENT, `Insufficient stock for ${result.productId}: requested ${requested}, available ${result.availableToSell}`)
+      }
+    }
+    return { saleId: input.saleId, lines, availability }
+  }
+
+  async commitSale (input: StockSaleCommitInput): Promise<StockOperationResult> {
+    validateOperation(input)
+    aggregateLines(input.lines)
+    return await this.runTransaction(input.operationId, async (transaction) => {
+      const previous = await transaction.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId, type: INVENTORY_MOVEMENT_TYPES.SALE_COMMIT }, transaction.session)
+      const pendingLines: StockSaleLineInput[] = []
+      let alreadyAppliedCount = 0
+      for (const line of input.lines) {
+        const previousForLine = previous.filter((movement) => sourceLineId(movement) === line.lineId)
+        const retryMovements = previousForLine.filter((movement) => movement.operationId === input.operationId)
+        if (retryMovements.length > 0) {
+          if (!compatibleRetryBatch(retryMovements, input, line, INVENTORY_MOVEMENT_TYPES.SALE_COMMIT, SOURCE_EVENTS.COMMIT, this.rulesVersion)) {
+            throw new StockServiceError(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT, `Existing commitment conflicts for line ${line.lineId}`)
+          }
+          alreadyAppliedCount += retryMovements.length
+        } else {
+          pendingLines.push(line)
+        }
+      }
+
+      if (pendingLines.length === 0) return operationResult(input.operationId, 0, alreadyAppliedCount, 0)
+      await this.assertAvailabilityInTransaction(transaction, pendingLines, input.businessDate, input.timeZone ?? this.timeZone)
+      const counters = await this.applyAdditions(transaction, input, pendingLines, INVENTORY_MOVEMENT_TYPES.SALE_COMMIT, SOURCE_EVENTS.COMMIT)
+      return operationResult(input.operationId, counters.applied, alreadyAppliedCount + counters.alreadyApplied, counters.projections)
+    })
+  }
+
+  async cancelSale (input: StockSaleCancelInput): Promise<StockOperationResult> {
+    validateOperation(input)
+    return await this.runTransaction(input.operationId, async (transaction) => {
+      const commitments = await transaction.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId, type: INVENTORY_MOVEMENT_TYPES.SALE_COMMIT }, transaction.session)
+      if (commitments.length === 0) return operationResult(input.operationId, 0, 0, 0)
+      let applied = 0
+      let alreadyApplied = 0
+      let projections = 0
+      for (const commitment of commitments) {
+        if (commitment.movementId === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Commitment movement identity is missing')
+        const key = `sale-cancel:${input.saleId}:${commitment.movementId}`
+        const movement: StockMovementRecord = {
+          productId: commitment.productId,
+          expiryBucketId: commitment.expiryBucketId,
+          type: INVENTORY_MOVEMENT_TYPES.SALE_CANCEL,
+          quantity: commitment.quantity,
+          occurredAt: input.occurredAt ?? new Date(),
+          sourceType: SOURCE_TYPE,
+          sourceId: input.saleId,
+          sourceEvent: SOURCE_EVENTS.CANCEL,
+          operationId: input.operationId,
+          idempotencyKey: key,
+          rulesVersion: this.rulesVersion,
+          sourceLineId: commitment.sourceLineId,
+          reversesMovementId: commitment.movementId,
+          createdBy: input.auth.actorId
+        }
+        const result = await this.persistMovement(transaction, movement)
+        if (result.alreadyApplied) {
+          alreadyApplied += 1
+          continue
+        }
+        await this.applyProjectionDelta(transaction, movement, -1)
+        applied += 1
+        projections += commitment.expiryBucketId === undefined ? 1 : 2
+      }
+      return operationResult(input.operationId, applied, alreadyApplied, projections)
+    })
+  }
+
+  async adjustSale (input: StockSaleAdjustmentInput): Promise<StockOperationResult> {
+    validateOperation(input)
+    const additions = input.additions ?? []
+    const releases = input.releases ?? []
+    if (additions.length === 0 && releases.length === 0) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Adjustment must explicitly contain additions or releases')
+    if (additions.length > 0) aggregateLines(additions)
+    for (const release of releases) this.validateRelease(release)
+
+    return await this.runTransaction(input.operationId, async (transaction) => {
+      let applied = 0
+      let alreadyApplied = 0
+      let projections = 0
+      if (additions.length > 0) {
+        const previousAdditions = await transaction.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId, type: INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT }, transaction.session)
+        const pendingAdditions: StockSaleLineInput[] = []
+        for (const addition of additions) {
+          const previousForLine = previousAdditions.filter((movement) => movement.sourceLineId === addition.lineId && movement.reason === 'addition')
+          const retryMovements = previousForLine.filter((movement) => movement.operationId === input.operationId)
+          if (retryMovements.length > 0) {
+            if (!compatibleRetryBatch(retryMovements, input, addition, INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT, SOURCE_EVENTS.ADJUSTMENT, this.rulesVersion, 'addition')) {
+              throw new StockServiceError(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT, `Existing adjustment conflicts for line ${addition.lineId}`)
+            }
+            alreadyApplied += retryMovements.length
+          } else {
+            pendingAdditions.push(addition)
+          }
+        }
+        if (pendingAdditions.length > 0) {
+          await this.assertAvailabilityInTransaction(transaction, pendingAdditions, input.businessDate, input.timeZone ?? this.timeZone)
+          const additionCounters = await this.applyAdditions(transaction, input, pendingAdditions, INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT, SOURCE_EVENTS.ADJUSTMENT, 'addition')
+          applied += additionCounters.applied
+          alreadyApplied += additionCounters.alreadyApplied
+          projections += additionCounters.projections
+        }
+      }
+      for (const release of releases) {
+        const key = `sale-adjustment-release:${input.operationId}:${input.saleId}:${release.lineId}:${release.bucketId ?? 'untracked'}`
+        const movement: StockMovementRecord = {
+          productId: release.productId,
+          expiryBucketId: release.bucketId,
+          type: INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT,
+          quantity: release.quantity,
+          occurredAt: input.occurredAt ?? new Date(),
+          sourceType: SOURCE_TYPE,
+          sourceId: input.saleId,
+          sourceEvent: SOURCE_EVENTS.ADJUSTMENT,
+          operationId: input.operationId,
+          idempotencyKey: key,
+          rulesVersion: this.rulesVersion,
+          sourceLineId: release.lineId,
+          reason: 'release',
+          createdBy: input.auth.actorId
+        }
+        const existing = await transaction.findMovementByIdempotencyKey(key, transaction.session)
+        if (existing !== undefined) {
+          if (!hasSameMovementSemantics(existing, movement)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT, `Idempotency key conflicts: ${key}`)
+          alreadyApplied += 1
+          continue
+        }
+        const product = await transaction.getProduct(release.productId, transaction.session)
+        if (product === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Availability is unavailable for ${release.productId}`)
+        const buckets = await transaction.getBuckets(release.productId, transaction.session)
+        if (product.expiryTracking === EXPIRY_TRACKING.TRACKED) {
+          if (release.bucketId === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Release bucket is required for ${release.productId}`)
+          const target = buckets.find((bucket) => bucket.bucketId === release.bucketId)
+          if (target === undefined || target.committedQuantity < release.quantity) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_INSUFFICIENT, `Committed stock is insufficient for ${release.productId}`)
+        } else if (release.bucketId !== undefined || buckets.length > 0) {
+          throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, `Release bucket data is invalid for ${release.productId}`)
+        }
+        const commitments = await transaction.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId, type: INVENTORY_MOVEMENT_TYPES.SALE_COMMIT }, transaction.session)
+        const cancellations = await transaction.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId, type: INVENTORY_MOVEMENT_TYPES.SALE_CANCEL }, transaction.session)
+        const priorReleases = await transaction.findMovements({ sourceType: SOURCE_TYPE, sourceId: input.saleId, type: INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT }, transaction.session)
+        const matchesRelease = (candidate: StockMovementRecord): boolean => candidate.productId === release.productId && candidate.expiryBucketId === release.bucketId && candidate.sourceLineId === release.lineId
+        const ownedQuantity = commitments.filter(matchesRelease).reduce((total, movement) => total + movement.quantity, 0) -
+          cancellations.filter(matchesRelease).reduce((total, movement) => total + movement.quantity, 0) -
+          priorReleases.filter((movement) => movement.reason === 'release' && matchesRelease(movement)).reduce((total, movement) => total + movement.quantity, 0)
+        if (ownedQuantity < release.quantity) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_INSUFFICIENT, `Committed stock is insufficient for sale ${input.saleId}`)
+        const persisted = await this.persistMovement(transaction, movement)
+        if (persisted.alreadyApplied) {
+          alreadyApplied += 1
+        } else {
+          await this.applyProjectionDelta(transaction, movement, -1)
+          applied += 1
+          projections += release.bucketId === undefined ? 1 : 2
+        }
+      }
+      return operationResult(input.operationId, applied, alreadyApplied, projections)
+    })
+  }
+
+  private async readAvailability (repository: StockRepository, productId: string, businessDate: string, timeZone: string, session?: StockTransactionContext['session']): Promise<AvailabilityResult> {
+    try {
+      const product = await repository.getProduct(productId, session)
+      if (product === undefined) return incompleteAvailability(productId)
+      const buckets = await repository.getBuckets(productId, session)
+      if (!this.validProductSnapshot(product, productId) || !Array.isArray(buckets) || !buckets.every(this.validBucketSnapshot) || buckets.some((bucket) => bucket.productId !== productId || bucket.receivedQuantity !== bucket.availableQuantity + bucket.committedQuantity)) return incompleteAvailability(productId)
+      if (product.expiryTracking === EXPIRY_TRACKING.NOT_TRACKED && buckets.length > 0) return incompleteAvailability(productId)
+      return calculateAvailability({
+        productId,
+        businessDate,
+        timeZone,
+        physicalQuantity: product.physicalQuantity,
+        committedQuantity: product.committedQuantity,
+        expiryTracking: product.expiryTracking,
+        baselineStatus: product.baselineStatus,
+        expiryBuckets: product.expiryTracking === EXPIRY_TRACKING.TRACKED
+          ? buckets.map((entry) => ({
+            bucketId: entry.bucketId,
+            expiryDate: entry.expiryDate,
+            availableQuantity: entry.availableQuantity,
+            committedQuantity: entry.committedQuantity
+          }))
+          : undefined
+      })
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))
+    }
+  }
+
+  private async assertAvailabilityInTransaction (repository: StockRepository & StockTransactionContext, lines: StockSaleLineInput[], businessDate: string, timeZone: string): Promise<void> {
+    const aggregated = aggregateLines(lines)
+    const results = await Promise.all(aggregated.map(async ({ productId }) => await this.readAvailability(repository, productId, businessDate, timeZone, repository.session)))
+    for (const result of results) {
+      if (result.dataQuality !== STOCK_DATA_QUALITY.COMPLETE) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Availability is unavailable for ${result.productId}`)
+      const requested = aggregated.find((line) => line.productId === result.productId)?.quantity ?? 0
+      if (requested > result.availableToSell) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_INSUFFICIENT, `Insufficient stock for ${result.productId}: requested ${requested}, available ${result.availableToSell}`)
+    }
+  }
+
+  private async applyAdditions (transaction: StockRepository & StockTransactionContext, input: StockOperationInput & { occurredAt?: Date }, lines: StockSaleLineInput[], movementType: typeof INVENTORY_MOVEMENT_TYPES.SALE_COMMIT | typeof INVENTORY_MOVEMENT_TYPES.SALE_ADJUSTMENT, sourceEvent: StockSourceEvent, reason?: string): Promise<{ applied: number, alreadyApplied: number, projections: number }> {
+    let applied = 0
+    let alreadyApplied = 0
+    let projections = 0
+    for (const line of lines) {
+      const product = await transaction.getProduct(line.productId, transaction.session)
+      if (product === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Availability is unavailable for ${line.productId}`)
+      let allocations: FefoAllocationResult['allocations'] = []
+      if (product.expiryTracking === EXPIRY_TRACKING.TRACKED) {
+        const buckets = await transaction.getBuckets(line.productId, transaction.session)
+        try {
+          allocations = allocateFefo({
+            productId: line.productId,
+            businessDate: input.businessDate,
+            timeZone: input.timeZone ?? this.timeZone,
+            requestedQuantity: line.quantity,
+            buckets: buckets.filter((bucket) => bucket.expiryDate >= input.businessDate).map((bucket) => ({
+              bucketId: bucket.bucketId,
+              expiryDate: bucket.expiryDate,
+              availableQuantity: bucket.availableQuantity,
+              committedQuantity: bucket.committedQuantity
+            }))
+          }).allocations
+        } catch (error) {
+          if (error instanceof StockRuleError) throw new StockServiceError(error.code, error.message)
+          throw error
+        }
+      } else if (product.expiryTracking !== EXPIRY_TRACKING.NOT_TRACKED) {
+        throw new StockServiceError(STOCK_ERROR_CODES.STOCK_AVAILABILITY_UNAVAILABLE, `Expiry tracking is unavailable for ${line.productId}`)
+      }
+      if (allocations.length === 0) allocations = [{ bucketId: '', expiryDate: '', quantity: line.quantity }]
+      for (const allocation of allocations) {
+        const bucketId = allocation.bucketId === '' ? undefined : allocation.bucketId
+        const keyPrefix = movementType === INVENTORY_MOVEMENT_TYPES.SALE_COMMIT ? 'sale-commit' : 'sale-adjustment-add'
+        const movement: StockMovementRecord = {
+          productId: line.productId,
+          expiryBucketId: bucketId,
+          type: movementType,
+          quantity: allocation.quantity,
+          occurredAt: input.occurredAt ?? new Date(),
+          sourceType: SOURCE_TYPE,
+          sourceId: input.saleId,
+          sourceEvent,
+          operationId: input.operationId,
+          idempotencyKey: `${keyPrefix}:${input.operationId}:${input.saleId}:${line.lineId}:${bucketId ?? 'untracked'}`,
+          rulesVersion: this.rulesVersion,
+          sourceLineId: line.lineId,
+          reason,
+          createdBy: input.auth.actorId
+        }
+        const persisted = await this.persistMovement(transaction, movement)
+        if (persisted.alreadyApplied) {
+          alreadyApplied += 1
+          continue
+        }
+        await this.applyProjectionDelta(transaction, movement, 1)
+        applied += 1
+        projections += bucketId === undefined ? 1 : 2
+      }
+    }
+    return { applied, alreadyApplied, projections }
+  }
+
+  private async persistMovement (transaction: StockRepository & StockTransactionContext, movement: StockMovementRecord): Promise<StockIdempotentMovementResult> {
+    const existing = await transaction.findMovementByIdempotencyKey(movement.idempotencyKey, transaction.session)
+    if (existing !== undefined) {
+      if (!hasSameMovementSemantics(existing, movement)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT, `Idempotency key conflicts: ${movement.idempotencyKey}`)
+      return { movement: existing, alreadyApplied: true }
+    }
+    try {
+      const inserted = await transaction.insertMovement(movement, transaction.session)
+      return { movement: inserted, alreadyApplied: false }
+    } catch (error) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))
+    }
+  }
+
+  private async applyProjectionDelta (transaction: StockRepository & StockTransactionContext, movement: StockMovementRecord, direction: 1 | -1): Promise<void> {
+    try {
+      const quantity = movement.quantity * direction
+      await transaction.applyProductProjectionDelta(movement.productId, {
+        availableQuantityDelta: -quantity,
+        committedQuantityDelta: quantity,
+        physicalQuantityDelta: 0
+      })
+      if (movement.expiryBucketId !== undefined) {
+        await transaction.applyBucketProjectionDelta(movement.expiryBucketId, {
+          availableQuantityDelta: -quantity,
+          committedQuantityDelta: quantity
+        })
+      }
+    } catch (error) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))
+    }
+  }
+
+  private validateRelease (release: StockSaleReleaseInput): void {
+    if (typeof release.lineId !== 'string' || release.lineId.trim() === '' || typeof release.productId !== 'string' || release.productId.trim() === '' || !isPositiveInteger(release.quantity) || (release.bucketId !== undefined && release.bucketId.trim() === '')) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Release lines are incomplete')
+    }
+  }
+
+  private validProductSnapshot (product: StockProductSnapshot, expectedProductId: string): boolean {
+    return product.productId === expectedProductId &&
+      [product.physicalQuantity, product.committedQuantity, product.availableQuantity].every((value) => Number.isSafeInteger(value) && value >= 0) &&
+      Object.values(EXPIRY_TRACKING).includes(product.expiryTracking) && Object.values(BASELINE_STATUS).includes(product.baselineStatus)
+  }
+
+  private validBucketSnapshot (bucket: StockBucketSnapshot): boolean {
+    return typeof bucket.bucketId === 'string' && bucket.bucketId !== '' && typeof bucket.productId === 'string' && bucket.productId !== '' &&
+      /^\d{4}-\d{2}-\d{2}$/.test(bucket.expiryDate) &&
+      [bucket.receivedQuantity, bucket.availableQuantity, bucket.committedQuantity].every((value) => Number.isSafeInteger(value) && value >= 0)
+  }
+
+  private async runTransaction<T> (operationId: string, work: (transaction: StockRepository & StockTransactionContext) => Promise<T>): Promise<T> {
+    try {
+      return await this.repository.withTransaction(work)
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, `Operation ${operationId} failed: ${errorMessage(error)}`)
+    }
+  }
+}
+
+export const createStockService = (repository: StockRepository, options?: StockServiceOptions): StockService => new StockService(repository, options)

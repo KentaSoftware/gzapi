@@ -49,7 +49,9 @@ export const STOCK_ERROR_CODES = {
   STOCK_AVAILABILITY_UNAVAILABLE: 'STOCK_AVAILABILITY_UNAVAILABLE',
   STOCK_DATA_INCOMPLETE: 'STOCK_DATA_INCOMPLETE',
   STOCK_FORBIDDEN: 'STOCK_FORBIDDEN',
-  EXPIRED_BUCKET_HAS_COMMITMENTS: 'EXPIRED_BUCKET_HAS_COMMITMENTS'
+  EXPIRED_BUCKET_HAS_COMMITMENTS: 'EXPIRED_BUCKET_HAS_COMMITMENTS',
+  STOCK_IDEMPOTENCY_CONFLICT: 'STOCK_IDEMPOTENCY_CONFLICT',
+  STOCK_REPOSITORY_ERROR: 'STOCK_REPOSITORY_ERROR'
 } as const
 
 export type StockErrorCode = (typeof STOCK_ERROR_CODES)[keyof typeof STOCK_ERROR_CODES]
@@ -106,6 +108,12 @@ export type StockAlertSeverity = (typeof STOCK_ALERT_SEVERITIES)[keyof typeof ST
 export interface AvailabilityQuery {
   productIds: string[]
   saleId?: string
+}
+
+export interface StockAvailabilityQuery extends AvailabilityQuery {
+  businessDate?: string
+  timeZone?: string
+  auth: StockServiceAuth
 }
 
 export interface AvailabilityResult {
@@ -219,6 +227,150 @@ export interface StockAuthContext {
   actorId: string
   canManageStock: boolean
   canApproveStockCount: boolean
+}
+
+export interface StockServiceAuth {
+  actorId: string
+  canManageStock: boolean
+}
+
+export interface StockSaleLineInput {
+  lineId: string
+  productId: string
+  quantity: number
+}
+
+export interface StockSaleReleaseInput extends StockSaleLineInput {
+  bucketId?: string
+}
+
+export interface StockOperationInput {
+  saleId: string
+  operationId: string
+  businessDate: string
+  timeZone?: string
+  auth: StockServiceAuth
+}
+
+export interface StockSaleAvailabilityInput {
+  saleId: string
+  businessDate: string
+  timeZone?: string
+  auth: StockServiceAuth
+  lines: StockSaleLineInput[]
+}
+
+export interface StockSaleCommitInput extends StockOperationInput {
+  lines: StockSaleLineInput[]
+  occurredAt?: Date
+}
+
+export interface StockSaleCancelInput extends StockOperationInput {
+  occurredAt?: Date
+}
+
+export interface StockSaleAdjustmentInput extends StockOperationInput {
+  additions?: StockSaleLineInput[]
+  releases?: StockSaleReleaseInput[]
+  occurredAt?: Date
+}
+
+export interface StockAggregatedLine {
+  productId: string
+  quantity: number
+}
+
+export interface StockAvailabilityValidationResult {
+  saleId: string
+  lines: StockAggregatedLine[]
+  availability: AvailabilityResult[]
+}
+
+export interface StockProductSnapshot {
+  productId: string
+  physicalQuantity: number
+  committedQuantity: number
+  availableQuantity: number
+  expiryTracking: ExpiryTracking
+  baselineStatus: BaselineStatus
+}
+
+export interface StockBucketSnapshot {
+  bucketId: string
+  productId: string
+  expiryDate: string
+  receivedQuantity: number
+  availableQuantity: number
+  committedQuantity: number
+}
+
+export interface StockMovementRecord {
+  movementId?: string
+  productId: string
+  expiryBucketId?: string
+  type: InventoryMovementType
+  quantity: number
+  occurredAt: Date
+  sourceType: string
+  sourceId: string
+  sourceEvent: string
+  operationId: string
+  idempotencyKey: string
+  rulesVersion: string
+  sourceLineId?: string
+  reason?: string
+  reversesMovementId?: string
+  createdBy: string
+}
+
+export interface StockMovementQuery {
+  sourceType?: string
+  sourceId?: string
+  type?: InventoryMovementType
+}
+
+export interface StockIdempotentMovementResult {
+  movement: StockMovementRecord
+  alreadyApplied: boolean
+}
+
+export interface StockBucketProjectionDelta {
+  availableQuantityDelta: number
+  committedQuantityDelta: number
+}
+
+export interface StockProductProjectionDelta {
+  availableQuantityDelta: number
+  committedQuantityDelta: number
+  physicalQuantityDelta: number
+}
+
+export interface StockOperationResult {
+  status: StockOperationStatus
+  operationId: string
+  movementCount: number
+  appliedMovementCount: number
+  alreadyAppliedCount: number
+  projectionCount: number
+}
+
+export interface StockRepositorySession {
+  transactionId: string
+}
+
+export interface StockTransactionContext {
+  session: StockRepositorySession
+}
+
+export interface StockRepository {
+  withTransaction: <T>(work: (context: StockRepository & StockTransactionContext) => Promise<T>) => Promise<T>
+  getProduct: (productId: string, session?: StockRepositorySession) => Promise<StockProductSnapshot | undefined>
+  getBuckets: (productId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot[]>
+  findMovementByIdempotencyKey: (idempotencyKey: string, session?: StockRepositorySession) => Promise<StockMovementRecord | undefined>
+  findMovements: (query: StockMovementQuery, session?: StockRepositorySession) => Promise<StockMovementRecord[]>
+  insertMovement: (movement: StockMovementRecord, session?: StockRepositorySession) => Promise<StockMovementRecord>
+  applyBucketProjectionDelta: (bucketId: string, delta: StockBucketProjectionDelta, session?: StockRepositorySession) => Promise<void>
+  applyProductProjectionDelta: (productId: string, delta: StockProductProjectionDelta, session?: StockRepositorySession) => Promise<void>
 }
 
 export interface OpeningCountRow {
