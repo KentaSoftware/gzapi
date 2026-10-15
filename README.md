@@ -1,114 +1,167 @@
 # GZ API
 
-API REST del ecosistema Golozur. Backend para gestión comercial: ventas, compras, productos, clientes, usuarios, roles y reportes. Integra MongoDB, autenticación JWT, Socket.io y generación de PDF.
+REST API for the Golozur ecosystem. The backend supports commercial
+management for sales, purchases, products, clients, users, roles, and reports,
+with MongoDB, JWT authentication, Socket.IO, and PDF generation.
 
----
+## Local development quick path
 
-## Características del proyecto
+### Prerequisites
 
-### Módulos principales
+- Node.js and npm
+- MongoDB running locally at `127.0.0.1:27017`
 
-- **Auth**: Login, JWT, verificación de sesión
-- **Ventas (sale)**: CRUD, items de venta, impresión PDF individual y múltiple
-- **Compras (buy)**: Registro de compras e items
-- **Productos (product)**: CRUD con categorías, marcas, proveedores, imágenes
-- **Clientes (client)**: Gestión con ubicación
-- **Usuarios y roles**: Permisos por rol, middleware de autorización
-- **Proveedores, categorías, marcas, ciudades**: Catálogos de soporte
-- **Logs**: Registro de actividad
-- **Backup**: Respaldo de datos
-- **Dataset**: Datos para reportes y estadísticas
-
-### Stack tecnológico
-
-| Categoría | Tecnología |
-|-----------|------------|
-| Runtime | Node.js |
-| Framework | Express |
-| Base de datos | MongoDB, Mongoose |
-| Autenticación | JWT, bcrypt |
-| Tiempo real | Socket.io |
-| Validación | TypeScript |
-| Imágenes | Sharp, Multer |
-| PDF | PDFKit |
-
-### Estructura del proyecto
-
-```
-src/
-├── config/       # Conexión MongoDB
-├── controllers/  # Lógica de endpoints (auth, sale, product, client, etc.)
-├── interfaces/   # Tipos e interfaces
-├── middleware/   # Session, permisos, upload de archivos
-├── models/       # Esquemas Mongoose
-├── routes/       # Rutas Express (carga dinámica)
-├── services/     # Lógica de negocio
-├── socket.ts     # Configuración Socket.io
-└── utils/        # JWT, bcrypt, manejo de errores e imágenes
-```
-
-### Requisitos de entorno
-
-- Node.js
-- MongoDB
-- Variables: `DB_URI`, `JWT_SECRET`, etc.
-
-### Scripts
+Install dependencies from this directory:
 
 ```bash
-npm run dev   # Desarrollo con nodemon
-npm run build # Compilar TypeScript
-npm start     # Producción
-npm test      # Tests (Mocha)
+npm install
 ```
 
-### Datos de prueba de Optimización de Rutas
+Create the local environment file with one of these commands:
 
-El seed siguiente es **exclusivamente para pruebas locales**. Carga la base
-`test_route_plan` en MongoDB local con datos sintéticos de Tucumán:
-Tafí del Valle, El Mollar, Monteros, Los Sarmientos, Aguilares y Test-Route.
+```powershell
+Copy-Item .env.example .env
+```
 
-Requisitos:
+```bash
+cp .env.example .env
+```
 
-- MongoDB ejecutándose en `127.0.0.1:27017`.
-- Dependencias instaladas con `npm install`.
+Start the API:
 
-Ejecutar:
+```bash
+npm run dev
+```
+
+At startup, the base seed creates or updates the `admin` role and the four
+business roles (`Propietario`, `Administración`, `Preventista`, and
+`Repartidor`). It also creates the `admin` user when that user does not exist.
+The seed is idempotent: restarting the API does not create duplicate roles or
+reset an existing admin user's password. The local bootstrap credentials are:
+
+```text
+nickname: admin
+password: 123
+```
+
+Change these credentials outside local development. The API is available at
+`http://localhost:3002`. For example, log in with:
+
+```http
+POST http://localhost:3002/auth/login
+Content-Type: application/json
+
+{
+  "nickname": "admin",
+  "password": "123"
+}
+```
+
+## Environment variables
+
+The application reads `MONGODB_URI`, not `DB_URI`. The main local settings are:
+
+| Variable | Purpose |
+| --- | --- |
+| `MONGODB_URI` | MongoDB connection URI, normally `mongodb://127.0.0.1:27017/gzapi` locally |
+| `PORT` | HTTP port; the development default is `3002` |
+| `JWT_SECRET` | Secret used to sign JWTs; use a strong private value outside local development |
+| `ADMIN_PASSWORD` | Password used only when the base seed first creates `admin`; defaults to `123` when missing or empty |
+| `DOCUMENT_AI_URL` | Optional Document AI service URL |
+| `DOCUMENT_AI_TIMEOUT` | Optional Document AI request timeout |
+| `DOCUMENT_AI_DEBUG` | Optional Document AI debug setting |
+| `UPLOAD_MAX_SIZE` | Optional upload size limit |
+| `UPLOAD_ALLOWED_MIMES` | Optional allowed upload MIME types |
+| `BACKUP_URI`, `USER`, `PASS` | Optional backup and restore configuration |
+
+The base seed creates roles and the `admin` user only. It does not create
+synthetic route-plan data.
+
+## Production and build commands
+
+```bash
+npm run build  # Compile TypeScript into dist/
+npm start      # Start the compiled server
+npm run lint   # Run the TypeScript lint checks
+npm test       # Run the Mocha test suite
+```
+
+## Route-plan test fixture seed
+
+`npm run seed:route-plan:test` is a separate, local-only fixture command. It
+uses the `test_route_plan` database and is intended for route-planning tests and
+demo data, not normal application startup or production databases.
 
 ```bash
 npm run seed:route-plan:test
 ```
 
-El seed es idempotente y no elimina datos. Crea o actualiza 6 zonas, 34
-clientes, 34 ventas pendientes, un usuario de pruebas, un vehículo de prueba,
-la configuración `deposito_1` y tres snapshots demo para `TEST_ROUTE`, usando
-los ocho clientes con coordenadas explícitas. Los snapshots se distribuyen en
-3 rutas (4/2/2 paradas) y sus métricas de distancia, duración, combustible y
-horarios son estimaciones deterministas locales; no representan datos de
-producción.
+The fixture seed is idempotent and only accepts a local MongoDB URI at
+`localhost` or `127.0.0.1`; it rejects other databases and hosts. It creates
+synthetic route data including six delivery zones, 34 clients, 34 pending
+sales, catalog fixtures, a test vehicle, route configuration, and deterministic
+demo snapshots. It does not replace the base seed.
 
-Valores opcionales:
+Optional variables:
 
 ```bash
 ROUTE_PLAN_SERVICE_DATE=2026-10-14 npm run seed:route-plan:test
-ROUTE_PLAN_TEST_PASSWORD=tu-password-local npm run seed:route-plan:test
+ROUTE_PLAN_TEST_PASSWORD=route-plan-local-password npm run seed:route-plan:test
 ```
 
-Usuario local predeterminado:
+Fixture credentials:
 
 ```text
 nickname: route-plan-test
 password: route-plan-test-password
 ```
 
-Por seguridad, el script solo acepta `localhost`/`127.0.0.1` y la base
-`test_route_plan`; rechaza cualquier otra URI.
+## Project information
 
----
+### Main modules
 
-## Licencia
+- **Auth**: Login, JWT, and session verification
+- **Sales**: CRUD, sale items, and individual or batch PDF printing
+- **Purchases**: Purchase and purchase-item registration
+- **Products**: CRUD with categories, brands, providers, and images
+- **Clients**: Client management with location data
+- **Users and roles**: Role permissions and authorization middleware
+- **Providers, categories, brands, and cities**: Supporting catalogs
+- **Logs**: Activity logging
+- **Backup**: Data backup and restore
+- **Dataset**: Reporting and statistics data
 
-Este proyecto es **propietario** y está protegido por derechos de autor.  
-**Prohibido su uso, copia, modificación o distribución sin autorización.**
+### Technology stack
 
-Ver [LICENSE](./LICENSE) para más detalles.
+| Category | Technology |
+| --- | --- |
+| Runtime | Node.js |
+| Framework | Express |
+| Database | MongoDB, Mongoose |
+| Authentication | JWT, bcrypt |
+| Real time | Socket.IO |
+| Validation | TypeScript |
+| Images | Sharp, Multer |
+| PDF | PDFKit |
+
+### Project structure
+
+```text
+src/
+├── config/       # MongoDB connection
+├── controllers/  # Endpoint logic
+├── interfaces/   # Types and interfaces
+├── middleware/   # Sessions, permissions, and uploads
+├── models/       # Mongoose schemas
+├── routes/       # Dynamically loaded Express routes
+├── services/     # Business logic
+├── socket.ts     # Socket.IO configuration
+└── utils/        # JWT, bcrypt, error, and image helpers
+```
+
+## License
+
+This project is proprietary and protected by copyright. Use, copying,
+modification, or distribution without authorization is prohibited.
+
+See [LICENSE](./LICENSE) for details.

@@ -5,6 +5,7 @@ import UserModel from '../../src/models/user'
 import ItemSaleModel from '../../src/models/itemSale'
 import ProductModel from '../../src/models/product'
 import { seedDatabase } from '../../src/services/seed'
+import { verified } from '../../src/utils/bcrypt.handle'
 import { seed as seedRoutePlanFixtures } from '../../migrations/route-plan-002-seed-test-data'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_test'
@@ -19,8 +20,23 @@ const PHASE_0_GRANTS = {
 
 const EXPECTED_ROLE_NAMES = ['Administración', 'Preventista', 'Propietario', 'Repartidor', 'admin']
 const PHASE_0_PERMISSIONS = [...new Set(Object.values(PHASE_0_GRANTS).flat())]
+const initialAdminPassword = process.env.ADMIN_PASSWORD
 
 const stringAscending = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
+
+async function withAdminPassword (password: string, action: () => Promise<void>): Promise<void> {
+  const previousPassword = process.env.ADMIN_PASSWORD
+  process.env.ADMIN_PASSWORD = password
+  try {
+    await action()
+  } finally {
+    if (previousPassword === undefined) {
+      delete process.env.ADMIN_PASSWORD
+    } else {
+      process.env.ADMIN_PASSWORD = previousPassword
+    }
+  }
+}
 
 async function clearCollections (): Promise<void> {
   await RoleModel.deleteMany({})
@@ -58,6 +74,38 @@ describe('Phase 0 — role seed idempotency', () => {
       await mongoose.connection.dropDatabase()
     }
     await mongoose.disconnect()
+    if (initialAdminPassword === undefined) {
+      delete process.env.ADMIN_PASSWORD
+    } else {
+      process.env.ADMIN_PASSWORD = initialAdminPassword
+    }
+  })
+
+  it('creates the admin user with the default password when ADMIN_PASSWORD is empty', async () => {
+    await clearCollections()
+
+    await withAdminPassword('', async () => {
+      await seedDatabase()
+      const admin = await UserModel.findOne({ nickname: 'admin' }).lean()
+      expect(admin).to.not.equal(null)
+      if (admin !== null) {
+        expect(await verified('123', admin.password)).to.equal(true)
+      }
+    })
+  })
+
+  it('creates the admin user with the explicit ADMIN_PASSWORD value', async () => {
+    await clearCollections()
+    const explicitPassword = 'phase0-explicit-admin-password'
+
+    await withAdminPassword(explicitPassword, async () => {
+      await seedDatabase()
+      const admin = await UserModel.findOne({ nickname: 'admin' }).lean()
+      expect(admin).to.not.equal(null)
+      if (admin !== null) {
+        expect(await verified(explicitPassword, admin.password)).to.equal(true)
+      }
+    })
   })
 
   it('S-06a: seed on an empty DB creates admin plus the four business roles exactly once', async () => {
