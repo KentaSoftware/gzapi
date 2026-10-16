@@ -79,7 +79,7 @@ const overviewResult = {
 describe('Stock contract — HTTP adapter', () => {
   afterEach(() => sinon.restore())
 
-  it('declares the auto-mounted paths and intended permission contracts', async () => {
+  it('S-05/S-13/S-22/S-23: declares the auto-mounted paths and intended permission contracts', async () => {
     const source = readFileSync('src/routes/stock.ts', 'utf8')
     const { router } = await import('../src/routes/stock')
     const { createApp } = await import('../src/app')
@@ -87,6 +87,9 @@ describe('Stock contract — HTTP adapter', () => {
     const paths = router.stack
       .filter((layer) => layer.route !== undefined)
       .map((layer) => layer.route.path)
+    const routeMethods = router.stack
+      .filter((layer) => layer.route !== undefined)
+      .map((layer) => ({ path: layer.route.path, methods: layer.route.methods }))
     const appStack = (app as unknown as { _router?: { stack?: unknown[] } })._router?.stack ?? []
     const stockMount = appStack.some((layer) => {
       if (typeof layer !== 'object' || layer === null || !('regexp' in layer)) return false
@@ -106,6 +109,13 @@ describe('Stock contract — HTTP adapter', () => {
       '/returns',
       '/expired-buckets/:id/remove'
     ])
+    expect(routeMethods.filter(({ path }) => path.includes('/opening-counts/'))).to.deep.equal([
+      { path: '/opening-counts/preview', methods: { post: true } },
+      { path: '/opening-counts/confirm', methods: { post: true } }
+    ])
+    const openingRouteLines = source.split('\n').filter((line) => line.includes("router.post('/opening-counts/"))
+    expect(openingRouteLines).to.have.length(2)
+    expect(openingRouteLines.every((line) => line.includes("checkPermission('manage_stock_config')"))).to.equal(true)
     expect(source).to.include("checkPermission('read_stock')")
     expect(source).to.include("checkPermission('receive_stock')")
     expect(source).to.include("checkPermission('manage_stock')")
@@ -114,7 +124,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(source).to.include('checkJwt(req, res, next)')
   })
 
-  it('previews opening counts as a pending dry run without mutating business data', async () => {
+  it('builds opening-count preview evidence as a pending dry run without mutating business data', async () => {
     const response = makeResponse()
 
     await previewOpeningCount(makeRequest({
@@ -129,7 +139,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(preview.evidence).to.include({ status: 'PENDING', actorId: ACTOR_ID, businessDataMutated: false })
   })
 
-  it('returns 201 for a new confirmation, 200 for a matching retry, and stable conflict envelopes', async () => {
+  it('TC-018: returns 201 for a new confirmation, 200 for a matching retry, and stable conflict envelopes', async () => {
     const body = {
       operationId: 'opening-confirm-1',
       rows: [{ productId: PRODUCT_ID, countedQuantity: 4 }],
@@ -140,6 +150,15 @@ describe('Stock contract — HTTP adapter', () => {
     const appliedResponse = makeResponse()
     await confirmOpeningCount(makeRequest({ body }), appliedResponse as unknown as Response, appliedWriter)
     expect(appliedResponse.status.calledWith(201)).to.equal(true)
+    const appliedBody = bodyOf(appliedResponse) as { evidence: Record<string, unknown> }
+    expect(appliedBody.evidence).to.include({
+      status: 'APPLIED',
+      operationId: body.operationId,
+      approvalId: body.approvalId,
+      approvedBy: ACTOR_ID,
+      actorId: ACTOR_ID,
+      businessDataMutated: true
+    })
 
     const retryResponse = makeResponse()
     await confirmOpeningCount(makeRequest({ body }), retryResponse as unknown as Response, async () => ({ status: 'IDEMPOTENT_RETRY' as const, movementCount: 1 }))
@@ -168,10 +187,14 @@ describe('Stock contract — HTTP adapter', () => {
     })
   })
 
-  it('returns 400 for malformed confirmation and 403 for approval actor mismatch', async () => {
+  it('NFR-004: returns 400 for malformed confirmation and 403 for approval actor mismatch', async () => {
     const malformedResponse = makeResponse()
     await confirmOpeningCount(makeRequest({ body: { operationId: 'opening-confirm-2', rows: [] } }), malformedResponse as unknown as Response, async () => ({ status: 'APPLIED' as const, movementCount: 0 }))
     expect(malformedResponse.status.calledWith(400)).to.equal(true)
+    expect(bodyOf(malformedResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE,
+      message: 'Stock request data is incomplete or invalid'
+    })
 
     const mismatchResponse = makeResponse()
     await confirmOpeningCount(makeRequest({
@@ -183,6 +206,59 @@ describe('Stock contract — HTTP adapter', () => {
       }
     }), mismatchResponse as unknown as Response, async () => ({ status: 'APPLIED' as const, movementCount: 1 }))
     expect(mismatchResponse.status.calledWith(403)).to.equal(true)
+    expect(bodyOf(mismatchResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_FORBIDDEN,
+      message: 'Stock permission is required'
+    })
+  })
+
+  it('TC-018/NFR-004: maps the representative Stock HTTP error matrix to stable envelopes', async () => {
+    const body = {
+      operationId: 'opening-matrix-1',
+      rows: [{ productId: PRODUCT_ID, countedQuantity: 1 }],
+      approvedBy: ACTOR_ID,
+      approvalId: 'approval-matrix-1'
+    }
+
+    const missingProductService = sinon.stub(StockService.prototype, 'getProductDetail').rejects(new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, 'raw missing product detail'))
+    const missingProductResponse = makeResponse()
+    await getProductDetail(makeRequest({ params: { id: PRODUCT_ID }, query: { businessDate: '2026-10-15' } }), missingProductResponse as unknown as Response)
+    expect(missingProductResponse.status.calledWith(404)).to.equal(true)
+    expect(bodyOf(missingProductResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND,
+      message: 'Stock product was not found'
+    })
+    missingProductService.restore()
+
+    const baselineResponse = makeResponse()
+    await confirmOpeningCount(makeRequest({ body }), baselineResponse as unknown as Response, async () => {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_BASELINE_ALREADY_RECONCILED, 'raw committed baseline detail')
+    })
+    expect(baselineResponse.status.calledWith(409)).to.equal(true)
+    expect(bodyOf(baselineResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_BASELINE_ALREADY_RECONCILED,
+      message: 'The product baseline has already been reconciled'
+    })
+
+    const committedResponse = makeResponse()
+    await confirmOpeningCount(makeRequest({ body }), committedResponse as unknown as Response, async () => {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_BUCKET_HAS_COMMITMENTS, 'raw committed bucket detail')
+    })
+    expect(committedResponse.status.calledWith(409)).to.equal(true)
+    expect(bodyOf(committedResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_BUCKET_HAS_COMMITMENTS,
+      message: 'The stock bucket still has sale commitments'
+    })
+
+    const unknownService = sinon.stub(StockService.prototype, 'getOverview').rejects(new Error('raw Mongo failure'))
+    const unknownResponse = makeResponse()
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), unknownResponse as unknown as Response)
+    expect(unknownResponse.status.calledWith(500)).to.equal(true)
+    expect(bodyOf(unknownResponse)).to.deep.equal({
+      code: 'INTERNAL_ERROR',
+      message: 'Stock operation failed'
+    })
+    unknownService.restore()
   })
 
   it('rejects malformed, duplicate, and incomplete opening-count payloads before preview execution', async () => {
@@ -202,7 +278,7 @@ describe('Stock contract — HTTP adapter', () => {
     }
   })
 
-  it('rejects opening-count previews without an authenticated actor and exposes only the confirmation route for mutation', async () => {
+  it('NFR-004/TC-020: rejects opening-count previews without an authenticated actor and exposes only the confirmation route for mutation', async () => {
     const response = makeResponse('')
     await previewOpeningCount(makeRequest({
       body: {
@@ -225,7 +301,7 @@ describe('Stock contract — HTTP adapter', () => {
     ])
   })
 
-  it('validates strict overview queries, defaults pagination, and never invokes the service for invalid input', async () => {
+  it('S-05: validates strict overview queries, defaults pagination, and never invokes the service for invalid input', async () => {
     const serviceCall = sinon.stub(StockService.prototype, 'getOverview').resolves(overviewResult)
 
     for (const query of [
@@ -250,7 +326,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
   })
 
-  it('validates strict product detail queries and maps missing products to a stable 404 envelope', async () => {
+  it('S-05: validates strict product detail queries and maps missing products to a stable 404 envelope', async () => {
     const serviceCall = sinon.stub(StockService.prototype, 'getProductDetail').resolves({
       productId: PRODUCT_ID,
       minimum: 2,
@@ -293,7 +369,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(bodyOf(missingResponse)).to.deep.include({ code: 'STOCK_PRODUCT_NOT_FOUND' })
   })
 
-  it('strictly validates minimum updates, propagates the authenticated actor, and maps service failures', async () => {
+  it('NFR-004: strictly validates minimum updates, propagates the authenticated actor, and maps service failures', async () => {
     const serviceCall = sinon.stub(StockService.prototype, 'updateMinimum').resolves({ productId: PRODUCT_ID, minimum: 4 })
     for (const body of [{ minimum: -1 }, { minimum: 1.5 }, { minimum: Number.MAX_SAFE_INTEGER + 1 }, { minimum: 1, extra: true }]) {
       const response = makeResponse()
@@ -315,7 +391,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(missingResponse.status.calledWith(404)).to.equal(true)
   })
 
-  it('requires strict availability queries to provide businessDate before invoking StockService', async () => {
+  it('S-01: requires strict availability queries to provide businessDate before invoking StockService', async () => {
     const serviceCall = sinon.stub(StockService.prototype, 'getAvailability').resolves([])
     const malformedResponse = makeResponse()
 
@@ -347,7 +423,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.firstCall.args[0]).to.deep.include({ auth: { actorId: ACTOR_ID, canManageStock: true } })
   })
 
-  it('propagates the authenticated actor and ignores caller-supplied receivedBy', async () => {
+  it('S-03/NFR-004: propagates the authenticated actor and ignores caller-supplied receivedBy', async () => {
     const serviceCall = sinon.stub(StockService.prototype, 'receivePurchase').resolves(result(1, 0))
     const response = makeResponse()
 
@@ -367,7 +443,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.firstCall.args[0]).to.deep.include({ buyId: BUY_ID, receivedBy: ACTOR_ID })
   })
 
-  it('returns 200 for a fully idempotent purchase retry', async () => {
+  it('TC-018: returns 200 for a fully idempotent purchase retry', async () => {
     sinon.stub(StockService.prototype, 'receivePurchase').resolves(result(0, 1))
     const response = makeResponse()
 
@@ -383,7 +459,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(response.status.calledWith(200)).to.equal(true)
   })
 
-  it('rejects malformed returns before invoking StockService and maps service conflicts stably', async () => {
+  it('S-06: rejects malformed returns before invoking StockService and maps service conflicts stably', async () => {
     const serviceCall = sinon.stub(StockService.prototype, 'returnSale')
       .onFirstCall().rejects(new StockServiceError(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT, 'internal conflict detail'))
     const invalidResponse = makeResponse()
@@ -417,7 +493,7 @@ describe('Stock contract — HTTP adapter', () => {
     })
   })
 
-  it('returns 200 for an idempotent expired-bucket no-op and rejects unknown payload keys', async () => {
+  it('S-13/TC-018: returns 200 for an idempotent expired-bucket no-op and rejects unknown payload keys', async () => {
     const serviceCall = sinon.stub(StockService.prototype, 'removeExpiredBucket').resolves(result(0, 0))
     const invalidResponse = makeResponse()
 

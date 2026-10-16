@@ -164,7 +164,7 @@ describe('Stock opening — preview and confirmation', () => {
     }, auth)).to.throw(OpeningCountError)
   })
 
-  it('fails closed for unauthorized preview and confirmation', async () => {
+  it('NFR-004: fails closed for unauthorized preview and confirmation', async () => {
     expect(() => previewOpeningCount(input, { ...auth, canManageStock: false })).to.throw(OpeningCountError).and.have.property('code', STOCK_ERROR_CODES.STOCK_FORBIDDEN)
     let writerCalls = 0
     const writer = async (): Promise<{ status: 'APPLIED', movementCount: number }> => {
@@ -181,7 +181,7 @@ describe('Stock opening — preview and confirmation', () => {
     expect(writerCalls).to.equal(0)
   })
 
-  it('rejects an approval actor mismatch before invoking the writer', async () => {
+  it('NFR-004: rejects an approval actor mismatch before invoking the writer', async () => {
     let writerCalls = 0
     const writer = async (): Promise<{ status: 'APPLIED', movementCount: number }> => {
       writerCalls += 1
@@ -199,7 +199,7 @@ describe('Stock opening — preview and confirmation', () => {
     expect(writerCalls).to.equal(0)
   })
 
-  it('calls the writer exactly once and reports applied or recoverable evidence', async () => {
+  it('TC-018: calls the writer exactly once and reports applied or recoverable evidence', async () => {
     let writerCalls = 0
     const writer = async (): Promise<{ status: 'APPLIED', movementCount: number }> => {
       writerCalls += 1
@@ -229,7 +229,7 @@ describe('Stock opening — preview and confirmation', () => {
     expect(first).to.equal(second)
   })
 
-  it('writes tracked and non-tracked products through one repository transaction and retries zero-only operations', async () => {
+  it('TC-010/TC-018: writes tracked and non-tracked products through one repository transaction and retries zero-only operations', async () => {
     const trackedId = PRODUCT_ID
     const nonTrackedId = OTHER_PRODUCT_ID
     const repository = openingRepository({
@@ -256,7 +256,7 @@ describe('Stock opening — preview and confirmation', () => {
     expect(zeroRetry.movementCount).to.equal(0)
   })
 
-  it('fails closed for missing, unknown, reconciled, and committed opening state', async () => {
+  it('TC-018: fails closed for missing, unknown, reconciled, and committed opening state', async () => {
     const trackedPlan = previewOpeningCount({
       operationId: 'opening-validation-1',
       rows: [{ productId: PRODUCT_ID, countedQuantity: 1, expiryDate: '2026-12-31' }]
@@ -291,7 +291,7 @@ describe('Stock opening — preview and confirmation', () => {
     expect(await writerErrorCode(committedWriter, trackedPlan, context)).to.equal(STOCK_ERROR_CODES.STOCK_BUCKET_HAS_COMMITMENTS)
   })
 
-  it('rejects semantic operation reuse and propagates one transaction session to every opening operation', async () => {
+  it('TC-010/TC-018: rejects semantic operation reuse and propagates one transaction session to every opening operation', async () => {
     const events: OpeningRepositoryEvents = {
       sessions: [],
       movementCount: 0,

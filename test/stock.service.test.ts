@@ -202,7 +202,7 @@ const expectRejected = async (action: () => Promise<unknown>, code?: string): Pr
 }
 
 describe('Stock service', () => {
-  it('builds a page-scoped overview through pure availability, expiry, and low-stock rules', async () => {
+  it('S-05/TC-015: builds a page-scoped overview through pure availability, expiry, and low-stock rules', async () => {
     const repository = newRepository()
     repository.buckets.clear()
     repository.buckets.set('bucket-expired', bucket('bucket-expired', '2026-10-10', 2))
@@ -231,7 +231,7 @@ describe('Stock service', () => {
     expect(overview.items[1]).to.include({ productId: UNTRACKED_PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, expiredQuantity: 0 })
   })
 
-  it('keeps overview totals page-scoped and fails closed for unreconciled projections', async () => {
+  it('S-22/TC-031: keeps overview totals page-scoped and fails closed for unreconciled projections', async () => {
     const repository = newRepository()
     repository.products.set('unreconciled', { ...untrackedProduct(), productId: 'unreconciled', baselineStatus: BASELINE_STATUS.UNVERIFIED })
     repository.minimums.set('unreconciled', 0)
@@ -251,7 +251,7 @@ describe('Stock service', () => {
     expect(unreconciled.alerts.every((alert) => alert.dataQuality === STOCK_DATA_QUALITY.INCOMPLETE)).to.equal(true)
   })
 
-  it('returns deterministic detail buckets and movement limits without changing product projections', async () => {
+  it('S-05: returns deterministic detail buckets and movement limits without changing product projections', async () => {
     const repository = newRepository()
     repository.movements.push(
       { productId: PRODUCT_ID, type: INVENTORY_MOVEMENT_TYPES.SALE_COMMIT, quantity: 1, occurredAt: new Date('2026-10-15T10:00:00.000Z'), sourceType: 'SALE', sourceId: 'sale-1', sourceEvent: 'SALE_COMMIT', operationId: 'op-1', idempotencyKey: 'key-1', rulesVersion: 'v1', createdBy: 'actor-1', movementId: 'movement-b' },
@@ -269,7 +269,7 @@ describe('Stock service', () => {
     expect(repository.products.get(PRODUCT_ID)).to.deep.equal(before)
   })
 
-  it('validates minimum updates, propagates actor context, and never mutates Product.stock projections', async () => {
+  it('TC-016: validates minimum updates, propagates actor context, and never mutates Product.stock projections', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const before = repository.products.get(PRODUCT_ID)
@@ -284,7 +284,7 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.updateMinimum('missing', 1, ACTOR), STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND)
   })
 
-  it('reads availability without writing and reports incomplete snapshots', async () => {
+  it('S-01/S-22/TC-031: reads availability without writing and reports incomplete snapshots', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
 
@@ -295,7 +295,7 @@ describe('Stock service', () => {
     expect(repository.movements).to.have.length(0)
   })
 
-  it('aggregates duplicate lines and fails closed for insufficient or unavailable stock', async () => {
+  it('S-21: aggregates duplicate lines and fails closed for insufficient or unavailable stock', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
 
@@ -317,7 +317,7 @@ describe('Stock service', () => {
     expect(repository.movements).to.have.length(0)
   })
 
-  it('commits tracked lines with FEFO allocations and leaves physical stock unchanged', async () => {
+  it('S-02/TC-010/TC-018: commits tracked lines with FEFO allocations and leaves physical stock unchanged', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const result = await service.commitSale({
@@ -342,7 +342,7 @@ describe('Stock service', () => {
     expect(repository.projectionSessions.every(({ session }) => session?.transactionId === 'tx-1')).to.equal(true)
   })
 
-  it('filters expired buckets from FEFO while retaining them in projections', async () => {
+  it('S-04: filters expired buckets from FEFO while retaining them in projections', async () => {
     const repository = newRepository()
     repository.buckets.clear()
     repository.buckets.set('bucket-expired', bucket('bucket-expired', '2026-10-10', 8))
@@ -362,7 +362,7 @@ describe('Stock service', () => {
     expect(repository.buckets.get('bucket-expired')).to.deep.include({ availableQuantity: 8, committedQuantity: 0 })
   })
 
-  it('commits non-tracked lines without inventing buckets and preserves idempotency', async () => {
+  it('S-02/TC-018: commits non-tracked lines without inventing buckets and preserves idempotency', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const input = {
@@ -381,7 +381,7 @@ describe('Stock service', () => {
     expect(repository.products.get(UNTRACKED_PRODUCT_ID)?.physicalQuantity).to.equal(10)
   })
 
-  it('rejects conflicting idempotency and cancels commitments with compensations', async () => {
+  it('S-02/TC-018: rejects conflicting idempotency and cancels commitments with compensations', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await service.commitSale({
@@ -410,7 +410,7 @@ describe('Stock service', () => {
     expect(repository.buckets.get('bucket-first')?.committedQuantity).to.equal(0)
   })
 
-  it('does not treat a new operation as an already-applied commitment', async () => {
+  it('S-02/TC-018: does not treat a new operation as an already-applied commitment', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const line = { lineId: 'line-1', productId: PRODUCT_ID, quantity: 10 }
@@ -425,7 +425,7 @@ describe('Stock service', () => {
     }), STOCK_ERROR_CODES.STOCK_INSUFFICIENT)
   })
 
-  it('does not treat a new adjustment operation as already applied', async () => {
+  it('S-02/TC-018: does not treat a new adjustment operation as already applied', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const addition = { lineId: 'line-1', productId: PRODUCT_ID, quantity: 10 }
@@ -440,7 +440,7 @@ describe('Stock service', () => {
     }), STOCK_ERROR_CODES.STOCK_INSUFFICIENT)
   })
 
-  it('rejects retries with a different actor or rules version as semantic conflicts', async () => {
+  it('TC-018: rejects retries with a different actor or rules version as semantic conflicts', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const input = {
@@ -456,7 +456,7 @@ describe('Stock service', () => {
     await expectRejected(async () => await new StockService(repository, { rulesVersion: 'different-rules' }).commitSale(input), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
   })
 
-  it('requires explicit adjustment additions or releases and supports both paths', async () => {
+  it('S-02/TC-010: requires explicit adjustment additions or releases and supports both paths', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
 
@@ -488,7 +488,7 @@ describe('Stock service', () => {
     expect(repository.products.get(PRODUCT_ID)?.physicalQuantity).to.equal(10)
   })
 
-  it('rejects releasing a bucket committed by another sale', async () => {
+  it('S-02: rejects releasing a bucket committed by another sale', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
 
@@ -509,7 +509,7 @@ describe('Stock service', () => {
     }), STOCK_ERROR_CODES.STOCK_INSUFFICIENT)
   })
 
-  it('fails closed when the actor is missing', async () => {
+  it('NFR-004: fails closed when the actor is missing', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await expectRejected(async () => await service.commitSale({
@@ -522,7 +522,7 @@ describe('Stock service', () => {
     expect(repository.transactionCalls).to.equal(0)
   })
 
-  it('receives tracked purchase lines into buckets and physical stock without commitments', async () => {
+  it('S-03/TC-010/TC-018: receives tracked purchase lines into buckets and physical stock without commitments', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const input: PurchaseReceiptInput = {
@@ -557,7 +557,7 @@ describe('Stock service', () => {
     expect(repository.projectionSessions).to.deep.equal([{ method: 'product', session: { transactionId: 'tx-1' } }])
   })
 
-  it('receives non-tracked purchase lines physically and rejects expiry dates', async () => {
+  it('S-03: receives non-tracked purchase lines physically and rejects expiry dates', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const input: PurchaseReceiptInput = {
@@ -578,7 +578,7 @@ describe('Stock service', () => {
     }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
   })
 
-  it('rejects invalid receipt identity, quantities, expiry, and unknown tracking before writing', async () => {
+  it('S-03/NFR-004: rejects invalid receipt identity, quantities, expiry, and unknown tracking before writing', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const base: PurchaseReceiptInput = {
@@ -598,7 +598,7 @@ describe('Stock service', () => {
     expect(repository.movements).to.have.length(0)
   })
 
-  it('makes matching receipt retries no-ops and conflicting retries fail closed', async () => {
+  it('S-03/TC-018: makes matching receipt retries no-ops and conflicting retries fail closed', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const input: PurchaseReceiptInput = {
@@ -617,7 +617,7 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.receivePurchase({ ...input, lines: [{ ...input.lines[0], quantityReceived: 3 }] }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
   })
 
-  it('delivers tracked commitments once while preserving available quantities', async () => {
+  it('S-07/TC-010/TC-018: delivers tracked commitments once while preserving available quantities', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await service.commitSale({ saleId: 'sale-delivery', operationId: 'commit-delivery', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-delivery', productId: PRODUCT_ID, quantity: 3 }] })
@@ -638,7 +638,7 @@ describe('Stock service', () => {
     expect(repository.projectionSessions.every(({ session }) => session?.transactionId === 'tx-2')).to.equal(true)
   })
 
-  it('delivers non-tracked commitments by closing the ledger commitment and physical stock', async () => {
+  it('S-07: delivers non-tracked commitments by closing the ledger commitment and physical stock', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await service.commitSale({ saleId: 'sale-untracked-delivery', operationId: 'commit-untracked-delivery', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-delivery', productId: UNTRACKED_PRODUCT_ID, quantity: 3 }] })
@@ -651,7 +651,7 @@ describe('Stock service', () => {
     expect(repository.movements[1]).to.include({ type: INVENTORY_MOVEMENT_TYPES.SALE_DELIVERED_OUT, quantity: 3, reversesMovementId: repository.movements[0].movementId })
   })
 
-  it('does not consume cancelled or already delivered commitments', async () => {
+  it('S-07/TC-018: does not consume cancelled or already delivered commitments', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await service.commitSale({ saleId: 'sale-cancelled', operationId: 'commit-cancelled', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-cancelled', productId: PRODUCT_ID, quantity: 2 }] })
@@ -665,14 +665,14 @@ describe('Stock service', () => {
     expect(repeatedDelivery.appliedMovementCount).to.equal(0)
   })
 
-  it('requires an authenticated delivery actor', async () => {
+  it('NFR-004: requires an authenticated delivery actor', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await expectRejected(async () => await service.deliverSale({ saleId: 'sale-actor', deliveredAt: '2026-10-15T13:00:00.000Z', operationId: 'delivery-actor', deliveredBy: '' }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
     expect(repository.transactionCalls).to.equal(0)
   })
 
-  it('restores a full tracked delivery from its original allocations without changing other commitments', async () => {
+  it('S-06/TC-010: restores a full tracked delivery from its original allocations without changing other commitments', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await service.commitSale({ saleId: 'sale-return-full', operationId: 'commit-return-full', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-full', productId: PRODUCT_ID, quantity: 7 }] })
@@ -695,7 +695,7 @@ describe('Stock service', () => {
     expect(repository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.RETURN_IN)).to.have.length(2)
   })
 
-  it('restores partial tracked returns in the original FEFO allocation order', async () => {
+  it('S-06: restores partial tracked returns in the original FEFO allocation order', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await service.commitSale({ saleId: 'sale-return-partial', operationId: 'commit-return-partial', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-partial', productId: PRODUCT_ID, quantity: 7 }] })
@@ -710,7 +710,7 @@ describe('Stock service', () => {
     expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 8, committedQuantity: 0, availableQuantity: 8 })
   })
 
-  it('restores non-tracked physical stock without creating a commitment or bucket', async () => {
+  it('S-06: restores non-tracked physical stock without creating a commitment or bucket', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await service.commitSale({ saleId: 'sale-return-untracked', operationId: 'commit-return-untracked', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-untracked', productId: UNTRACKED_PRODUCT_ID, quantity: 3 }] })
@@ -724,7 +724,7 @@ describe('Stock service', () => {
     expect([...repository.buckets.values()]).to.have.length(2)
   })
 
-  it('rejects returns before delivery, for wrong ownership, and beyond delivered quantity without projection writes', async () => {
+  it('S-06: rejects returns before delivery, for wrong ownership, and beyond delivered quantity without projection writes', async () => {
     const beforeDeliveryRepository = newRepository()
     const beforeDeliveryService = new StockService(beforeDeliveryRepository)
     await beforeDeliveryService.commitSale({ saleId: 'sale-not-delivered', operationId: 'commit-not-delivered', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-not-delivered', productId: PRODUCT_ID, quantity: 2 }] })
@@ -747,7 +747,7 @@ describe('Stock service', () => {
     expect(repository.movements.filter(({ type }) => type === INVENTORY_MOVEMENT_TYPES.RETURN_IN)).to.have.length(0)
   })
 
-  it('reports matching return retries as already applied and rejects conflicting idempotency', async () => {
+  it('S-06/TC-018: reports matching return retries as already applied and rejects conflicting idempotency', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await service.commitSale({ saleId: 'sale-return-retry', operationId: 'commit-return-retry', businessDate: DATE, auth: ACTOR, lines: [{ lineId: 'line-return-retry', productId: PRODUCT_ID, quantity: 3 }] })
@@ -766,7 +766,7 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.returnSale({ ...input, lines: [{ productId: PRODUCT_ID, quantity: 2 }] }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
   })
 
-  it('rejects malformed return identity and lines before opening a transaction', async () => {
+  it('S-06/NFR-004: rejects malformed return identity and lines before opening a transaction', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     await expectRejected(async () => await service.returnSale({ saleId: 'sale-invalid', operationId: 'return-invalid', businessDate: DATE, auth: { actorId: '', canManageStock: false }, lines: [{ productId: PRODUCT_ID, quantity: 1 }] }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
@@ -774,7 +774,7 @@ describe('Stock service', () => {
     expect(repository.transactionCalls).to.equal(0)
   })
 
-  it('adjusts non-tracked purchase stock in both directions without changing commitments', async () => {
+  it('TC-010: adjusts non-tracked purchase stock in both directions without changing commitments', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const positive: PurchaseAdjustmentInput = {
@@ -912,7 +912,7 @@ describe('Stock service', () => {
     expect(repository.projectionSessions).to.have.length(0)
   })
 
-  it('validates every purchase adjustment line before writing', async () => {
+  it('NFR-004: validates every purchase adjustment line before writing', async () => {
     const repository = newRepository()
     repository.products.set('unknown-tracking', { ...trackedProduct(), productId: 'unknown-tracking', expiryTracking: EXPIRY_TRACKING.UNKNOWN })
     const service = new StockService(repository)
@@ -943,7 +943,7 @@ describe('Stock service', () => {
     expect(repository.projectionSessions).to.have.length(0)
   })
 
-  it('rejects insufficient negative purchase adjustments and protects matching retries from conflicts', async () => {
+  it('TC-018: rejects insufficient negative purchase adjustments and protects matching retries from conflicts', async () => {
     const repository = newRepository()
     const service = new StockService(repository)
     const input: PurchaseAdjustmentInput = {
@@ -965,7 +965,7 @@ describe('Stock service', () => {
     expect(repository.movements).to.have.length(1)
   })
 
-  it('removes a complete expired bucket physically and is idempotent and conflict-safe', async () => {
+  it('S-13/TC-010/TC-018: removes a complete expired bucket physically and is idempotent and conflict-safe', async () => {
     const repository = newRepository()
     repository.buckets.clear()
     repository.buckets.set('bucket-expired-remove', bucket('bucket-expired-remove', '2026-10-10', 8))
@@ -989,7 +989,7 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.removeExpiredBucket({ ...input, reason: 'Another reason' }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
   })
 
-  it('blocks future, non-expired, committed, and malformed expired buckets before writes', async () => {
+  it('S-13: blocks future, non-expired, committed, and malformed expired buckets before writes', async () => {
     const futureRepository = newRepository()
     futureRepository.buckets.set('bucket-future', bucket('bucket-future', '2026-12-20', 1))
     const futureService = new StockService(futureRepository)
