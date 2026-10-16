@@ -3,7 +3,7 @@ import { ObjectId, type ClientSession, type Db, type Document } from 'mongodb'
 import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 
-import { EXPECTED_STOCK_INDEXES, parseStockMigrationArguments, parseOpeningCountInput, buildOpeningCountPlan, buildOpeningTemplate, parseProjectionRepairInput, buildProjectionRepairPlan, stockArtifact, assertStockMutationProofs, collectStockPreflight, type StockMigrationOptions } from '../migrations/stock-helpers'
+import { EXPECTED_STOCK_INDEXES, parseStockMigrationArguments, parseOpeningCountInput, buildOpeningCountPlan, buildOpeningTemplate, parseProjectionRepairInput, buildProjectionRepairPlan, stockArtifact, assertStockMutationProofs, collectStockPreflight, createStockIndexes, type StockMigrationOptions } from '../migrations/stock-helpers'
 import { applyOpeningCountPlan, runApplyOpeningCount } from '../migrations/stock-004-apply-opening-count'
 import { applyProjectionRepairPlan } from '../migrations/stock-005-repair-projections'
 import { verifyStockProjectionInvariants } from '../migrations/stock-006-verify'
@@ -33,6 +33,7 @@ function matches (document: FakeDocument, filter: Document): boolean {
 class CollectionDouble {
   readonly docs: FakeDocument[]
   readonly indexList: Document[]
+  readonly indexCalls: Array<{ keys: Document, options: Document }> = []
   updateCalls = 0
   insertCalls = 0
 
@@ -77,6 +78,11 @@ class CollectionDouble {
   async insertOne (document: Document): Promise<void> {
     this.insertCalls += 1
     this.docs.push({ ...document })
+  }
+
+  async createIndex (keys: Document, options: Document): Promise<string> {
+    this.indexCalls.push({ keys, options })
+    return String(options.name ?? '')
   }
 }
 
@@ -141,6 +147,34 @@ describe('Stock migration — safety and planning', () => {
     expect(EXPECTED_STOCK_INDEXES).to.deep.include({ key: { sourceType: 1, sourceId: 1 }, name: 'idx_inventory_movement_source' })
     expect(EXPECTED_STOCK_INDEXES).to.deep.include({ key: { productId: 1, expiryDate: 1 }, name: 'idx_stock_expiry_bucket_product_expiry_unique', unique: true })
     expect(EXPECTED_STOCK_INDEXES).to.deep.include({ key: { expiryDate: 1, productId: 1 }, name: 'idx_stock_expiry_bucket_expiry_product' })
+  })
+
+  it('keeps index dry-runs write-free and maps every applied index deterministically', async () => {
+    const inventoryMovements = new CollectionDouble()
+    const expiryBuckets = new CollectionDouble()
+    const db = fakeDb({ inventorymovements: inventoryMovements, stockexpirybuckets: expiryBuckets })
+
+    const firstPlan = await createStockIndexes(db, true)
+    const secondPlan = await createStockIndexes(db, true)
+
+    expect(firstPlan.applied).to.equal(false)
+    expect(firstPlan).to.deep.equal(secondPlan)
+    expect(inventoryMovements.indexCalls).to.deep.equal([])
+    expect(expiryBuckets.indexCalls).to.deep.equal([])
+
+    const applied = await createStockIndexes(db, false)
+
+    expect(applied.applied).to.equal(true)
+    expect(inventoryMovements.indexCalls).to.deep.equal([
+      { keys: { idempotencyKey: 1 }, options: { name: 'idx_inventory_movement_idempotency_unique', unique: true } },
+      { keys: { productId: 1, occurredAt: -1 }, options: { name: 'idx_inventory_movement_product_occurred_at' } },
+      { keys: { expiryBucketId: 1, occurredAt: -1 }, options: { name: 'idx_inventory_movement_expiry_bucket_occurred_at' } },
+      { keys: { sourceType: 1, sourceId: 1 }, options: { name: 'idx_inventory_movement_source' } }
+    ])
+    expect(expiryBuckets.indexCalls).to.deep.equal([
+      { keys: { productId: 1, expiryDate: 1 }, options: { name: 'idx_stock_expiry_bucket_product_expiry_unique', unique: true } },
+      { keys: { expiryDate: 1, productId: 1 }, options: { name: 'idx_stock_expiry_bucket_expiry_product' } }
+    ])
   })
 
   it('fails tracked product verification when bucket receipts do not match stock', async () => {
