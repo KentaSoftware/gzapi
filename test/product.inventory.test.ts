@@ -3,6 +3,7 @@ import { Types } from 'mongoose'
 
 import { BASELINE_STATUS, EXPIRY_TRACKING } from '../src/interfaces/stock.interface'
 import ProductModel from '../src/models/product'
+import { sanitizeProductUpdate } from '../src/services/product'
 
 const baseProduct = {
   descripcion: 'Test product',
@@ -14,6 +15,20 @@ const baseProduct = {
 }
 
 describe('Product inventory', () => {
+  it('sanitizes stock from generic product updates while preserving other fields', () => {
+    const update = {
+      descripcion: 'Updated product',
+      precioUnitario: 11,
+      stock: 99
+    }
+
+    expect(sanitizeProductUpdate(update)).to.deep.equal({
+      descripcion: 'Updated product',
+      precioUnitario: 11
+    })
+    expect(update.stock).to.equal(99)
+  })
+
   it('keeps legacy products valid without inventory and preserves physical stock', () => {
     const product = new ProductModel(baseProduct)
 

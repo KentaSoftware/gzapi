@@ -600,11 +600,17 @@ const getProduct = async (id: Types.ObjectId): Promise<any> => {
   )
 }
 
+export const sanitizeProductUpdate = (item: Partial<Product>): Omit<Partial<Product>, 'stock'> => {
+  const sanitized = { ...item }
+  delete sanitized.stock
+  return sanitized
+}
+
 const updateProduct = async (id: Types.ObjectId, item: Partial<Product>): Promise<any> => {
   // Obtener el producto antes de actualizar para saber su proveedor
   const product = await ProductModel.findById(id).select('proveedor').lean()
 
-  const response = await ProductModel.updateOne({ _id: id }, { $set: item })
+  const response = await ProductModel.updateOne({ _id: id }, { $set: sanitizeProductUpdate(item) })
 
   // Bump catalog version de forma asíncrona (fire and forget)
   // No bloqueará ni fallará la actualización del producto
