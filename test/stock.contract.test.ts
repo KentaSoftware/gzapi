@@ -4,7 +4,7 @@ import { Request, Response } from 'express'
 import sinon from 'sinon'
 
 import { StockService, StockServiceError } from '../src/services/stock'
-import { STOCK_ERROR_CODES, type StockOperationResult } from '../src/interfaces/stock.interface'
+import { STOCK_ERROR_CODES, type OpeningCountWriter, type StockOperationResult } from '../src/interfaces/stock.interface'
 import {
   getAvailability,
   getOverview,
@@ -13,7 +13,8 @@ import {
   receivePurchase,
   removeExpiredBucket,
   returnSale,
-  previewOpeningCount
+  previewOpeningCount,
+  confirmOpeningCount
 } from '../src/controllers/stock'
 
 const PRODUCT_ID = '507f1f77bcf86cd799439011'
@@ -100,6 +101,7 @@ describe('Stock contract — HTTP adapter', () => {
       '/products/:id',
       '/products/:id/minimum',
       '/opening-counts/preview',
+      '/opening-counts/confirm',
       '/purchases/:buyId/receive',
       '/returns',
       '/expired-buckets/:id/remove'
@@ -127,6 +129,62 @@ describe('Stock contract — HTTP adapter', () => {
     expect(preview.evidence).to.include({ status: 'PENDING', actorId: ACTOR_ID, businessDataMutated: false })
   })
 
+  it('returns 201 for a new confirmation, 200 for a matching retry, and stable conflict envelopes', async () => {
+    const body = {
+      operationId: 'opening-confirm-1',
+      rows: [{ productId: PRODUCT_ID, countedQuantity: 4 }],
+      approvedBy: ACTOR_ID,
+      approvalId: 'approval-1'
+    }
+    const appliedWriter: OpeningCountWriter = async () => ({ status: 'APPLIED', movementCount: 1 })
+    const appliedResponse = makeResponse()
+    await confirmOpeningCount(makeRequest({ body }), appliedResponse as unknown as Response, appliedWriter)
+    expect(appliedResponse.status.calledWith(201)).to.equal(true)
+
+    const retryResponse = makeResponse()
+    await confirmOpeningCount(makeRequest({ body }), retryResponse as unknown as Response, async () => ({ status: 'IDEMPOTENT_RETRY' as const, movementCount: 1 }))
+    expect(retryResponse.status.calledWith(200)).to.equal(true)
+
+    const conflictResponse = makeResponse()
+    await confirmOpeningCount(makeRequest({ body }), conflictResponse as unknown as Response, async () => {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT, 'internal conflict detail')
+    })
+    expect(conflictResponse.status.calledWith(409)).to.equal(true)
+    expect(bodyOf(conflictResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT,
+      message: 'Stock operation conflicts with an existing idempotency record'
+    })
+
+    const unavailableResponse = makeResponse()
+    await confirmOpeningCount(makeRequest({ body }), unavailableResponse as unknown as Response, async () => ({
+      status: 'FAILED_RECOVERABLE',
+      movementCount: 0,
+      errorCode: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR
+    }))
+    expect(unavailableResponse.status.calledWith(503)).to.equal(true)
+    expect(bodyOf(unavailableResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      message: 'Stock persistence is currently unavailable'
+    })
+  })
+
+  it('returns 400 for malformed confirmation and 403 for approval actor mismatch', async () => {
+    const malformedResponse = makeResponse()
+    await confirmOpeningCount(makeRequest({ body: { operationId: 'opening-confirm-2', rows: [] } }), malformedResponse as unknown as Response, async () => ({ status: 'APPLIED' as const, movementCount: 0 }))
+    expect(malformedResponse.status.calledWith(400)).to.equal(true)
+
+    const mismatchResponse = makeResponse()
+    await confirmOpeningCount(makeRequest({
+      body: {
+        operationId: 'opening-confirm-3',
+        rows: [{ productId: PRODUCT_ID, countedQuantity: 1 }],
+        approvedBy: ATTACKER_ID,
+        approvalId: 'approval-3'
+      }
+    }), mismatchResponse as unknown as Response, async () => ({ status: 'APPLIED' as const, movementCount: 1 }))
+    expect(mismatchResponse.status.calledWith(403)).to.equal(true)
+  })
+
   it('rejects malformed, duplicate, and incomplete opening-count payloads before preview execution', async () => {
     const invalidBodies = [
       { operationId: 'opening-preview-2', rows: [{ productId: 'invalid', countedQuantity: 1 }] },
@@ -144,7 +202,7 @@ describe('Stock contract — HTTP adapter', () => {
     }
   })
 
-  it('rejects opening-count previews without an authenticated actor and does not expose a confirmation route', async () => {
+  it('rejects opening-count previews without an authenticated actor and exposes only the confirmation route for mutation', async () => {
     const response = makeResponse('')
     await previewOpeningCount(makeRequest({
       body: {
@@ -160,7 +218,11 @@ describe('Stock contract — HTTP adapter', () => {
     const paths = router.stack
       .filter((layer) => layer.route !== undefined)
       .map((layer) => layer.route.path)
-    expect(paths).to.not.include('/opening-counts/confirm')
+    expect(paths).to.include('/opening-counts/confirm')
+    expect(paths.filter((path) => path.includes('/opening-counts/'))).to.deep.equal([
+      '/opening-counts/preview',
+      '/opening-counts/confirm'
+    ])
   })
 
   it('validates strict overview queries, defaults pagination, and never invokes the service for invalid input', async () => {

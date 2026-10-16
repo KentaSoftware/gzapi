@@ -51,6 +51,8 @@ export const STOCK_ERROR_CODES = {
   STOCK_FORBIDDEN: 'STOCK_FORBIDDEN',
   STOCK_PRODUCT_NOT_FOUND: 'STOCK_PRODUCT_NOT_FOUND',
   EXPIRED_BUCKET_HAS_COMMITMENTS: 'EXPIRED_BUCKET_HAS_COMMITMENTS',
+  STOCK_BASELINE_ALREADY_RECONCILED: 'STOCK_BASELINE_ALREADY_RECONCILED',
+  STOCK_BUCKET_HAS_COMMITMENTS: 'STOCK_BUCKET_HAS_COMMITMENTS',
   STOCK_IDEMPOTENCY_CONFLICT: 'STOCK_IDEMPOTENCY_CONFLICT',
   STOCK_REPOSITORY_ERROR: 'STOCK_REPOSITORY_ERROR'
 } as const
@@ -60,6 +62,7 @@ export type StockErrorCode = (typeof STOCK_ERROR_CODES)[keyof typeof STOCK_ERROR
 export const STOCK_OPERATION_STATUSES = {
   PENDING: 'PENDING',
   APPLIED: 'APPLIED',
+  IDEMPOTENT_RETRY: 'IDEMPOTENT_RETRY',
   FAILED_RECOVERABLE: 'FAILED_RECOVERABLE'
 } as const
 
@@ -543,6 +546,7 @@ export interface OpeningCountEvidence {
   rulesVersion: string
   movementCount: number
   businessDataMutated: boolean
+  errorCode?: StockErrorCode
 }
 
 export interface OpeningCountPreview {
@@ -559,6 +563,35 @@ export interface OpeningCountWriteContext {
 export interface OpeningCountWriterResult {
   status: Exclude<StockOperationStatus, typeof STOCK_OPERATION_STATUSES.PENDING>
   movementCount: number
+  errorCode?: StockErrorCode
 }
 
 export type OpeningCountWriter = (plan: OpeningCountPlan, context: OpeningCountWriteContext) => Promise<OpeningCountWriterResult>
+
+export interface OpeningCountOperation {
+  operationId: string
+  actorId: string
+  approvedBy: string
+  approvalId: string
+  planFingerprint: string
+  rulesVersion: string
+  status: typeof STOCK_OPERATION_STATUSES.APPLIED
+  movementCount: number
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface OpeningCountBucketReconciliation {
+  expiryDate: string
+  receivedQuantity: number
+  availableQuantity: number
+}
+
+export interface StockOpeningRepository extends Omit<StockRepository, 'withTransaction'> {
+  withTransaction: <T>(work: (context: StockOpeningRepository & StockTransactionContext) => Promise<T>) => Promise<T>
+  getOpeningOperation: (operationId: string, session?: StockRepositorySession) => Promise<OpeningCountOperation | undefined>
+  insertOpeningOperation: (operation: OpeningCountOperation, session?: StockRepositorySession) => Promise<OpeningCountOperation>
+  reconcileOpeningBuckets: (productId: string, buckets: OpeningCountBucketReconciliation[], session?: StockRepositorySession) => Promise<void>
+  clearOpeningBuckets: (productId: string, session?: StockRepositorySession) => Promise<void>
+  reconcileOpeningProduct: (productId: string, physicalQuantity: number, actorId: string, reconciledAt: Date, session?: StockRepositorySession) => Promise<void>
+}

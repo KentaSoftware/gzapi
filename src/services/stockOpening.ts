@@ -18,6 +18,7 @@ import {
   openingCountConfirmationInputSchema,
   openingCountInputSchema
 } from '../schemas/stock.schema'
+import { StockServiceError } from './stock'
 
 export class OpeningCountError extends Error {
   readonly code: StockErrorCode
@@ -98,8 +99,8 @@ const confirmationPlan = (input: OpeningCountConfirmationInput, auth: StockAuthC
   const parsed = openingCountConfirmationInputSchema.safeParse(input)
   if (!parsed.success) throw new OpeningCountError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Opening count approval metadata is invalid')
   // Assumption for the current deferred-permission slice: the authenticated actor must be the approval actor.
-  const normalizedApprovedBy = parsed.data.approvedBy.toLowerCase()
-  if (normalizedApprovedBy !== auth.actorId.toLowerCase()) forbidden()
+  const normalizedApprovedBy = parsed.data.approvedBy
+  if (normalizedApprovedBy !== auth.actorId) forbidden()
   const normalized: OpeningCountInput = {
     operationId: parsed.data.operationId,
     rows: parsed.data.rows.map((row) => ({
@@ -120,9 +121,22 @@ export const confirmOpeningCount = async (input: OpeningCountConfirmationInput, 
   let movementCount = plan.movementCount
   try {
     const result = await writer(plan, context)
-    status = result.status === STOCK_OPERATION_STATUSES.APPLIED ? STOCK_OPERATION_STATUSES.APPLIED : STOCK_OPERATION_STATUSES.FAILED_RECOVERABLE
+    status = result.status
     movementCount = result.movementCount
-  } catch {
+    const evidence: OpeningCountEvidence = {
+      status,
+      operationId: plan.operationId,
+      approvalId: context.approvalId,
+      approvedBy: context.approvedBy,
+      actorId: context.actorId,
+      rulesVersion: plan.rulesVersion,
+      movementCount,
+      businessDataMutated: status === STOCK_OPERATION_STATUSES.APPLIED,
+      ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode })
+    }
+    return { plan, evidence }
+  } catch (error) {
+    if (error instanceof OpeningCountError || error instanceof StockServiceError) throw error
     status = STOCK_OPERATION_STATUSES.FAILED_RECOVERABLE
   }
   const evidence: OpeningCountEvidence = {
@@ -133,7 +147,8 @@ export const confirmOpeningCount = async (input: OpeningCountConfirmationInput, 
     actorId: context.actorId,
     rulesVersion: plan.rulesVersion,
     movementCount,
-    businessDataMutated: status === STOCK_OPERATION_STATUSES.APPLIED
+    businessDataMutated: false,
+    errorCode: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR
   }
   return { plan, evidence }
 }

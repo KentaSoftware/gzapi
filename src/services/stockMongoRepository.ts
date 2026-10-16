@@ -3,6 +3,7 @@ import mongoose, { Types, type ClientSession } from 'mongoose'
 import ProductModel from '../models/product'
 import InventoryMovementModel from '../models/inventoryMovement'
 import StockExpiryBucketModel from '../models/stockExpiryBucket'
+import StockOpeningOperationModel from '../models/stockOpeningOperation'
 import { STOCK_TIME_ZONE } from '../config/stock'
 import {
   BASELINE_STATUS,
@@ -12,6 +13,8 @@ import {
   type BaselineStatus,
   type ExpiryTracking,
   type InventoryMovementType,
+  type OpeningCountBucketReconciliation,
+  type OpeningCountOperation,
   type StockBucketProjectionDelta,
   type StockBucketSnapshot,
   type StockMinimumResult,
@@ -22,6 +25,7 @@ import {
   type StockProductProjectionDelta,
   type StockProductSnapshot,
   type StockRepository,
+  type StockOpeningRepository,
   type StockRepositorySession,
   type StockTransactionContext
 } from '../interfaces/stock.interface'
@@ -85,6 +89,19 @@ interface MongoMovementWrite {
   createdBy: Types.ObjectId
   createdAt?: Date
   updatedAt?: Date
+}
+
+interface MongoOpeningOperationDocument {
+  operationId: string
+  actorId: string
+  approvedBy: string
+  approvalId: string
+  planFingerprint: string
+  rulesVersion: string
+  status: OpeningCountOperation['status']
+  movementCount: number
+  createdAt: Date
+  updatedAt: Date
 }
 
 const repositoryError = (message: string, cause?: unknown): StockServiceError => {
@@ -170,6 +187,19 @@ const baselineOf = (value: unknown): BaselineStatus => {
   if (value === BASELINE_STATUS.UNVERIFIED || value === BASELINE_STATUS.RECONCILED) return value
   throw repositoryError('inventory.baselineStatus is invalid')
 }
+
+const mapOpeningOperationDocument = (document: MongoOpeningOperationDocument): OpeningCountOperation => ({
+  operationId: document.operationId,
+  actorId: document.actorId,
+  approvedBy: document.approvedBy,
+  approvalId: document.approvalId,
+  planFingerprint: document.planFingerprint,
+  rulesVersion: document.rulesVersion,
+  status: document.status,
+  movementCount: document.movementCount,
+  createdAt: new Date(document.createdAt.getTime()),
+  updatedAt: new Date(document.updatedAt.getTime())
+})
 
 export const mapProductDocumentToStockSnapshot = (document: unknown, committedQuantity: number): StockProductSnapshot => {
   const product = recordOf(document, 'Product')
@@ -269,10 +299,10 @@ const validateProjectionDelta = (value: number, field: string): void => {
   if (!Number.isSafeInteger(value)) throw repositoryError(`${field} must be an integer`)
 }
 
-export class MongooseStockRepository implements StockRepository {
+export class MongooseStockRepository implements StockOpeningRepository {
   private readonly sessions = new Map<string, ClientSession>()
 
-  async withTransaction<T> (work: (context: StockRepository & StockTransactionContext) => Promise<T>): Promise<T> {
+  async withTransaction<T> (work: (context: StockOpeningRepository & StockTransactionContext) => Promise<T>): Promise<T> {
     let session: ClientSession
     try {
       session = await mongoose.startSession()
@@ -567,7 +597,127 @@ export class MongooseStockRepository implements StockRepository {
     }
   }
 
-  private transactionContext (transactionId: string): StockRepository & StockTransactionContext {
+  async getOpeningOperation (operationId: string, session?: StockRepositorySession): Promise<OpeningCountOperation | undefined> {
+    try {
+      const mongoSession = this.mongoSessionOf(session)
+      const query = StockOpeningOperationModel.findOne({ operationId })
+      if (mongoSession !== undefined) void query.session(mongoSession)
+      const document = await query.lean<MongoOpeningOperationDocument>().exec()
+      return document === null ? undefined : mapOpeningOperationDocument(document)
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not find opening-count operation ${operationId}`, error)
+    }
+  }
+
+  async insertOpeningOperation (operation: OpeningCountOperation, session?: StockRepositorySession): Promise<OpeningCountOperation> {
+    try {
+      const mongoSession = this.mongoSessionOf(session)
+      const inserted = mongoSession === undefined
+        ? await StockOpeningOperationModel.create([operation])
+        : await StockOpeningOperationModel.create([operation], { session: mongoSession })
+      if (inserted.length !== 1) throw repositoryError('Opening-count operation insert did not return exactly one document')
+      return mapOpeningOperationDocument(inserted[0].toObject() as MongoOpeningOperationDocument)
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not insert opening-count operation ${operation.operationId}`, error)
+    }
+  }
+
+  async reconcileOpeningBuckets (productId: string, buckets: OpeningCountBucketReconciliation[], session?: StockRepositorySession): Promise<void> {
+    try {
+      const productObjectId = objectIdOf(productId, 'productId')
+      const mongoSession = this.mongoSessionOf(session)
+      const existing = await this.bucketDocuments(productObjectId, mongoSession)
+      const desired = new Map(buckets.map((bucket) => [bucket.expiryDate, bucket]))
+
+      for (const bucket of existing) {
+        const expiryDate = civilDateOf(bucket.expiryDate)
+        const target = desired.get(expiryDate)
+        const updateQuery = StockExpiryBucketModel.updateOne(
+          { _id: bucket._id },
+          {
+            $set: target === undefined
+              ? { receivedQuantity: 0, availableQuantity: 0 }
+              : { receivedQuantity: target.receivedQuantity, availableQuantity: target.availableQuantity }
+          }
+        )
+        if (mongoSession !== undefined) void updateQuery.session(mongoSession)
+        const result = await updateQuery.exec()
+        if (result.matchedCount !== 1) throw repositoryError(`Stock bucket ${bucket._id.toString()} was not reconciled`)
+        if (target !== undefined) desired.delete(expiryDate)
+      }
+
+      for (const bucket of desired.values()) {
+        const updateQuery = StockExpiryBucketModel.findOneAndUpdate(
+          { productId: productObjectId, expiryDate: bucket.expiryDate },
+          {
+            $setOnInsert: {
+              productId: productObjectId,
+              expiryDate: bucket.expiryDate,
+              committedQuantity: 0
+            },
+            $set: {
+              receivedQuantity: bucket.receivedQuantity,
+              availableQuantity: bucket.availableQuantity
+            }
+          },
+          { upsert: true, new: true }
+        )
+        if (mongoSession !== undefined) void updateQuery.session(mongoSession)
+        const document = await updateQuery.lean<MongoBucketDocument>().exec()
+        if (document === null) throw repositoryError(`Stock bucket for ${productId} and ${bucket.expiryDate} was not reconciled`)
+      }
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not reconcile opening buckets for ${productId}`, error)
+    }
+  }
+
+  async clearOpeningBuckets (productId: string, session?: StockRepositorySession): Promise<void> {
+    try {
+      const productObjectId = objectIdOf(productId, 'productId')
+      const mongoSession = this.mongoSessionOf(session)
+      const existing = await this.bucketDocuments(productObjectId, mongoSession)
+      if (existing.some((bucket) => bucket.committedQuantity > 0)) {
+        throw new StockServiceError(STOCK_ERROR_CODES.STOCK_BUCKET_HAS_COMMITMENTS, `Opening count cannot clear committed buckets for ${productId}`)
+      }
+      const query = StockExpiryBucketModel.deleteMany({ productId: productObjectId })
+      if (mongoSession !== undefined) void query.session(mongoSession)
+      await query.exec()
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not clear opening buckets for ${productId}`, error)
+    }
+  }
+
+  async reconcileOpeningProduct (productId: string, physicalQuantity: number, actorId: string, reconciledAt: Date, session?: StockRepositorySession): Promise<void> {
+    try {
+      const productObjectId = objectIdOf(productId, 'productId')
+      const actorObjectId = objectIdOf(actorId, 'actorId')
+      nonNegativeIntegerOf(physicalQuantity, 'physicalQuantity')
+      const mongoSession = this.mongoSessionOf(session)
+      const query = ProductModel.updateOne(
+        { _id: productObjectId, 'inventory.baselineStatus': BASELINE_STATUS.UNVERIFIED },
+        {
+          $set: {
+            stock: physicalQuantity,
+            'inventory.baselineStatus': BASELINE_STATUS.RECONCILED,
+            'inventory.lastReconciledAt': reconciledAt,
+            'inventory.lastReconciledBy': actorObjectId
+          }
+        }
+      )
+      if (mongoSession !== undefined) void query.session(mongoSession)
+      const result = await query.exec()
+      if (result.matchedCount !== 1) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_BASELINE_ALREADY_RECONCILED, `Product ${productId} baseline is no longer unverified`)
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not reconcile opening product ${productId}`, error)
+    }
+  }
+
+  private transactionContext (transactionId: string): StockOpeningRepository & StockTransactionContext {
     return {
       session: { transactionId },
       withTransaction: this.withTransaction.bind(this),
@@ -582,7 +732,12 @@ export class MongooseStockRepository implements StockRepository {
       insertMovement: async (movement, session) => await this.insertMovement(movement, session),
       applyPhysicalBucketReceipt: async (productId, expiryDate, quantity, session) => await this.applyPhysicalBucketReceipt(productId, expiryDate, quantity, session),
       applyBucketProjectionDelta: async (bucketId, delta, session) => await this.applyBucketProjectionDelta(bucketId, delta, session),
-      applyProductProjectionDelta: async (productId, delta, session) => await this.applyProductProjectionDelta(productId, delta, session)
+      applyProductProjectionDelta: async (productId, delta, session) => await this.applyProductProjectionDelta(productId, delta, session),
+      getOpeningOperation: async (operationId, session) => await this.getOpeningOperation(operationId, session),
+      insertOpeningOperation: async (operation, session) => await this.insertOpeningOperation(operation, session),
+      reconcileOpeningBuckets: async (productId, buckets, session) => await this.reconcileOpeningBuckets(productId, buckets, session),
+      clearOpeningBuckets: async (productId, session) => await this.clearOpeningBuckets(productId, session),
+      reconcileOpeningProduct: async (productId, physicalQuantity, actorId, reconciledAt, session) => await this.reconcileOpeningProduct(productId, physicalQuantity, actorId, reconciledAt, session)
     }
   }
 
@@ -633,3 +788,4 @@ export class MongooseStockRepository implements StockRepository {
 }
 
 export const createMongooseStockRepository = (): StockRepository => new MongooseStockRepository()
+export const createMongooseStockOpeningRepository = (): StockOpeningRepository => new MongooseStockRepository()

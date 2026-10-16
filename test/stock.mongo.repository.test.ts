@@ -18,6 +18,7 @@ import { STOCK_TIME_ZONE } from '../src/config/stock'
 import ProductModel from '../src/models/product'
 import InventoryMovementModel from '../src/models/inventoryMovement'
 import StockExpiryBucketModel from '../src/models/stockExpiryBucket'
+import StockOpeningOperationModel from '../src/models/stockOpeningOperation'
 import {
   mapSaleReferenceToStockCommitInput,
   buenosAiresCivilDate,
@@ -203,6 +204,75 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
 
     expect(updateStub.calledOnce).to.equal(true)
     expect(updateStub.firstCall.args[1]).to.deep.equal({ $inc: { stock: 3 } })
+  })
+
+  it('persists opening operation evidence through the supplied session', async () => {
+    const operationQuery = {
+      session: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves(undefined)
+    }
+    const findStub = sinon.stub(StockOpeningOperationModel, 'findOne').returns(operationQuery as unknown as ReturnType<typeof StockOpeningOperationModel.findOne>)
+    const repository = new MongooseStockRepository()
+
+    const result = await repository.getOpeningOperation('opening-operation-1', { transactionId: 'missing-session' }).catch((error: unknown) => error)
+
+    expect(result).to.be.instanceOf(StockServiceError)
+    expect(findStub.called).to.equal(false)
+  })
+
+  it('reconciles the absolute physical product projection and propagates its session', async () => {
+    const updateQuery = {
+      session: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves({ matchedCount: 1 })
+    }
+    const updateStub = sinon.stub(ProductModel, 'updateOne').returns(updateQuery as unknown as ReturnType<typeof ProductModel.updateOne>)
+    const repository = new MongooseStockRepository()
+
+    await repository.reconcileOpeningProduct('507f1f77bcf86cd799439011', 8, '507f1f77bcf86cd799439013', new Date('2026-10-15T12:00:00.000Z'), { transactionId: 'missing-session' }).catch((error: unknown) => error)
+
+    expect(updateStub.called).to.equal(false)
+  })
+
+  it('resets omitted opening buckets to zero while preserving their commitment field', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const staleBucketId = new Types.ObjectId('507f1f77bcf86cd799439012')
+    const findQuery = {
+      sort: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([{
+        _id: staleBucketId,
+        productId,
+        expiryDate: new Date('2026-12-30T00:00:00.000Z'),
+        receivedQuantity: 6,
+        availableQuantity: 6,
+        committedQuantity: 0
+      }])
+    }
+    const staleUpdateQuery = {
+      exec: sinon.stub().resolves({ matchedCount: 1 })
+    }
+    const targetUpdateQuery = {
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves({
+        _id: new Types.ObjectId('507f1f77bcf86cd799439013'),
+        productId,
+        expiryDate: new Date('2026-12-31T00:00:00.000Z'),
+        receivedQuantity: 4,
+        availableQuantity: 4,
+        committedQuantity: 0
+      })
+    }
+    sinon.stub(StockExpiryBucketModel, 'find').returns(findQuery as unknown as ReturnType<typeof StockExpiryBucketModel.find>)
+    const updateStub = sinon.stub(StockExpiryBucketModel, 'updateOne').returns(staleUpdateQuery as unknown as ReturnType<typeof StockExpiryBucketModel.updateOne>)
+    const targetStub = sinon.stub(StockExpiryBucketModel, 'findOneAndUpdate').returns(targetUpdateQuery as unknown as ReturnType<typeof StockExpiryBucketModel.findOneAndUpdate>)
+    const repository = new MongooseStockRepository()
+
+    await repository.reconcileOpeningBuckets(productId.toString(), [{ expiryDate: '2026-12-31', receivedQuantity: 4, availableQuantity: 4 }])
+
+    expect(updateStub.firstCall.args[1]).to.deep.equal({ $set: { receivedQuantity: 0, availableQuantity: 0 } })
+    expect(targetStub.firstCall.args[1].$set).to.deep.equal({ receivedQuantity: 4, availableQuantity: 4 })
+    expect(targetStub.firstCall.args[1].$setOnInsert.committedQuantity).to.equal(0)
   })
 
   it('updates only inventory.minimum and preserves transaction session propagation', async () => {

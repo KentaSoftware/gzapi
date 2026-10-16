@@ -1,11 +1,27 @@
 import { expect } from 'chai'
 
-import { STOCK_OPERATION_STATUSES, STOCK_ERROR_CODES } from '../src/interfaces/stock.interface'
+import {
+  BASELINE_STATUS,
+  EXPIRY_TRACKING,
+  STOCK_ERROR_CODES,
+  STOCK_OPERATION_STATUSES,
+  type BaselineStatus,
+  type ExpiryTracking,
+  type OpeningCountOperation,
+  type StockErrorCode,
+  type StockBucketSnapshot,
+  type StockOpeningRepository,
+  type StockProductSnapshot,
+  type StockRepositorySession,
+  type StockTransactionContext
+} from '../src/interfaces/stock.interface'
 import {
   confirmOpeningCount,
   OpeningCountError,
   previewOpeningCount
 } from '../src/services/stockOpening'
+import { createOpeningCountWriter } from '../src/services/stockOpeningWriter'
+import { StockServiceError } from '../src/services/stock'
 
 const ACTOR_ID = '507f1f77bcf86cd799439011'
 const PRODUCT_ID = '507f1f77bcf86cd799439013'
@@ -20,6 +36,105 @@ const input = {
 }
 
 const auth = { actorId: ACTOR_ID, canManageStock: true, canApproveStockCount: true }
+
+const OPENING_TEST_TRACKING = {
+  TRACKED: 'TRACKED',
+  NOT_TRACKED: 'NOT_TRACKED'
+} as const
+
+interface OpeningRepositoryEvents {
+  sessions: string[]
+  movementCount: number
+  bucketReconciliationCount: number
+  clearBucketCount: number
+  productReconciliationCount: number
+}
+
+const recordSession = (events: OpeningRepositoryEvents | undefined, session: StockRepositorySession | undefined): void => {
+  if (events !== undefined && session !== undefined) events.sessions.push(session.transactionId)
+}
+
+const product = (productId: string, expiryTracking: ExpiryTracking, stock = 0, baselineStatus: BaselineStatus = BASELINE_STATUS.UNVERIFIED): StockProductSnapshot => ({
+  productId,
+  physicalQuantity: stock,
+  committedQuantity: 0,
+  availableQuantity: stock,
+  expiryTracking,
+  baselineStatus
+})
+
+const openingRepository = (products: Record<string, ReturnType<typeof product>>, operations: OpeningCountOperation[] = [], buckets: Record<string, StockBucketSnapshot[]> = {}, events?: OpeningRepositoryEvents): StockOpeningRepository => {
+  const storedOperations = [...operations]
+  const methods: Omit<StockOpeningRepository, 'withTransaction'> = {
+    getProduct: async (productId, session) => {
+      recordSession(events, session)
+      return products[productId]
+    },
+    getProductMinimum: async () => undefined,
+    listProducts: async () => ({ total: 0, items: [] }),
+    updateProductMinimum: async () => undefined,
+    getBuckets: async (productId, session) => {
+      recordSession(events, session)
+      return buckets[productId] ?? []
+    },
+    getBucket: async () => undefined,
+    findMovementByIdempotencyKey: async (_key, session) => {
+      recordSession(events, session)
+      return undefined
+    },
+    findMovements: async () => [],
+    insertMovement: async (movement, session) => {
+      recordSession(events, session)
+      if (events !== undefined) events.movementCount += 1
+      return movement
+    },
+    applyPhysicalBucketReceipt: async () => { throw new Error('not used') },
+    applyBucketProjectionDelta: async () => undefined,
+    applyProductProjectionDelta: async () => undefined,
+    getOpeningOperation: async (operationId, session) => {
+      recordSession(events, session)
+      return storedOperations.find((operation) => operation.operationId === operationId)
+    },
+    insertOpeningOperation: async (operation, session) => {
+      recordSession(events, session)
+      storedOperations.push(operation)
+      return operation
+    },
+    reconcileOpeningBuckets: async (_productId, _openingBuckets, session) => {
+      recordSession(events, session)
+      if (events !== undefined) events.bucketReconciliationCount += 1
+    },
+    clearOpeningBuckets: async (_productId, session) => {
+      recordSession(events, session)
+      if (events !== undefined) events.clearBucketCount += 1
+    },
+    reconcileOpeningProduct: async (_productId, _quantity, _actorId, _date, session) => {
+      recordSession(events, session)
+      if (events !== undefined) events.productReconciliationCount += 1
+    }
+  }
+  const repository: StockOpeningRepository = {
+    withTransaction: async <T>(work: (context: StockOpeningRepository & StockTransactionContext) => Promise<T>): Promise<T> => {
+      const transaction: StockOpeningRepository & StockTransactionContext = {
+        ...repository,
+        session: { transactionId: 'opening-test-transaction' }
+      }
+      return await work(transaction)
+    },
+    ...methods
+  }
+  return repository
+}
+
+const writerErrorCode = async (writer: ReturnType<typeof createOpeningCountWriter>, plan: Parameters<ReturnType<typeof createOpeningCountWriter>>[0], context: Parameters<ReturnType<typeof createOpeningCountWriter>>[1]): Promise<StockErrorCode> => {
+  try {
+    await writer(plan, context)
+    throw new Error('Expected opening writer to reject')
+  } catch (error) {
+    if (!(error instanceof StockServiceError)) throw error
+    return error.code
+  }
+}
 
 describe('Stock opening — preview and confirmation', () => {
   it('builds deterministic preview evidence without a writer or mutation', () => {
@@ -112,5 +227,99 @@ describe('Stock opening — preview and confirmation', () => {
     const first = JSON.stringify(previewOpeningCount(input, auth))
     const second = JSON.stringify(previewOpeningCount({ ...input, rows: [...input.rows].reverse() }, auth))
     expect(first).to.equal(second)
+  })
+
+  it('writes tracked and non-tracked products through one repository transaction and retries zero-only operations', async () => {
+    const trackedId = PRODUCT_ID
+    const nonTrackedId = OTHER_PRODUCT_ID
+    const repository = openingRepository({
+      [trackedId]: product(trackedId, OPENING_TEST_TRACKING.TRACKED),
+      [nonTrackedId]: product(nonTrackedId, OPENING_TEST_TRACKING.NOT_TRACKED)
+    })
+    const writer = createOpeningCountWriter(repository)
+    const trackedPlan = previewOpeningCount({
+      operationId: 'opening-write-1',
+      rows: [{ productId: trackedId, countedQuantity: 4, expiryDate: '2026-12-31' }]
+    }, auth).plan
+    const first = await writer(trackedPlan, { actorId: ACTOR_ID, approvedBy: ACTOR_ID, approvalId: 'approval-1' })
+    expect(first.status).to.equal(STOCK_OPERATION_STATUSES.APPLIED)
+    expect(first.movementCount).to.equal(1)
+
+    const zeroPlan = previewOpeningCount({
+      operationId: 'opening-zero-1',
+      rows: [{ productId: nonTrackedId, countedQuantity: 0 }]
+    }, auth).plan
+    const zeroFirst = await writer(zeroPlan, { actorId: ACTOR_ID, approvedBy: ACTOR_ID, approvalId: 'approval-zero' })
+    const zeroRetry = await writer(zeroPlan, { actorId: ACTOR_ID, approvedBy: ACTOR_ID, approvalId: 'approval-zero' })
+    expect(zeroFirst.movementCount).to.equal(0)
+    expect(zeroRetry.status).to.equal(STOCK_OPERATION_STATUSES.IDEMPOTENT_RETRY)
+    expect(zeroRetry.movementCount).to.equal(0)
+  })
+
+  it('fails closed for missing, unknown, reconciled, and committed opening state', async () => {
+    const trackedPlan = previewOpeningCount({
+      operationId: 'opening-validation-1',
+      rows: [{ productId: PRODUCT_ID, countedQuantity: 1, expiryDate: '2026-12-31' }]
+    }, auth).plan
+    const context = { actorId: ACTOR_ID, approvedBy: ACTOR_ID, approvalId: 'approval-validation' }
+
+    const missingWriter = createOpeningCountWriter(openingRepository({}))
+    expect(await writerErrorCode(missingWriter, trackedPlan, context)).to.equal(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND)
+
+    const unknownWriter = createOpeningCountWriter(openingRepository({
+      [PRODUCT_ID]: product(PRODUCT_ID, EXPIRY_TRACKING.UNKNOWN)
+    }))
+    expect(await writerErrorCode(unknownWriter, trackedPlan, context)).to.equal(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+
+    const reconciledWriter = createOpeningCountWriter(openingRepository({
+      [PRODUCT_ID]: product(PRODUCT_ID, EXPIRY_TRACKING.TRACKED, 1, BASELINE_STATUS.RECONCILED)
+    }))
+    expect(await writerErrorCode(reconciledWriter, trackedPlan, context)).to.equal(STOCK_ERROR_CODES.STOCK_BASELINE_ALREADY_RECONCILED)
+
+    const committedWriter = createOpeningCountWriter(openingRepository({
+      [PRODUCT_ID]: product(PRODUCT_ID, EXPIRY_TRACKING.TRACKED)
+    }, [], {
+      [PRODUCT_ID]: [{
+        bucketId: '507f1f77bcf86cd799439015',
+        productId: PRODUCT_ID,
+        expiryDate: '2026-12-31',
+        receivedQuantity: 2,
+        availableQuantity: 1,
+        committedQuantity: 1
+      }]
+    }))
+    expect(await writerErrorCode(committedWriter, trackedPlan, context)).to.equal(STOCK_ERROR_CODES.STOCK_BUCKET_HAS_COMMITMENTS)
+  })
+
+  it('rejects semantic operation reuse and propagates one transaction session to every opening operation', async () => {
+    const events: OpeningRepositoryEvents = {
+      sessions: [],
+      movementCount: 0,
+      bucketReconciliationCount: 0,
+      clearBucketCount: 0,
+      productReconciliationCount: 0
+    }
+    const repository = openingRepository({
+      [PRODUCT_ID]: product(PRODUCT_ID, EXPIRY_TRACKING.TRACKED)
+    }, [], {}, events)
+    const writer = createOpeningCountWriter(repository)
+    const plan = previewOpeningCount({
+      operationId: 'opening-reuse-1',
+      rows: [
+        { productId: PRODUCT_ID, countedQuantity: 0, expiryDate: '2026-12-30' },
+        { productId: PRODUCT_ID, countedQuantity: 2, expiryDate: '2026-12-31' }
+      ]
+    }, auth).plan
+    await writer(plan, { actorId: ACTOR_ID, approvedBy: ACTOR_ID, approvalId: 'approval-reuse-1' })
+    expect(await writerErrorCode(writer, plan, { actorId: ACTOR_ID, approvedBy: ACTOR_ID, approvalId: 'approval-reuse-2' })).to.equal(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+    const conflictingPlan = previewOpeningCount({
+      operationId: plan.operationId,
+      rows: [{ productId: PRODUCT_ID, countedQuantity: 3, expiryDate: '2026-12-31' }]
+    }, auth).plan
+    expect(await writerErrorCode(writer, conflictingPlan, { actorId: ACTOR_ID, approvedBy: ACTOR_ID, approvalId: 'approval-reuse-1' })).to.equal(STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+    expect(events.movementCount).to.equal(1)
+    expect(events.bucketReconciliationCount).to.equal(1)
+    expect(events.productReconciliationCount).to.equal(1)
+    expect(new Set(events.sessions).size).to.equal(1)
   })
 })

@@ -2,8 +2,11 @@ import { Request, Response } from 'express'
 
 import {
   STOCK_ERROR_CODES,
+  STOCK_OPERATION_STATUSES,
   type ExpiredRemovalInput,
+  type OpeningCountConfirmationInput,
   type OpeningCountInput,
+  type OpeningCountWriter,
   type PurchaseReceiptInput,
   type StockAvailabilityQuery,
   type StockOverviewQuery,
@@ -23,8 +26,9 @@ import {
   stockReturnInputSchema
 } from '../schemas/stock.schema'
 import { StockService, StockServiceError } from '../services/stock'
-import { OpeningCountError, previewOpeningCount } from '../services/stockOpening'
+import { confirmOpeningCount, OpeningCountError, previewOpeningCount } from '../services/stockOpening'
 import { createMongooseStockRepository } from '../services/stockMongoRepository'
+import { createOpeningCountWriter } from '../services/stockOpeningWriter'
 import { STOCK_TIME_ZONE } from '../config/stock'
 import { sendErrorEnvelope } from '../utils/error.handle'
 
@@ -49,6 +53,8 @@ const STOCK_ERROR_MESSAGES = {
   STOCK_INSUFFICIENT: 'Stock is insufficient for this operation',
   STOCK_AVAILABILITY_UNAVAILABLE: 'Stock availability is currently unavailable',
   EXPIRED_BUCKET_HAS_COMMITMENTS: 'The expired bucket still has sale commitments',
+  STOCK_BASELINE_ALREADY_RECONCILED: 'The product baseline has already been reconciled',
+  STOCK_BUCKET_HAS_COMMITMENTS: 'The stock bucket still has sale commitments',
   STOCK_IDEMPOTENCY_CONFLICT: 'Stock operation conflicts with an existing idempotency record',
   STOCK_REPOSITORY_ERROR: 'Stock persistence is currently unavailable'
 } as const
@@ -56,6 +62,7 @@ const STOCK_ERROR_MESSAGES = {
 type StockErrorCode = keyof typeof STOCK_ERROR_MESSAGES
 
 const service = new StockService(createMongooseStockRepository())
+const openingCountWriter = createOpeningCountWriter()
 
 const correlationOf = (req: Request): string | undefined => {
   const header = req.headers?.['x-correlation-id']
@@ -94,6 +101,8 @@ const statusFor = (code: StockErrorCode): number => {
     case STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND:
       return HTTP_STATUS.NOT_FOUND
     case STOCK_ERROR_CODES.STOCK_INSUFFICIENT:
+    case STOCK_ERROR_CODES.STOCK_BASELINE_ALREADY_RECONCILED:
+    case STOCK_ERROR_CODES.STOCK_BUCKET_HAS_COMMITMENTS:
     case STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT:
     case STOCK_ERROR_CODES.EXPIRED_BUCKET_HAS_COMMITMENTS:
       return HTTP_STATUS.CONFLICT
@@ -315,6 +324,39 @@ const previewOpeningCountController = async (req: RequestExt, res: Response): Pr
   }
 }
 
+const confirmOpeningCountController = async (req: RequestExt, res: Response, writer: OpeningCountWriter = openingCountWriter): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+
+  try {
+    const confirmation = await confirmOpeningCount(req.body as unknown as OpeningCountConfirmationInput, {
+      actorId,
+      canManageStock: true,
+      canApproveStockCount: true
+    }, writer)
+    if (confirmation.evidence.status === STOCK_OPERATION_STATUSES.FAILED_RECOVERABLE) {
+      sendErrorEnvelope(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        confirmation.evidence.errorCode ?? STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+        STOCK_ERROR_MESSAGES.STOCK_REPOSITORY_ERROR,
+        correlationId
+      )
+      return
+    }
+    const status = confirmation.evidence.status === STOCK_OPERATION_STATUSES.IDEMPOTENT_RETRY
+      ? HTTP_STATUS.OK
+      : HTTP_STATUS.CREATED
+    res.status(status).send(confirmation)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
 export {
   getAvailability,
   getOverview,
@@ -323,5 +365,6 @@ export {
   receivePurchase,
   returnSale,
   removeExpiredBucket,
-  previewOpeningCountController as previewOpeningCount
+  previewOpeningCountController as previewOpeningCount,
+  confirmOpeningCountController as confirmOpeningCount
 }
