@@ -1,4 +1,5 @@
 import { ObjectId, Types } from 'mongoose'
+import type { BaselineStatus, ExpiryTracking } from './stock.interface'
 
 export interface Product {
   _id: Types.ObjectId
@@ -16,9 +17,20 @@ export interface Product {
   proveedor: ObjectId
   path?: string
   precioDescuento?: number
-  NameProveedor?: string,
-  NameMarca?: string,
+  NameProveedor?: string
+  NameMarca?: string
   NameCategoria?: string
+  inventory?: ProductInventoryConfig
+  createdAt?: Date
+  updatedAt?: Date
+}
+
+export interface ProductInventoryConfig {
+  minimum: number
+  expiryTracking: ExpiryTracking
+  baselineStatus: BaselineStatus
+  lastReconciledAt?: Date
+  lastReconciledBy?: ObjectId
 }
 
 interface Peso {

@@ -1,4 +1,3 @@
-
 import { Request, Response } from 'express'
 import { emitSocket } from '../socket'
 import { handleHttp } from '../utils/error.handle'
@@ -13,13 +12,13 @@ interface RequestExt extends Request {
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   try {
     const response = await insertItemSale(body)
-    emitSocket('sale', {
+    emitSocket('itemSale', {
       action: 'create',
       data: response
     })
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_POST_ITEM', e)
+    handleHttp(res, 'ERROR_CREATE_ITEM_SALE', e)
   }
 }
 
@@ -29,15 +28,16 @@ const getItem = async ({ params }: RequestExt, res: Response): Promise<void> => 
     const response = await getItemSale(new Types.ObjectId(id))
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEM')
+    handleHttp(res, 'ERROR_GET_ITEM_SALE_BY_ID', e)
   }
 }
+
 const getItems = async (_: RequestExt, res: Response): Promise<void> => {
   try {
     const response = await getItemSales()
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_GET_ITEMS')
+    handleHttp(res, 'ERROR_GET_ITEMS_SALE_LIST', e)
   }
 }
 
@@ -47,7 +47,7 @@ const deleteItem = async ({ params }: RequestExt, res: Response): Promise<void> 
     const response = await deleteItemsSale(new Types.ObjectId(id))
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_DELETE_ITEM')
+    handleHttp(res, 'ERROR_DELETE_ITEM_SALE', e)
   }
 }
 
@@ -57,7 +57,7 @@ const patchItem = async ({ params, body }: RequestExt, res: Response): Promise<v
     const response = await updateItemsSale(new Types.ObjectId(id), body)
     res.send(response)
   } catch (e) {
-    handleHttp(res, 'ERROR_DELETE_ITEM')
+    handleHttp(res, 'ERROR_UPDATE_ITEM_SALE', e)
   }
 }
 

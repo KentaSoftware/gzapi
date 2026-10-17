@@ -7,9 +7,13 @@ const insertSale = async (item: Sale): Promise<Sale> => {
   return responseInsert
 }
 
-const getSales = async (input: string): Promise<Sale[]> => {
-  const query: any = {
-  }
+const deleteSaleService = async (id: Types.ObjectId): Promise<any> => {
+  const response = await SaleModel.updateOne({ _id: id }, { $set: { estado: 'Cancelado' } })
+  return response
+}
+
+const getSales = async (input: string, user: Types.ObjectId, userRole?: any): Promise<Sale[]> => {
+  const query: any = {}
 
   if (input !== '') {
     query.cliente = {
@@ -18,19 +22,171 @@ const getSales = async (input: string): Promise<Sale[]> => {
     }
   }
 
+  console.log('query', query)
+
+  // Si el usuario es admin, no filtrar por usuario
+  if (userRole != null && userRole.name === 'admin') {
+    const response = await SaleModel.aggregate([
+      {
+        $match: { ...query }
+      },
+      {
+        $sort: { createdAt: -1 }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      {
+        $lookup: {
+          from: 'itemsales',
+          localField: '_id',
+          foreignField: 'idVenta',
+          as: 'itemSales'
+        }
+      },
+      {
+        $addFields: {
+          itemsLength: { $size: '$itemSales' },
+          userCreate: '$user.nickname'
+        }
+      },
+      {
+        $project: {
+          itemSales: 0,
+          user: 0
+        }
+      }
+    ])
+    return response
+  }
+
+  // Si no es admin, filtrar por usuario
   const response = await SaleModel.aggregate([{
-    $match: query
+    $match: { ...query, user }
   },
   {
     $sort: { createdAt: -1 }
+  },
+  {
+    $lookup: {
+      from: 'itemsales',
+      localField: '_id',
+      foreignField: 'idVenta',
+      as: 'itemSales'
+    }
+  },
+  {
+    $addFields: {
+      itemsLength: { $size: '$itemSales' }
+    }
+  },
+  {
+    $project: {
+      itemSales: 0
+    }
   }
   ])
 
   return response
 }
 
-const getSalesLimit = async (skip: number, limit: number): Promise<Sale[]> => {
-  const response = await SaleModel.find({}).skip(skip).limit(limit).sort({ createdAt: -1 })
+const getSalesLimit = async (skip: number, limit: number, user: Types.ObjectId, userRole?: any, filterUser?: any): Promise<Sale[]> => {
+  const query: any = {}
+
+  // Si el usuario es admin, no filtrar por usuario
+  if (filterUser != null && filterUser !== '') {
+    query.user = new Types.ObjectId(filterUser)
+  }
+
+  console.log(query)
+
+  if (userRole != null && userRole.name === 'admin') {
+    const response = await SaleModel.aggregate([
+      {
+        $sort: { createdAt: -1 }
+      },
+      {
+        $match: { ...query }
+      },
+      {
+        $skip: skip
+      },
+      {
+        $limit: limit
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      {
+        $unwind: '$user'
+      },
+      {
+        $lookup: {
+          from: 'itemsales',
+          localField: '_id',
+          foreignField: 'idVenta',
+          as: 'itemSales'
+        }
+      },
+      {
+        $addFields: {
+          itemsLength: { $size: '$itemSales' },
+          userCreate: '$user.nickname'
+        }
+      },
+      {
+        $project: {
+          itemSales: 0,
+          user: 0
+        }
+      }
+    ])
+    return response
+  }
+
+  // Si no es admin, filtrar por usuario
+  const response = await SaleModel.aggregate([
+    {
+      $match: { user }
+    },
+    {
+      $sort: { createdAt: -1 }
+    },
+    {
+      $skip: skip
+    },
+    {
+      $limit: limit
+    },
+    {
+      $lookup: {
+        from: 'itemsales',
+        localField: '_id',
+        foreignField: 'idVenta',
+        as: 'itemSales'
+      }
+    },
+    {
+      $addFields: {
+        itemsLength: { $size: '$itemSales' }
+      }
+    },
+    {
+      $project: {
+        itemSales: 0
+      }
+    }
+  ])
   return response
 }
 
@@ -39,14 +195,21 @@ const getSale = async (id: Types.ObjectId): Promise<Sale[]> => {
   return response
 }
 
-const updateSale = async (id: Types.ObjectId, sale: Sale): Promise<any> => {
-  const response = await SaleModel.updateOne({ _id: id }, { $set: sale })
-  return response
+const updateSale = async (id: Types.ObjectId, sale: Partial<Sale>): Promise<Sale | null> => {
+  const existingSale = await SaleModel.findById(id)
+  if (existingSale == null) return null
+
+  existingSale.set(sale)
+  return await existingSale.save()
 }
 
-const qtySale = async (): Promise<any> => {
+const qtySale = async (filterUser: any): Promise<any> => {
+  if (filterUser != null && filterUser !== '') {
+    const response = await SaleModel.countDocuments({ user: filterUser })
+    return response
+  }
   const response = await SaleModel.countDocuments()
   return response
 }
 
-export { insertSale, getSale, getSales, updateSale, qtySale, getSalesLimit }
+export { insertSale, getSale, getSales, updateSale, qtySale, getSalesLimit, deleteSaleService }

@@ -1,5 +1,32 @@
 import { Schema, model } from 'mongoose'
-import { Sale } from '../interfaces/sale.interface'
+import { SALE_DELIVERY_STATUS, Sale, SaleDelivery } from '../interfaces/sale.interface'
+
+const SaleDeliverySchema = new Schema<SaleDelivery>(
+  {
+    status: {
+      type: String,
+      enum: Object.values(SALE_DELIVERY_STATUS),
+      required: true
+    },
+    serviceDate: {
+      type: Date,
+      required: function (this: SaleDelivery): boolean {
+        return this.status === SALE_DELIVERY_STATUS.PENDING
+      }
+    },
+    deliveredAt: {
+      type: Date,
+      required: function (this: SaleDelivery): boolean {
+        return this.status === SALE_DELIVERY_STATUS.DELIVERED
+      }
+    },
+    notes: {
+      type: String,
+      trim: true
+    }
+  },
+  { _id: false }
+)
 
 const SaleSchema = new Schema<Sale>(
   {
@@ -21,6 +48,18 @@ const SaleSchema = new Schema<Sale>(
     },
     porcentaje: {
       type: Number
+    },
+    idCliente: {
+      type: Schema.ObjectId,
+      ref: 'Client'
+    },
+    paidAt: {
+      type: Date,
+      required: false
+    },
+    delivery: {
+      type: SaleDeliverySchema,
+      required: false
     }
   },
   {
@@ -28,6 +67,13 @@ const SaleSchema = new Schema<Sale>(
     versionKey: false
   }
 )
+
+SaleSchema.pre('validate', function (next) {
+  if (this.delivery?.status === SALE_DELIVERY_STATUS.PENDING && this.idCliente == null) {
+    this.invalidate('delivery', 'PENDING delivery requires idCliente')
+  }
+  next()
+})
 
 const SaleModel = model('sale', SaleSchema)
 export default SaleModel
