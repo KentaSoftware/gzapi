@@ -24,6 +24,8 @@ import {
   type StockProductDetailQuery,
   type StockProductDetailResult,
   type StockMinimumResult,
+  type StockMinimumAuditRecord,
+  type StockMinimumUpdateOptions,
   type StockPhysicalReturnInput,
   type StockPhysicalReturnLineInput,
   type PurchaseReceiptInput,
@@ -88,6 +90,11 @@ const isPositiveInteger = (value: number): boolean => Number.isSafeInteger(value
 const isNonZeroSafeInteger = (value: number): boolean => Number.isSafeInteger(value) && value !== 0
 
 const isNonNegativeSafeInteger = (value: number): boolean => Number.isSafeInteger(value) && value >= 0
+
+const STOCK_MINIMUM_AUDIT_LIMITS = {
+  CORRELATION_ID: 128,
+  REASON: 200
+} as const
 
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/
 
@@ -358,14 +365,35 @@ export class StockService {
     }
   }
 
-  /** Updates only the inventory threshold; audit persistence is intentionally deferred until an audit collection exists. */
-  async updateMinimum (productId: string, minimum: number, auth: StockServiceAuth): Promise<StockMinimumResult> {
+  async updateMinimum (productId: string, minimum: number, auth: StockServiceAuth, options: StockMinimumUpdateOptions = {}): Promise<StockMinimumResult> {
     if (!validAuth(auth)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_FORBIDDEN, 'A valid stock actor is required')
     if (!isNonNegativeSafeInteger(minimum)) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'minimum must be a safe non-negative integer')
+    if (options.correlationId !== undefined && (options.correlationId.trim() === '' || options.correlationId.length > STOCK_MINIMUM_AUDIT_LIMITS.CORRELATION_ID)) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'correlationId must be a bounded identifier')
+    }
+    if (options.reason !== undefined && (options.reason.trim() === '' || options.reason.length > STOCK_MINIMUM_AUDIT_LIMITS.REASON)) {
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'reason must be a bounded string')
+    }
     try {
-      const result = await this.repository.updateProductMinimum(productId, minimum)
-      if (result === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${productId} was not found`)
-      return result
+      return await this.runTransaction(`minimum-${productId}`, async (transaction) => {
+        const previous = await transaction.getProductMinimum(productId, transaction.session)
+        if (previous === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${productId} was not found`)
+        if (previous.minimum === minimum) return { productId, minimum }
+
+        const result = await transaction.updateProductMinimum(productId, minimum, transaction.session)
+        if (result === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${productId} was not found`)
+        const audit: StockMinimumAuditRecord = {
+          productId,
+          actorId: auth.actorId,
+          previousMinimum: previous.minimum,
+          newMinimum: result.minimum,
+          occurredAt: new Date(),
+          ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+          ...(options.reason === undefined ? {} : { reason: options.reason })
+        }
+        await transaction.insertMinimumAudit(audit, transaction.session)
+        return result
+      })
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, errorMessage(error))

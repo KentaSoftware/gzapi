@@ -371,7 +371,7 @@ describe('Stock contract — HTTP adapter', () => {
 
   it('NFR-004: strictly validates minimum updates, propagates the authenticated actor, and maps service failures', async () => {
     const serviceCall = sinon.stub(StockService.prototype, 'updateMinimum').resolves({ productId: PRODUCT_ID, minimum: 4 })
-    for (const body of [{ minimum: -1 }, { minimum: 1.5 }, { minimum: Number.MAX_SAFE_INTEGER + 1 }, { minimum: 1, extra: true }]) {
+    for (const body of [{ minimum: -1 }, { minimum: 1.5 }, { minimum: Number.MAX_SAFE_INTEGER + 1 }, { minimum: 1, extra: true }, { minimum: 1, reason: 42 }, { minimum: 1, reason: 'x'.repeat(201) }]) {
       const response = makeResponse()
       await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body }), response as unknown as Response)
       expect(response.status.calledWith(400)).to.equal(true)
@@ -379,10 +379,19 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.called).to.equal(false)
 
     const response = makeResponse()
-    await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body: { minimum: 4 } }), response as unknown as Response)
+    await updateMinimum(makeRequest({
+      params: { id: PRODUCT_ID },
+      headers: { 'x-correlation-id': 'correlation-1' },
+      body: { minimum: 4, reason: 'Replenishment policy changed' }
+    }), response as unknown as Response)
     expect(response.status.calledWith(200)).to.equal(true)
     expect(bodyOf(response)).to.deep.equal({ productId: PRODUCT_ID, minimum: 4 })
-    expect(serviceCall.firstCall.args).to.deep.equal([PRODUCT_ID, 4, { actorId: ACTOR_ID, canManageStock: true }])
+    expect(serviceCall.firstCall.args).to.deep.equal([
+      PRODUCT_ID,
+      4,
+      { actorId: ACTOR_ID, canManageStock: true },
+      { correlationId: 'correlation-1', reason: 'Replenishment policy changed' }
+    ])
 
     serviceCall.resetHistory()
     serviceCall.rejects(new StockServiceError('STOCK_PRODUCT_NOT_FOUND', 'missing'))

@@ -35,12 +35,27 @@ interface TestProductRecord {
   snapshot: StockProductSnapshot
 }
 
+interface TestMinimumAuditRecord {
+  productId: string
+  actorId: string
+  previousMinimum: number | null
+  newMinimum: number
+  occurredAt: Date
+  correlationId?: string
+  reason?: string
+}
+
 class MemoryRepository implements StockRepository {
   products = new Map<string, StockProductSnapshot>()
   buckets = new Map<string, StockBucketSnapshot>()
   movements: StockMovementRecord[] = []
   minimums = new Map<string, number>()
+  minimumAudits: TestMinimumAuditRecord[] = []
   transactionCalls = 0
+  minimumUpdateSessions: Array<StockRepositorySession | undefined> = []
+  minimumReadSessions: Array<StockRepositorySession | undefined> = []
+  minimumAuditSessions: Array<StockRepositorySession | undefined> = []
+  failMinimumAudit = false
   projectionSessions: Array<{ method: string, session: StockRepositorySession | undefined }> = []
   receiptSessions: StockRepositorySession[] = []
   private movementSequence = 0
@@ -48,14 +63,25 @@ class MemoryRepository implements StockRepository {
   async withTransaction<T> (work: (context: StockTransactionContext) => Promise<T>): Promise<T> {
     this.transactionCalls += 1
     const session: StockRepositorySession = { transactionId: `tx-${this.transactionCalls}` }
-    return await work(Object.assign(this, { session }))
+    const minimumsBefore = new Map(this.minimums)
+    const productsBefore = new Map(this.products)
+    const auditsBefore = [...this.minimumAudits]
+    try {
+      return await work(Object.assign(this, { session }))
+    } catch (error) {
+      this.minimums = minimumsBefore
+      this.products = productsBefore
+      this.minimumAudits = auditsBefore
+      throw error
+    }
   }
 
   async getProduct (productId: string): Promise<StockProductSnapshot | undefined> {
     return this.products.get(productId)
   }
 
-  async getProductMinimum (productId: string): Promise<{ productId: string, minimum: number | null } | undefined> {
+  async getProductMinimum (productId: string, session?: StockRepositorySession): Promise<{ productId: string, minimum: number | null } | undefined> {
+    this.minimumReadSessions.push(session)
     if (!this.products.has(productId)) return undefined
     return { productId, minimum: this.minimums.get(productId) ?? null }
   }
@@ -94,10 +120,18 @@ class MemoryRepository implements StockRepository {
     return { total: items.length, items: items.slice((page - 1) * pageSize, page * pageSize) }
   }
 
-  async updateProductMinimum (productId: string, minimum: number): Promise<{ productId: string, minimum: number } | undefined> {
+  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession): Promise<{ productId: string, minimum: number } | undefined> {
+    this.minimumUpdateSessions.push(session)
     if (!this.products.has(productId)) return undefined
     this.minimums.set(productId, minimum)
     return { productId, minimum }
+  }
+
+  async insertMinimumAudit (audit: TestMinimumAuditRecord, session?: StockRepositorySession): Promise<TestMinimumAuditRecord> {
+    this.minimumAuditSessions.push(session)
+    if (this.failMinimumAudit) throw new Error('audit persistence failed')
+    this.minimumAudits.push(audit)
+    return audit
   }
 
   async insertMovement (movement: StockMovementRecord): Promise<StockMovementRecord> {
@@ -282,6 +316,52 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 1.5, ACTOR), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
     await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 1, { ...ACTOR, actorId: '' }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
     await expectRejected(async () => await service.updateMinimum('missing', 1, ACTOR), STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND)
+  })
+
+  it('records an append-only minimum audit in the same transaction with actor, correlation, and reason', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+
+    const result = await service.updateMinimum(PRODUCT_ID, 7, ACTOR, {
+      correlationId: 'correlation-1',
+      reason: 'Replenishment policy changed'
+    })
+
+    expect(result).to.deep.equal({ productId: PRODUCT_ID, minimum: 7 })
+    expect(repository.minimumAudits).to.have.length(1)
+    expect(repository.minimumAudits[0]).to.include({
+      productId: PRODUCT_ID,
+      actorId: ACTOR.actorId,
+      previousMinimum: 2,
+      newMinimum: 7,
+      correlationId: 'correlation-1',
+      reason: 'Replenishment policy changed'
+    })
+    expect(repository.minimumAudits[0].occurredAt).to.be.instanceOf(Date)
+    expect(repository.minimumReadSessions[0]?.transactionId).to.equal('tx-1')
+    expect(repository.minimumUpdateSessions[0]?.transactionId).to.equal('tx-1')
+    expect(repository.minimumAuditSessions[0]?.transactionId).to.equal('tx-1')
+  })
+
+  it('does not create a minimum audit for an unchanged value', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+
+    const result = await service.updateMinimum(PRODUCT_ID, 2, ACTOR, { reason: 'No change' })
+
+    expect(result).to.deep.equal({ productId: PRODUCT_ID, minimum: 2 })
+    expect(repository.minimumAudits).to.have.length(0)
+  })
+
+  it('fails closed and rolls back the minimum when audit persistence fails', async () => {
+    const repository = newRepository()
+    repository.failMinimumAudit = true
+    const service = new StockService(repository)
+
+    await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 7, ACTOR, { correlationId: 'correlation-2' }), STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR)
+
+    expect(repository.minimums.get(PRODUCT_ID)).to.equal(2)
+    expect(repository.minimumAudits).to.have.length(0)
   })
 
   it('S-01/S-22/TC-031: reads availability without writing and reports incomplete snapshots', async () => {

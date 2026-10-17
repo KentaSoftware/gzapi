@@ -4,6 +4,7 @@ import ProductModel from '../models/product'
 import InventoryMovementModel from '../models/inventoryMovement'
 import StockExpiryBucketModel from '../models/stockExpiryBucket'
 import StockOpeningOperationModel from '../models/stockOpeningOperation'
+import StockMinimumAuditModel from '../models/stockMinimumAudit'
 import { STOCK_TIME_ZONE } from '../config/stock'
 import {
   BASELINE_STATUS,
@@ -18,6 +19,7 @@ import {
   type StockBucketProjectionDelta,
   type StockBucketSnapshot,
   type StockMinimumResult,
+  type StockMinimumAuditRecord,
   type StockMovementQuery,
   type StockMovementRecord,
   type StockProductOverviewPage,
@@ -104,6 +106,18 @@ interface MongoOpeningOperationDocument {
   updatedAt: Date
 }
 
+interface MongoMinimumAuditDocument {
+  _id: Types.ObjectId
+  productId: string
+  actorId: string
+  previousMinimum: number | null
+  newMinimum: number
+  occurredAt: Date
+  correlationId?: string
+  reason?: string
+  createdAt: Date
+}
+
 const repositoryError = (message: string, cause?: unknown): StockServiceError => {
   const detail = cause instanceof Error ? `: ${cause.message}` : ''
   return new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, `${message}${detail}`)
@@ -132,6 +146,13 @@ const objectIdOf = (value: unknown, field: string): Types.ObjectId => {
 const nonEmptyStringOf = (value: unknown, field: string): string => {
   if (typeof value !== 'string' || value.trim() === '') throw repositoryError(`${field} is missing or invalid`)
   return value.trim()
+}
+
+const boundedOptionalStringOf = (value: unknown, field: string, maxLength: number): string | undefined => {
+  if (value === undefined) return undefined
+  const stringValue = nonEmptyStringOf(value, field)
+  if (stringValue.length > maxLength) throw repositoryError(`${field} exceeds its maximum length`)
+  return stringValue
 }
 
 const positiveIntegerOf = (value: unknown, field: string): number => {
@@ -199,6 +220,32 @@ const mapOpeningOperationDocument = (document: MongoOpeningOperationDocument): O
   movementCount: document.movementCount,
   createdAt: new Date(document.createdAt.getTime()),
   updatedAt: new Date(document.updatedAt.getTime())
+})
+
+export const mapMinimumAuditDocumentToRecord = (document: unknown): StockMinimumAuditRecord => {
+  const audit = recordOf(document, 'StockMinimumAudit')
+  const previousMinimum = audit.previousMinimum === null ? null : nonNegativeIntegerOf(audit.previousMinimum, 'previousMinimum')
+  return {
+    auditId: identifierOf(audit._id, 'StockMinimumAudit._id'),
+    productId: nonEmptyStringOf(audit.productId, 'productId'),
+    actorId: nonEmptyStringOf(audit.actorId, 'actorId'),
+    previousMinimum,
+    newMinimum: nonNegativeIntegerOf(audit.newMinimum, 'newMinimum'),
+    occurredAt: dateOf(audit.occurredAt, 'occurredAt'),
+    ...(audit.correlationId === undefined ? {} : { correlationId: nonEmptyStringOf(audit.correlationId, 'correlationId') }),
+    ...(audit.reason === undefined ? {} : { reason: nonEmptyStringOf(audit.reason, 'reason') }),
+    ...(audit.createdAt === undefined ? {} : { createdAt: dateOf(audit.createdAt, 'createdAt') })
+  }
+}
+
+const toMinimumAuditWrite = (audit: StockMinimumAuditRecord): Omit<MongoMinimumAuditDocument, '_id' | 'createdAt'> => ({
+  productId: nonEmptyStringOf(audit.productId, 'productId'),
+  actorId: nonEmptyStringOf(audit.actorId, 'actorId'),
+  previousMinimum: audit.previousMinimum === null ? null : nonNegativeIntegerOf(audit.previousMinimum, 'previousMinimum'),
+  newMinimum: nonNegativeIntegerOf(audit.newMinimum, 'newMinimum'),
+  occurredAt: dateOf(audit.occurredAt, 'occurredAt'),
+  ...(audit.correlationId === undefined ? {} : { correlationId: boundedOptionalStringOf(audit.correlationId, 'correlationId', 128) }),
+  ...(audit.reason === undefined ? {} : { reason: boundedOptionalStringOf(audit.reason, 'reason', 200) })
 })
 
 export const mapProductDocumentToStockSnapshot = (document: unknown, committedQuantity: number): StockProductSnapshot => {
@@ -427,6 +474,24 @@ export class MongooseStockRepository implements StockOpeningRepository {
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw repositoryError(`Could not update minimum for product ${productId}`, error)
+    }
+  }
+
+  async insertMinimumAudit (audit: StockMinimumAuditRecord, session?: StockRepositorySession): Promise<StockMinimumAuditRecord> {
+    try {
+      const document = toMinimumAuditWrite(audit)
+      const mongoSession = this.mongoSessionOf(session)
+      const inserted = mongoSession === undefined
+        ? await StockMinimumAuditModel.create([document])
+        : await StockMinimumAuditModel.create([document], { session: mongoSession })
+      if (inserted.length !== 1) throw repositoryError('Stock minimum audit insert did not return exactly one document')
+      const insertedValue: unknown = inserted[0]
+      const insertedRecord = recordOf(insertedValue, 'StockMinimumAudit')
+      const rawDocument: unknown = typeof insertedRecord.toObject === 'function' ? insertedRecord.toObject() : insertedRecord
+      return mapMinimumAuditDocumentToRecord(rawDocument)
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError(`Could not insert minimum audit for ${audit.productId}`, error)
     }
   }
 
@@ -725,6 +790,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
       getProductMinimum: async (productId, session) => await this.getProductMinimum(productId, session),
       listProducts: async (page, pageSize, session) => await this.listProducts(page, pageSize, session),
       updateProductMinimum: async (productId, minimum, session) => await this.updateProductMinimum(productId, minimum, session),
+      insertMinimumAudit: async (audit, session) => await this.insertMinimumAudit(audit, session),
       getBuckets: async (productId, session) => await this.getBuckets(productId, session),
       getBucket: async (bucketId, session) => await this.getBucket(bucketId, session),
       findMovementByIdempotencyKey: async (key, session) => await this.findMovementByIdempotencyKey(key, session),

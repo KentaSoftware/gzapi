@@ -7,6 +7,7 @@ import {
   type StockBucketProjectionDelta,
   type StockBucketSnapshot,
   type StockMinimumResult,
+  type StockMinimumAuditRecord,
   type StockMovementQuery,
   type StockMovementRecord,
   type StockProductMinimum,
@@ -90,6 +91,10 @@ class PerformanceStockRepository implements StockRepository {
   }
 
   async updateProductMinimum (_productId: string, _minimum: number, _session?: StockRepositorySession): Promise<StockMinimumResult | undefined> {
+    throw new Error('Performance fixture does not support mutations')
+  }
+
+  async insertMinimumAudit (_audit: StockMinimumAuditRecord, _session?: StockRepositorySession): Promise<StockMinimumAuditRecord> {
     throw new Error('Performance fixture does not support mutations')
   }
 

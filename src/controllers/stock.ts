@@ -217,7 +217,10 @@ const updateMinimum = async (req: RequestExt, res: Response): Promise<void> => {
     return
   }
   try {
-    res.status(HTTP_STATUS.OK).send(await service.updateMinimum(productId.data, parsed.data.minimum, authOf(actorId)))
+    res.status(HTTP_STATUS.OK).send(await service.updateMinimum(productId.data, parsed.data.minimum, authOf(actorId), {
+      correlationId,
+      ...(parsed.data.reason === undefined ? {} : { reason: parsed.data.reason })
+    }))
   } catch (error) {
     handleError(res, correlationId, error)
   }

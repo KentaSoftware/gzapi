@@ -405,6 +405,23 @@ export interface StockMinimumResult {
   minimum: number
 }
 
+export interface StockMinimumUpdateOptions {
+  correlationId?: string
+  reason?: string
+}
+
+export interface StockMinimumAuditRecord {
+  auditId?: string
+  productId: string
+  actorId: string
+  previousMinimum: number | null
+  newMinimum: number
+  occurredAt: Date
+  correlationId?: string
+  reason?: string
+  createdAt?: Date
+}
+
 export interface StockProductMinimum {
   productId: string
   minimum: number | null
@@ -497,6 +514,7 @@ export interface StockRepository {
   getProductMinimum: (productId: string, session?: StockRepositorySession) => Promise<StockProductMinimum | undefined>
   listProducts: (page: number, pageSize: number, session?: StockRepositorySession) => Promise<StockProductOverviewPage>
   updateProductMinimum: (productId: string, minimum: number, session?: StockRepositorySession) => Promise<StockMinimumResult | undefined>
+  insertMinimumAudit: (audit: StockMinimumAuditRecord, session?: StockRepositorySession) => Promise<StockMinimumAuditRecord>
   getBuckets: (productId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot[]>
   getBucket: (bucketId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot | undefined>
   findMovementByIdempotencyKey: (idempotencyKey: string, session?: StockRepositorySession) => Promise<StockMovementRecord | undefined>

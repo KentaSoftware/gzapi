@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { Types } from 'mongoose'
+import mongoose, { Types, type ClientSession } from 'mongoose'
 
 import {
   BASELINE_STATUS,
@@ -19,6 +19,7 @@ import ProductModel from '../src/models/product'
 import InventoryMovementModel from '../src/models/inventoryMovement'
 import StockExpiryBucketModel from '../src/models/stockExpiryBucket'
 import StockOpeningOperationModel from '../src/models/stockOpeningOperation'
+import StockMinimumAuditModel from '../src/models/stockMinimumAudit'
 import {
   mapSaleReferenceToStockCommitInput,
   buenosAiresCivilDate,
@@ -296,6 +297,91 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     const success = await repository.updateProductMinimum('507f1f77bcf86cd799439011', 9)
     expect(success).to.deep.equal({ productId: '507f1f77bcf86cd799439011', minimum: 9 })
     expect(updateStub.firstCall.args[1]).to.deep.equal({ $set: { 'inventory.minimum': 9 } })
+  })
+
+  it('persists minimum audit records through the supplied transaction session', async () => {
+    const auditDocument = {
+      _id: new Types.ObjectId('507f1f77bcf86cd799439014'),
+      productId: '507f1f77bcf86cd799439011',
+      actorId: '507f1f77bcf86cd799439013',
+      previousMinimum: null,
+      newMinimum: 9,
+      occurredAt: new Date('2026-10-15T12:00:00.000Z'),
+      correlationId: 'correlation-1',
+      reason: 'Initial policy'
+    }
+    const createStub = sinon.stub(StockMinimumAuditModel, 'create').resolves([auditDocument] as never)
+    const repository = new MongooseStockRepository()
+
+    const audit = await repository.insertMinimumAudit({
+      productId: auditDocument.productId,
+      actorId: auditDocument.actorId,
+      previousMinimum: auditDocument.previousMinimum,
+      newMinimum: auditDocument.newMinimum,
+      occurredAt: auditDocument.occurredAt,
+      correlationId: auditDocument.correlationId,
+      reason: auditDocument.reason
+    })
+
+    expect(audit).to.deep.include({
+      productId: auditDocument.productId,
+      actorId: auditDocument.actorId,
+      previousMinimum: null,
+      newMinimum: 9,
+      correlationId: 'correlation-1',
+      reason: 'Initial policy'
+    })
+    expect(createStub.calledOnce).to.equal(true)
+    expect(createStub.firstCall.args[0]).to.deep.equal([{
+      productId: auditDocument.productId,
+      actorId: auditDocument.actorId,
+      previousMinimum: null,
+      newMinimum: 9,
+      occurredAt: auditDocument.occurredAt,
+      correlationId: 'correlation-1',
+      reason: 'Initial policy'
+    }])
+
+    const session = {
+      id: 'minimum-audit-session',
+      withTransaction: async (work: () => Promise<void>): Promise<void> => await work(),
+      endSession: sinon.stub().resolves()
+    } as unknown as ClientSession
+    sinon.stub(mongoose, 'startSession').resolves(session)
+    createStub.resetHistory()
+    createStub.resolves([{
+      ...auditDocument,
+      toObject: () => auditDocument
+    }] as never)
+    await repository.withTransaction(async (transaction) => await transaction.insertMinimumAudit({
+      productId: auditDocument.productId,
+      actorId: auditDocument.actorId,
+      previousMinimum: 4,
+      newMinimum: 9,
+      occurredAt: auditDocument.occurredAt
+    }, transaction.session))
+    expect(createStub.calledOnce).to.equal(true)
+    expect(createStub.firstCall.args[1]).to.deep.equal({ session })
+  })
+
+  it('defines bounded append-only audit fields and product/time plus correlation indexes', () => {
+    const paths = StockMinimumAuditModel.schema.paths
+    expect(paths.productId.options).to.include({ type: String, required: true, trim: true })
+    expect(paths.actorId.options).to.include({ type: String, required: true, trim: true })
+    expect(paths.previousMinimum.options).to.include({ type: Number, required: false, default: null })
+    expect(paths.newMinimum.options).to.include({ type: Number, required: true })
+    expect(paths.occurredAt.options).to.include({ type: Date, required: true })
+    expect(paths.correlationId.options).to.include({ type: String, required: false, trim: true, maxlength: 128 })
+    expect(paths.reason.options).to.include({ type: String, required: false, trim: true, maxlength: 200 })
+    const indexes = StockMinimumAuditModel.schema.indexes().map(([fields, options]) => ({ fields, options }))
+    expect(indexes).to.deep.include({
+      fields: { productId: 1, occurredAt: -1 },
+      options: { name: 'idx_stock_minimum_audit_product_occurred_at', background: true }
+    })
+    expect(indexes).to.deep.include({
+      fields: { correlationId: 1 },
+      options: { name: 'idx_stock_minimum_audit_correlation', background: true }
+    })
   })
 
   it('queries product-scoped movements in deterministic descending order with a bounded limit', async () => {

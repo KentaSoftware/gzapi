@@ -74,7 +74,8 @@ const stockProductDetailQuerySchema = z.object({
 }).strict()
 
 const stockMinimumUpdateSchema = z.object({
-  minimum: safeNonNegativeIntegerSchema
+  minimum: safeNonNegativeIntegerSchema,
+  reason: z.string().trim().min(1).max(200).optional()
 }).strict()
 
 const purchaseReceiptLineInputSchema = z.object({
