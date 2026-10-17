@@ -77,6 +77,18 @@ The application reads `MONGODB_URI`, not `DB_URI`. The main local settings are:
 The base seed creates roles and the `admin` user only. It does not create
 synthetic route-plan data.
 
+## Phase 0 contract gate
+
+`PHASE_0_CONTRACTS_ENABLED` is controlled by the runtime environment. It is
+read at runtime, accepts only the exact string `true`, and defaults to false
+when unset or set to any other value. Do not add this flag to tracked `.env`
+files or commit an environment value for it.
+
+Set the flag to `true` only in an approved intended runtime after the required
+baseline, preflight, backup/restore, opening-count, reconciliation, rollback,
+and owner-approval evidence has been completed and archived. This repository
+does not claim that staging or production is enabled now.
+
 ## Production and build commands
 
 ```bash
