@@ -1,15 +1,30 @@
 import { expect } from 'chai'
 import { ObjectId, type ClientSession, type Db, type Document } from 'mongodb'
-import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
+import { resolve } from 'path'
+
+import packageJson from '../package.json'
 
 import { EXPECTED_STOCK_INDEXES, parseStockMigrationArguments, parseOpeningCountInput, buildOpeningCountPlan, buildOpeningTemplate, parseProjectionRepairInput, buildProjectionRepairPlan, stockArtifact, assertStockMutationProofs, collectStockPreflight, createStockIndexes, type StockMigrationOptions } from '../migrations/stock-helpers'
 import { applyOpeningCountPlan, runApplyOpeningCount } from '../migrations/stock-004-apply-opening-count'
-import { applyProjectionRepairPlan } from '../migrations/stock-005-repair-projections'
-import { verifyStockProjectionInvariants } from '../migrations/stock-006-verify'
+import { applyProjectionRepairPlan, runRepairProjections } from '../migrations/stock-005-repair-projections'
+import { runStockIndexes } from '../migrations/stock-002-create-indexes'
+import { runStockPreflight } from '../migrations/stock-001-preflight'
+import { runOpeningCountTemplate } from '../migrations/stock-003-opening-count-template'
+import { runStockVerification, verifyStockProjectionInvariants } from '../migrations/stock-006-verify'
 
 const PRODUCT_ID = new ObjectId().toHexString()
 const ACTOR_ID = new ObjectId().toHexString()
+
+const STOCK_MIGRATION_SCRIPTS = {
+  'migration:stock:preflight': 'migrations/stock-001-preflight.ts',
+  'migration:stock:indexes': 'migrations/stock-002-create-indexes.ts',
+  'migration:stock:opening-template': 'migrations/stock-003-opening-count-template.ts',
+  'migration:stock:opening-count': 'migrations/stock-004-apply-opening-count.ts',
+  'migration:stock:repair-projections': 'migrations/stock-005-repair-projections.ts',
+  'migration:stock:verify': 'migrations/stock-006-verify.ts'
+} as const
 
 type FakeDocument = Document & { _id?: ObjectId }
 
@@ -98,6 +113,27 @@ function sessionDouble (): ClientSession {
 }
 
 describe('Stock migration — safety and planning', () => {
+  it('exposes every Stock migration entrypoint through the repository runner', () => {
+    for (const [scriptName, entrypoint] of Object.entries(STOCK_MIGRATION_SCRIPTS)) {
+      const script = packageJson.scripts[scriptName]
+      expect(script).to.equal(`node -r ts-node/register ${entrypoint}`)
+      expect(script).to.not.match(/--uri|--environment|--approval-id|--preflight-proof|--backup-proof|mongodb:\/\//)
+    }
+  })
+
+  it('documents npm argument forwarding without embedding target credentials', async () => {
+    const readme = await readFile(resolve(__dirname, '../README.md'), 'utf8')
+    const sectionStart = readme.indexOf('## Stock migration commands')
+    expect(sectionStart).to.be.greaterThan(-1)
+    const sectionEnd = readme.indexOf('\n## ', sectionStart + 1)
+    const section = readme.slice(sectionStart, sectionEnd === -1 ? undefined : sectionEnd)
+
+    for (const scriptName of Object.keys(STOCK_MIGRATION_SCRIPTS)) expect(section).to.include(`npm run ${scriptName} --`)
+    expect(section).to.include('$MONGODB_URI')
+    expect(section).to.include('$STOCK_APPROVAL_ID')
+    expect(section).to.not.match(/mongodb:\/\/|password|JWT_SECRET|--proof\s+[^<$\s]+/i)
+  })
+
   it('requires explicit target confirmation and approval arguments', () => {
     expect(() => parseStockMigrationArguments(['--uri', 'mongodb://localhost/stock', '--environment', 'test', '--confirm-target', 'prod', '--approval-id', 'approval'])).to.throw('Target confirmation')
     expect(() => parseStockMigrationArguments(['--uri', 'mongodb://localhost/stock', '--environment', 'test', '--confirm-target', 'test'])).to.throw('Missing required --approval-id')
@@ -136,6 +172,43 @@ describe('Stock migration — safety and planning', () => {
       expect.fail('expected missing proof rejection')
     } catch (error: unknown) {
       expect(error).to.have.property('message', 'Stock mutation requires --preflight-proof and --backup-proof')
+    }
+  })
+
+  it('keeps every proof-gated Stock entrypoint fail-closed when proofs are missing', async () => {
+    const directory = await mkdtemp(`${tmpdir()}\\stock-migration-proof-gates-`)
+    const openingInput = `${directory}\\opening.json`
+    const repairInput = `${directory}\\repair.json`
+    await writeFile(openingInput, JSON.stringify({ approvedBy: ACTOR_ID, approvalId: 'approval-1', rows: [{ productId: PRODUCT_ID, countedQuantity: 2, expiryDate: null }] }), 'utf8')
+    await writeFile(repairInput, JSON.stringify({ approvedBy: ACTOR_ID, approvalId: 'approval-1', repairs: [{ productId: PRODUCT_ID, physicalQuantity: 2, reason: 'Cycle count' }] }), 'utf8')
+    const args = ['--uri', 'mongodb://unused/stock', '--environment', 'test', '--confirm-target', 'test', '--approval-id', 'approval-1']
+    try {
+      const expectedMessage = 'Stock mutation requires --preflight-proof and --backup-proof'
+      await expectRejected(runStockIndexes(args), expectedMessage)
+      await expectRejected(runApplyOpeningCount([...args, '--input', openingInput]), expectedMessage)
+      await expectRejected(runRepairProjections([...args, '--input', repairInput]), expectedMessage)
+      await expectRejected(runStockVerification(args), expectedMessage)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps every Stock dry-run entrypoint non-mutating and database-free', async () => {
+    const directory = await mkdtemp(`${tmpdir()}\\stock-migration-dry-run-`)
+    const openingInput = `${directory}\\opening.json`
+    const repairInput = `${directory}\\repair.json`
+    await writeFile(openingInput, JSON.stringify({ approvedBy: ACTOR_ID, approvalId: 'approval-1', rows: [{ productId: PRODUCT_ID, countedQuantity: 2, expiryDate: null }] }), 'utf8')
+    await writeFile(repairInput, JSON.stringify({ approvedBy: ACTOR_ID, approvalId: 'approval-1', repairs: [{ productId: PRODUCT_ID, physicalQuantity: 2, reason: 'Cycle count' }] }), 'utf8')
+    const args = ['--dry-run', '--uri', 'mongodb://unused/stock', '--environment', 'test', '--confirm-target', 'test', '--approval-id', 'approval-1']
+    try {
+      await runStockPreflight(args)
+      await runStockIndexes(args)
+      await runOpeningCountTemplate(args)
+      await runApplyOpeningCount([...args, '--input', openingInput])
+      await runRepairProjections([...args, '--input', repairInput])
+      await runStockVerification(args)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
     }
   })
 
