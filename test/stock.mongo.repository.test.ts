@@ -147,6 +147,52 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     expect(buenosAiresCivilDate(date)).to.equal(expected)
   })
 
+  it('aggregates bounded sales history by product without price or conversion fields', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const aggregateQuery = {
+      exec: sinon.stub().resolves([{
+        _id: productId,
+        createdAt: new Date('2026-07-17T03:00:00.000Z'),
+        sales: [
+          { occurredAt: new Date('2026-09-01T12:00:00.000Z'), quantity: 2, active: true, status: 'Creado' },
+          { occurredAt: new Date('2026-09-02T12:00:00.000Z'), quantity: 3, status: 'Cancelado' }
+        ]
+      }])
+    }
+    const aggregateStub = sinon.stub(ProductModel, 'aggregate').returns(aggregateQuery as unknown as ReturnType<typeof ProductModel.aggregate>)
+    const repository = new MongooseStockRepository()
+
+    const result = await repository.getSalesHistory([productId.toString()], '2026-10-15', 90, STOCK_TIME_ZONE)
+
+    expect(result[0]).to.deep.include({
+      productId: productId.toString(),
+      productCreatedAt: '2026-07-17T03:00:00.000Z',
+      businessDate: '2026-10-15',
+      rotationDays: 90,
+      timeZone: STOCK_TIME_ZONE
+    })
+    expect(result[0].sales).to.deep.equal([
+      { occurredAt: '2026-09-01T12:00:00.000Z', quantity: 2, active: true, cancelled: false },
+      { occurredAt: '2026-09-02T12:00:00.000Z', quantity: 3, cancelled: true }
+    ])
+    expect(aggregateStub.calledOnce).to.equal(true)
+    const pipeline = aggregateStub.firstCall.args[0] as unknown[]
+    expect(JSON.stringify(pipeline)).to.include('2026-07-17')
+    expect(JSON.stringify(pipeline)).to.include('2026-10-15')
+    expect(JSON.stringify(pipeline)).to.not.include('precio')
+    expect(JSON.stringify(pipeline)).to.not.include('bulto')
+  })
+
+  it('does not aggregate sales history when the supplied transaction session is unavailable', async () => {
+    const aggregateStub = sinon.stub(ProductModel, 'aggregate')
+    const repository = new MongooseStockRepository()
+
+    const result = await repository.getSalesHistory(['507f1f77bcf86cd799439011'], '2026-10-15', 90, STOCK_TIME_ZONE, { transactionId: 'missing-session' }).catch((error: unknown) => error)
+
+    expect(result).to.be.instanceOf(StockServiceError)
+    expect(aggregateStub.called).to.equal(false)
+  })
+
   it('preserves validated movement audit timestamps when mapping Mongo documents', () => {
     const createdAt = new Date('2026-10-15T10:00:00.000Z')
     const updatedAt = new Date('2026-10-15T11:00:00.000Z')

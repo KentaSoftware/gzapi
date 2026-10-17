@@ -1,4 +1,5 @@
 import mongoose, { Types, type ClientSession } from 'mongoose'
+import { fromZonedTime } from 'date-fns-tz'
 
 import ProductModel from '../models/product'
 import InventoryMovementModel from '../models/inventoryMovement'
@@ -28,6 +29,7 @@ import {
   type StockProductSnapshot,
   type StockRepository,
   type StockOpeningRepository,
+  type StockRotationInput,
   type StockRepositorySession,
   type StockTransactionContext
 } from '../interfaces/stock.interface'
@@ -118,6 +120,19 @@ interface MongoMinimumAuditDocument {
   createdAt: Date
 }
 
+interface MongoSalesHistoryLine {
+  occurredAt?: Date
+  quantity?: unknown
+  active?: unknown
+  status?: unknown
+}
+
+interface MongoSalesHistoryAggregationRow {
+  _id: Types.ObjectId
+  createdAt?: Date
+  sales?: MongoSalesHistoryLine[]
+}
+
 const repositoryError = (message: string, cause?: unknown): StockServiceError => {
   const detail = cause instanceof Error ? `: ${cause.message}` : ''
   return new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, `${message}${detail}`)
@@ -165,6 +180,39 @@ const isCivilDate = (value: string): boolean => {
   const parsed = new Date(`${value}T00:00:00.000Z`)
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
 }
+
+const addCivilDays = (value: string, days: number): string => {
+  const date = new Date(`${value}T00:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+const normalizeSaleStatus = (value: string): string => value.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+
+const isCancelledSaleStatus = (value: unknown): boolean | undefined => {
+  if (typeof value !== 'string') return undefined
+  const normalized = normalizeSaleStatus(value)
+  return normalized === 'cancelado' || normalized === 'cancelled' || normalized === 'canceled'
+}
+
+const isoTimestamp = (value: unknown): string => {
+  const date = value instanceof Date ? new Date(value.getTime()) : new Date(String(value ?? ''))
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString()
+}
+
+const mapSalesHistoryRow = (row: MongoSalesHistoryAggregationRow, businessDate: string, rotationDays: number, timeZone: string): StockRotationInput => ({
+  productId: identifierOf(row._id, 'Product._id'),
+  productCreatedAt: isoTimestamp(row.createdAt),
+  businessDate,
+  rotationDays,
+  timeZone,
+  sales: (row.sales ?? []).map((sale) => ({
+    occurredAt: isoTimestamp(sale.occurredAt),
+    quantity: typeof sale.quantity === 'number' ? sale.quantity : 0,
+    ...(typeof sale.active === 'boolean' ? { active: sale.active } : {}),
+    ...(isCancelledSaleStatus(sale.status) === undefined ? {} : { cancelled: isCancelledSaleStatus(sale.status) as boolean })
+  }))
+})
 
 const nonNegativeIntegerOf = (value: unknown, field: string): number => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw repositoryError(`${field} must be a non-negative integer`)
@@ -432,6 +480,42 @@ export class MongooseStockRepository implements StockOpeningRepository {
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw repositoryError('Could not list stock products', error)
+    }
+  }
+
+  async getSalesHistory (productIds: string[], businessDate: string, rotationDays: number, timeZone: string, session?: StockRepositorySession): Promise<StockRotationInput[]> {
+    if (!isCivilDate(businessDate) || !Number.isSafeInteger(rotationDays) || rotationDays <= 0 || productIds.length === 0) return []
+    const productObjectIds = productIds.map((productId) => objectIdOf(productId, 'productId'))
+    const historyStart = addCivilDays(businessDate, -rotationDays)
+    const historyStartInstant = fromZonedTime(`${historyStart}T00:00:00`, timeZone)
+    const businessDateInstant = fromZonedTime(`${businessDate}T00:00:00`, timeZone)
+    try {
+      const mongoSession = this.mongoSessionOf(session)
+      const pipeline = [
+        { $match: { _id: { $in: productObjectIds } } },
+        { $project: { _id: 1, createdAt: 1 } },
+        {
+          $lookup: {
+            from: 'itemsales',
+            let: { productId: '$_id' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$idProducto', '$$productId'] } } },
+              { $lookup: { from: 'sales', localField: 'idVenta', foreignField: '_id', as: 'sale' } },
+              { $unwind: '$sale' },
+              { $match: { 'sale.createdAt': { $gte: historyStartInstant, $lt: businessDateInstant } } },
+              { $project: { _id: 0, occurredAt: '$sale.createdAt', quantity: '$cantidad', active: '$estado', status: '$sale.estado' } }
+            ],
+            as: 'sales'
+          }
+        }
+      ]
+      const aggregateQuery = ProductModel.aggregate<MongoSalesHistoryAggregationRow>(pipeline)
+      if (mongoSession !== undefined) void aggregateQuery.session(mongoSession)
+      const rows = await aggregateQuery.exec()
+      return rows.map((row) => mapSalesHistoryRow(row, businessDate, rotationDays, timeZone))
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError('Could not aggregate product sales history', error)
     }
   }
 
@@ -789,6 +873,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
       getProduct: async (productId, session) => await this.getProduct(productId, session),
       getProductMinimum: async (productId, session) => await this.getProductMinimum(productId, session),
       listProducts: async (page, pageSize, session) => await this.listProducts(page, pageSize, session),
+      getSalesHistory: async (productIds, businessDate, rotationDays, timeZone, session) => await this.getSalesHistory(productIds, businessDate, rotationDays, timeZone, session),
       updateProductMinimum: async (productId, minimum, session) => await this.updateProductMinimum(productId, minimum, session),
       insertMinimumAudit: async (audit, session) => await this.insertMinimumAudit(audit, session),
       getBuckets: async (productId, session) => await this.getBuckets(productId, session),

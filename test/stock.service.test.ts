@@ -20,7 +20,8 @@ import {
   type PurchaseAdjustmentInput,
   type ExpiredRemovalInput,
   type StockOverviewResult,
-  type StockProductDetailResult
+  type StockProductDetailResult,
+  type StockRotationInput
 } from '../src/interfaces/stock.interface'
 import { StockService, StockServiceError } from '../src/services/stock'
 
@@ -55,6 +56,7 @@ class MemoryRepository implements StockRepository {
   minimumUpdateSessions: Array<StockRepositorySession | undefined> = []
   minimumReadSessions: Array<StockRepositorySession | undefined> = []
   minimumAuditSessions: Array<StockRepositorySession | undefined> = []
+  rotationHistories = new Map<string, StockRotationInput>()
   failMinimumAudit = false
   projectionSessions: Array<{ method: string, session: StockRepositorySession | undefined }> = []
   receiptSessions: StockRepositorySession[] = []
@@ -118,6 +120,17 @@ class MemoryRepository implements StockRepository {
       snapshot
     }))
     return { total: items.length, items: items.slice((page - 1) * pageSize, page * pageSize) }
+  }
+
+  async getSalesHistory (productIds: string[], businessDate: string, rotationDays: number, timeZone: string): Promise<StockRotationInput[]> {
+    return productIds.map((productId) => this.rotationHistories.get(productId) ?? {
+      productId,
+      productCreatedAt: '2020-01-01T03:00:00.000Z',
+      businessDate,
+      timeZone,
+      rotationDays,
+      sales: [{ occurredAt: `${businessDate}T00:00:00.000Z`, quantity: 1 }]
+    })
   }
 
   async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession): Promise<{ productId: string, minimum: number } | undefined> {
@@ -265,6 +278,56 @@ describe('Stock service', () => {
     expect(overview.items[1]).to.include({ productId: UNTRACKED_PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, expiredQuantity: 0 })
   })
 
+  it('adds persistence-backed low rotation while preserving existing overview alerts', async () => {
+    const repository = newRepository()
+    repository.minimums.set(PRODUCT_ID, 10)
+    repository.rotationHistories.set(PRODUCT_ID, {
+      productId: PRODUCT_ID,
+      productCreatedAt: '2026-07-17T03:00:00.000Z',
+      businessDate: DATE,
+      timeZone: 'America/Argentina/Buenos_Aires',
+      rotationDays: 90,
+      sales: []
+    })
+    const service = new StockService(repository)
+
+    const overview = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+
+    expect(overview.items[0].alerts.map(({ type }) => type)).to.include.members(['LOW_STOCK', 'LOW_ROTATION'])
+    expect(overview.items[0].alerts.find(({ type }) => type === 'LOW_ROTATION')).to.deep.include({
+      productId: PRODUCT_ID,
+      dataQuality: STOCK_DATA_QUALITY.COMPLETE
+    })
+  })
+
+  it('keeps insufficient history separate from genuine zero-sales low rotation in overview and detail', async () => {
+    const repository = newRepository()
+    repository.rotationHistories.set(PRODUCT_ID, {
+      productId: PRODUCT_ID,
+      productCreatedAt: '2026-10-01T03:00:00.000Z',
+      businessDate: DATE,
+      timeZone: 'America/Argentina/Buenos_Aires',
+      rotationDays: 90,
+      sales: []
+    })
+    repository.rotationHistories.set(UNTRACKED_PRODUCT_ID, {
+      productId: UNTRACKED_PRODUCT_ID,
+      productCreatedAt: '2026-07-17T03:00:00.000Z',
+      businessDate: DATE,
+      timeZone: 'America/Argentina/Buenos_Aires',
+      rotationDays: 90,
+      sales: []
+    })
+    const service = new StockService(repository)
+
+    const overview = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 2, auth: ACTOR })
+    const detail = await service.getProductDetail({ productId: PRODUCT_ID, businessDate: DATE, movementLimit: 5, auth: ACTOR })
+
+    expect(overview.items[0].alerts.find(({ type }) => type === 'LOW_ROTATION')).to.deep.include({ dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY })
+    expect(detail.alerts.find(({ type }) => type === 'LOW_ROTATION')).to.deep.include({ dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY })
+    expect(overview.items[1].alerts.find(({ type }) => type === 'LOW_ROTATION')).to.deep.include({ dataQuality: STOCK_DATA_QUALITY.COMPLETE })
+  })
+
   it('S-22/TC-031: keeps overview totals page-scoped and fails closed for unreconciled projections', async () => {
     const repository = newRepository()
     repository.products.set('unreconciled', { ...untrackedProduct(), productId: 'unreconciled', baselineStatus: BASELINE_STATUS.UNVERIFIED })
@@ -282,7 +345,7 @@ describe('Stock service', () => {
     const unreconciled = secondPage.items[0]
     expect(unreconciled.dataQuality).to.equal(STOCK_DATA_QUALITY.INCOMPLETE)
     expect(unreconciled.availableToSell).to.equal(0)
-    expect(unreconciled.alerts.every((alert) => alert.dataQuality === STOCK_DATA_QUALITY.INCOMPLETE)).to.equal(true)
+    expect(unreconciled.alerts.find(({ type }) => type === 'LOW_STOCK')).to.deep.include({ dataQuality: STOCK_DATA_QUALITY.INCOMPLETE })
   })
 
   it('S-05: returns deterministic detail buckets and movement limits without changing product projections', async () => {

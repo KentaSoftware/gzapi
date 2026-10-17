@@ -4,6 +4,8 @@ import {
   EXPIRY_TRACKING,
   INVENTORY_MOVEMENT_TYPES,
   STOCK_DATA_QUALITY,
+  STOCK_ALERT_SEVERITIES,
+  STOCK_ALERT_TYPES,
   STOCK_ERROR_CODES,
   STOCK_OPERATION_STATUSES,
   type AvailabilityResult,
@@ -32,6 +34,7 @@ import {
   type PurchaseAdjustmentInput,
   type ExpiredRemovalInput,
   type StockRepository,
+  type StockRotationInput,
   type SaleDeliveryInput,
   type StockSaleAdjustmentInput,
   type StockSaleAvailabilityInput,
@@ -43,7 +46,7 @@ import {
   type StockTransactionContext
 } from '../interfaces/stock.interface'
 import { STOCK_EXPIRY_ALERT_DAYS, STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
-import { allocateFefo, calculateAvailability, evaluateExpiry, evaluateLowStock, StockRuleError } from './stockRules'
+import { allocateFefo, calculateAvailability, evaluateExpiry, evaluateLowRotation, evaluateLowStock, StockRuleError } from './stockRules'
 
 const SOURCE_TYPE = 'SALE'
 const PURCHASE_SOURCE_TYPE = 'PURCHASE'
@@ -59,6 +62,7 @@ const PURCHASE_SOURCE_EVENTS = {
 } as const
 
 const EXPIRY_SOURCE_TYPE = 'EXPIRY_BUCKET'
+const STOCK_ROTATION_DAYS = 90
 
 const DELIVERY_SOURCE_EVENTS = {
   DELIVERED: 'SALE_DELIVERY'
@@ -299,10 +303,12 @@ export class StockService {
     }
     const timeZone = query.timeZone ?? this.timeZone
     const page = await this.repository.listProducts(query.page, query.pageSize)
+    const histories = await this.repository.getSalesHistory(page.items.map(({ productId }) => productId), query.businessDate, STOCK_ROTATION_DAYS, timeZone)
+    const historiesByProduct = new Map(histories.map((history) => [history.productId, history]))
     const items = await Promise.all(page.items.map(async (record): Promise<StockOverviewItem> => {
       const availability = await this.readAvailability(this.repository, record.productId, query.businessDate, timeZone)
       const buckets = await this.repository.getBuckets(record.productId)
-      const alerts = this.alertsFor(record.productId, availability, record.minimum, buckets, query.businessDate, timeZone)
+      const alerts = this.alertsFor(record.productId, availability, record.minimum, buckets, query.businessDate, timeZone, historiesByProduct.get(record.productId))
       return {
         productId: record.productId,
         physicalQuantity: availability.physicalQuantity,
@@ -340,10 +346,11 @@ export class StockService {
     if (product === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${query.productId} was not found`)
     const minimum = await this.repository.getProductMinimum(query.productId)
     if (minimum === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${query.productId} was not found`)
-    const [availability, buckets, movements] = await Promise.all([
+    const [availability, buckets, movements, histories] = await Promise.all([
       this.readAvailability(this.repository, query.productId, query.businessDate, timeZone),
       this.repository.getBuckets(query.productId),
-      this.repository.findMovements({ productId: query.productId, limit: query.movementLimit })
+      this.repository.findMovements({ productId: query.productId, limit: query.movementLimit }),
+      this.repository.getSalesHistory([query.productId], query.businessDate, STOCK_ROTATION_DAYS, timeZone)
     ])
     const orderedBuckets = [...buckets].sort((left, right) => {
       const expiryComparison = left.expiryDate.localeCompare(right.expiryDate)
@@ -361,7 +368,7 @@ export class StockService {
       availability,
       buckets: orderedBuckets,
       movements: orderedMovements,
-      alerts: this.alertsFor(query.productId, availability, minimum.minimum, buckets, query.businessDate, timeZone)
+      alerts: this.alertsFor(query.productId, availability, minimum.minimum, buckets, query.businessDate, timeZone, histories[0])
     }
   }
 
@@ -1127,8 +1134,21 @@ export class StockService {
     }
   }
 
-  private alertsFor (productId: string, availability: AvailabilityResult, minimum: number | null, buckets: StockBucketSnapshot[], businessDate: string, timeZone: string): StockAlert[] {
+  private alertsFor (productId: string, availability: AvailabilityResult, minimum: number | null, buckets: StockBucketSnapshot[], businessDate: string, timeZone: string, history?: StockRotationInput): StockAlert[] {
     const alerts: StockAlert[] = []
+    const rotation = history === undefined
+      ? undefined
+      : evaluateLowRotation(history)
+    if (rotation?.alert !== undefined) alerts.push(rotation.alert)
+    if (rotation?.dataQuality === STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY) {
+      alerts.push({
+        type: STOCK_ALERT_TYPES.LOW_ROTATION,
+        severity: STOCK_ALERT_SEVERITIES.INFO,
+        productId,
+        explanation: `Product ${productId} has insufficient history for the last ${STOCK_ROTATION_DAYS} complete calendar days`,
+        dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY
+      })
+    }
     if (availability.dataQuality === STOCK_DATA_QUALITY.COMPLETE) {
       const product = availability
       const lowStock = evaluateLowStock({ ...product, minimum: minimum ?? undefined })

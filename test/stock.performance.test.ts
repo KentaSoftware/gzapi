@@ -16,6 +16,7 @@ import {
   type StockProductSnapshot,
   type StockRepository,
   type StockRepositorySession,
+  type StockRotationInput,
   type StockServiceAuth,
   type StockTransactionContext
 } from '../src/interfaces/stock.interface'
@@ -88,6 +89,17 @@ class PerformanceStockRepository implements StockRepository {
     }))
     const start = (page - 1) * pageSize
     return { total: records.length, items: records.slice(start, start + pageSize) }
+  }
+
+  async getSalesHistory (productIds: string[], businessDate: string, rotationDays: number, timeZone: string): Promise<StockRotationInput[]> {
+    return productIds.map((productId) => ({
+      productId,
+      productCreatedAt: '2020-01-01T03:00:00.000Z',
+      businessDate,
+      rotationDays,
+      timeZone,
+      sales: [{ occurredAt: `${businessDate}T00:00:00.000Z`, quantity: 1 }]
+    }))
   }
 
   async updateProductMinimum (_productId: string, _minimum: number, _session?: StockRepositorySession): Promise<StockMinimumResult | undefined> {

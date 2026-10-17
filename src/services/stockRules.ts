@@ -263,7 +263,7 @@ const isValidSaleStatus = (sale: unknown): sale is StockRotationInput['sales'][n
 }
 
 export const evaluateLowRotation = (input: StockRotationInput): StockRotationResult => {
-  const baseResult = { productId: input.productId, validSaleCount: 0 }
+  const baseResult = { productId: input.productId, validSaleCount: 0, validSaleQuantity: 0 }
   if (typeof input.productId !== 'string' || input.productId.trim() === '' || !isCivilDate(input.businessDate) ||
     !isValidTimeZone(input.timeZone) || !isValidQuantity(input.rotationDays) || input.rotationDays === 0 ||
     !Array.isArray(input.sales)) return { ...baseResult, dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY }
@@ -273,17 +273,22 @@ export const evaluateLowRotation = (input: StockRotationInput): StockRotationRes
   if (createdDate === undefined || createdDate > historyStart) return { ...baseResult, dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY }
 
   const validSales: string[] = []
+  let validSaleQuantity = 0
   for (const sale of input.sales) {
     if (!isValidSaleStatus(sale)) return { ...baseResult, dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY }
     const saleDate = civilDateFromTimestamp(sale.occurredAt, input.timeZone)
     if (saleDate === undefined || !isValidQuantity(sale.quantity) || sale.quantity === 0) return { ...baseResult, dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY }
-    if (sale.cancelled !== true && sale.active !== false && saleDate >= historyStart && saleDate < input.businessDate) validSales.push(saleDate)
+    if (sale.cancelled !== true && sale.active !== false && saleDate >= historyStart && saleDate < input.businessDate) {
+      validSales.push(saleDate)
+      validSaleQuantity += sale.quantity
+    }
   }
 
   const result: StockRotationResult = {
     productId: input.productId,
     dataQuality: STOCK_DATA_QUALITY.COMPLETE,
-    validSaleCount: validSales.length
+    validSaleCount: validSales.length,
+    validSaleQuantity
   }
   if (validSales.length === 0) {
     result.alert = {

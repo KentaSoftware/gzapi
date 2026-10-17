@@ -286,6 +286,7 @@ export interface StockRotationResult {
   productId: string
   dataQuality: StockDataQuality
   validSaleCount: number
+  validSaleQuantity: number
   alert?: StockAlert
 }
 
@@ -513,6 +514,7 @@ export interface StockRepository {
   getProduct: (productId: string, session?: StockRepositorySession) => Promise<StockProductSnapshot | undefined>
   getProductMinimum: (productId: string, session?: StockRepositorySession) => Promise<StockProductMinimum | undefined>
   listProducts: (page: number, pageSize: number, session?: StockRepositorySession) => Promise<StockProductOverviewPage>
+  getSalesHistory: (productIds: string[], businessDate: string, rotationDays: number, timeZone: string, session?: StockRepositorySession) => Promise<StockRotationInput[]>
   updateProductMinimum: (productId: string, minimum: number, session?: StockRepositorySession) => Promise<StockMinimumResult | undefined>
   insertMinimumAudit: (audit: StockMinimumAuditRecord, session?: StockRepositorySession) => Promise<StockMinimumAuditRecord>
   getBuckets: (productId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot[]>

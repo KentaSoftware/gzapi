@@ -250,6 +250,34 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
     expect(evaluateLowRotation({ ...input, sales: input.sales.slice(1) }).alert?.type).to.equal('LOW_ROTATION')
   })
 
+  it('uses the exact 90 complete Buenos Aires civil-day window and aggregates units', () => {
+    const input: StockRotationInput = {
+      productId: OTHER_PRODUCT_ID,
+      productCreatedAt: '2026-07-17T03:00:00.000Z',
+      businessDate: '2026-10-15',
+      timeZone: 'America/Argentina/Buenos_Aires',
+      rotationDays: 90,
+      sales: [
+        { occurredAt: '2026-07-17T03:00:00.000Z', quantity: 2 },
+        { occurredAt: '2026-07-17T02:59:59.000Z', quantity: 100 },
+        { occurredAt: '2026-10-14T23:59:59.000Z', quantity: 3 },
+        { occurredAt: '2026-10-15T03:00:00.000Z', quantity: 100 }
+      ]
+    }
+
+    expect(evaluateLowRotation(input)).to.deep.include({
+      dataQuality: STOCK_DATA_QUALITY.COMPLETE,
+      validSaleCount: 2,
+      validSaleQuantity: 5
+    })
+    expect(evaluateLowRotation({ ...input, sales: input.sales.slice(1, 2) })).to.deep.include({
+      dataQuality: STOCK_DATA_QUALITY.COMPLETE,
+      validSaleCount: 0,
+      validSaleQuantity: 0
+    })
+    expect(evaluateLowRotation({ ...input, sales: input.sales.slice(1, 2) }).alert?.type).to.equal('LOW_ROTATION')
+  })
+
   it('returns insufficient history for invalid sale status types', () => {
     const input: StockRotationInput = {
       productId: OTHER_PRODUCT_ID,
