@@ -44,19 +44,26 @@ const deleteSaleController = async ({ params, user }: RequestExt, res: Response)
   }
 }
 
+const tryCommitSaleStock = async (saleId: string, lines: any[], actorId: string): Promise<void> => {
+  if (!isPhase0ContractsEnabled()) return
+  try {
+    await commitSaleReference({ saleId, lines, actorId })
+  } catch (error) {
+    // Sale + items are already persisted. Stock commit needs replica-set (or
+    // standalone fallback) plus reconciled product baselines; do not fail the
+    // create response when reservation cannot complete yet.
+    const detail = error instanceof Error ? error.message : String(error)
+    console.error(`Sale ${saleId}: stock commit skipped after persist — ${detail}`)
+  }
+}
+
 const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
     const response = await insertSale({ ...body, user: new Types.ObjectId(user.id) })
     await Promise.all(
       body.itemsSale.map(async (item: any) => await insertItemSale({ idProducto: item._id, total: item.total, cantidad: item.cantidad, idVenta: response._id, estado: true, precioUnitario: item.precio }))
     )
-    if (isPhase0ContractsEnabled()) {
-      await commitSaleReference({
-        saleId: String(response._id),
-        lines: body.itemsSale,
-        actorId: String(user.id)
-      })
-    }
+    await tryCommitSaleStock(String(response._id), body.itemsSale, String(user.id))
     emitSocket('sale', {
       action: 'create',
       data: response
@@ -91,13 +98,11 @@ const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Prom
         return { saleId: String(response._id), lines: item.itemsSale }
       })
     )
-    if (isPhase0ContractsEnabled()) {
-      await Promise.all(
-        created.map(async ({ saleId, lines }: { saleId: string, lines: any[] }) =>
-          await commitSaleReference({ saleId, lines, actorId: String(user.id) })
-        )
+    await Promise.all(
+      created.map(async ({ saleId, lines }: { saleId: string, lines: any[] }) =>
+        await tryCommitSaleStock(saleId, lines, String(user.id))
       )
-    }
+    )
     /*   */
     emitSocket('sale', {
       action: 'create',

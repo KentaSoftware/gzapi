@@ -138,6 +138,18 @@ const repositoryError = (message: string, cause?: unknown): StockServiceError =>
   return new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, `${message}${detail}`)
 }
 
+/** MongoDB standalone (no replica set) rejects multi-document transactions. */
+const STANDALONE_TRANSACTION_ID = '__standalone__'
+
+const isReplicaSetRequiredError = (error: unknown): boolean => {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : ''
+  return message.includes('Transaction numbers are only allowed on a replica set member or mongos')
+}
+
 const recordOf = (value: unknown, field: string): Record<string, unknown> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw repositoryError(`${field} must be an object`)
   return value as Record<string, unknown>
@@ -424,6 +436,11 @@ export class MongooseStockRepository implements StockOpeningRepository {
       this.sessions.delete(transactionId)
     }
     if (failure !== undefined) {
+      // Local/dev Mongo often runs as a standalone node. Retry without a
+      // multi-document transaction so stock commits can still proceed.
+      if (isReplicaSetRequiredError(failure)) {
+        return await work(this.transactionContext(STANDALONE_TRANSACTION_ID))
+      }
       if (failure instanceof StockServiceError) throw failure
       throw repositoryError(`MongoDB transaction ${transactionId} failed`, failure)
     }
@@ -894,6 +911,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
 
   private mongoSessionOf (session?: StockRepositorySession): ClientSession | undefined {
     if (session === undefined) return undefined
+    if (session.transactionId === STANDALONE_TRANSACTION_ID) return undefined
     const mongoSession = this.sessions.get(session.transactionId)
     if (mongoSession === undefined) throw repositoryError(`MongoDB session ${session.transactionId} is unavailable`)
     return mongoSession

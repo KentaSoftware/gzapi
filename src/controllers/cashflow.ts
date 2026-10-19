@@ -127,7 +127,7 @@ export const updateConfig = async ({ body }: RequestExt, res: Response): Promise
       res.status(400).json({ error: 'openingBalance must be a number' })
       return
     }
-    const config = await cashflowService.updateConfig(openingBalance)
+    const config = await cashflowService.updateConfig({ openingBalance })
     res.json({ config })
   } catch (error: any) {
     handleHttp(res, 'ERROR_UPDATE_CASHFLOW_CONFIG', error)
