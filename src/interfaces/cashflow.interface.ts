@@ -42,4 +42,8 @@ export type CashflowTimelineEntry = CashflowMovement
 
 export interface CashflowConfig {
   openingBalance: number
+  /** CU-012 / finance-rules-v1 knobs (defaults applied if missing). */
+  reserveMonthsMultiplier: number
+  deficitAlertEnabled: boolean
+  idleCapitalRecommendMin: number
 }

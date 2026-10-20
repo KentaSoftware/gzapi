@@ -28,6 +28,14 @@ export type CommercialErrorCode =
 
 export type CommercialFactLine = Record<string, unknown>
 
+export interface StockSaleReference {
+  saleId: string
+  lines: CommercialFactLine[]
+  actorId: string
+  operationId?: string
+  businessDate?: string
+}
+
 export type CommercialFactStatus =
   | 'PENDING'
   | 'APPLIED'
@@ -72,7 +80,7 @@ export interface CommercialFactRequestContext {
 }
 
 export interface StockPort {
-  commitSale: (fact: CommercialFact) => Promise<void>
+  commitSale: (fact: CommercialFact | StockSaleReference) => Promise<void>
   receivePurchase: (fact: CommercialFact) => Promise<void>
   applyPurchaseAdjustment: (fact: CommercialFact) => Promise<void>
   applyPhysicalReturn: (fact: CommercialFact) => Promise<void>

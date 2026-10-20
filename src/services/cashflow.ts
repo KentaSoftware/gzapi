@@ -173,22 +173,44 @@ class CashflowService {
   async getOrCreateConfig (): Promise<CashflowConfig> {
     const doc = await CashflowConfigModel.findOneAndUpdate(
       {},
-      { $setOnInsert: { openingBalance: 0 } },
+      {
+        $setOnInsert: {
+          openingBalance: 0,
+          reserveMonthsMultiplier: 1,
+          deficitAlertEnabled: true,
+          idleCapitalRecommendMin: 0
+        }
+      },
       { upsert: true, new: true }
     ).lean()
-    return { openingBalance: doc.openingBalance }
+    return normalizeConfig(doc)
   }
 
   /**
-   * Updates the CashflowConfig singleton's openingBalance.
+   * Updates the CashflowConfig singleton (opening balance and/or finance knobs).
    */
-  async updateConfig (openingBalance: number): Promise<CashflowConfig> {
+  async updateConfig (patch: Partial<CashflowConfig>): Promise<CashflowConfig> {
+    const $set: Record<string, unknown> = {}
+    if (patch.openingBalance !== undefined) $set.openingBalance = patch.openingBalance
+    if (patch.reserveMonthsMultiplier !== undefined) $set.reserveMonthsMultiplier = patch.reserveMonthsMultiplier
+    if (patch.deficitAlertEnabled !== undefined) $set.deficitAlertEnabled = patch.deficitAlertEnabled
+    if (patch.idleCapitalRecommendMin !== undefined) $set.idleCapitalRecommendMin = patch.idleCapitalRecommendMin
+
     const doc = await CashflowConfigModel.findOneAndUpdate(
       {},
-      { $set: { openingBalance } },
-      { upsert: true, new: true }
+      { $set },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     ).lean()
-    return { openingBalance: doc.openingBalance }
+    return normalizeConfig(doc)
+  }
+}
+
+function normalizeConfig (doc: any): CashflowConfig {
+  return {
+    openingBalance: Number(doc?.openingBalance ?? 0),
+    reserveMonthsMultiplier: Number(doc?.reserveMonthsMultiplier ?? 1),
+    deficitAlertEnabled: doc?.deficitAlertEnabled !== false,
+    idleCapitalRecommendMin: Number(doc?.idleCapitalRecommendMin ?? 0)
   }
 }
 
