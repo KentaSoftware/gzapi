@@ -52,6 +52,18 @@ GitHub reports PR #6 as conflicting because `master` advanced after the PR branc
 
 ## Progress
 
-Status: complete
+Status: complete with verification blockers recorded
 
-Next step: verify the remote head and PR #6 mergeability after delivery.
+## Verification evidence
+
+- Merge commit: `5ce57eba4d1b424d2a957465ec446ef53f3e7654` (`chore(gzapi): resolve PR 6 merge conflicts`)
+- `git diff --check`: passed.
+- Tracked conflict-marker scan: passed.
+- `git ls-files -u`: no unmerged paths.
+- `npm test`: blocked because the checkout lacks `socket.io`.
+- `npm run lint`: failed on Finance files/tests; exact locations reported include `src/controllers/finance.ts:166,196`, `src/services/finance.ts:32,51`, and `test/finance.rules.test.ts:15,62`.
+- `npm run build`: blocked by the missing `socket.io` dependency and related type errors.
+- Independent verification: partial; it identified a separate stock-cancellation lifecycle gap outside this conflict-resolution scope.
+- GitHub PR #6: head `5ce57eba4d1b424d2a957465ec446ef53f3e7654`, `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`, Vercel checks successful.
+
+Next step: install repository dependencies and address the separately scoped stock-cancellation finding before treating the PR as fully functionally verified.
