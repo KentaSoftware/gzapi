@@ -81,6 +81,8 @@ Vercel routes to `src/app.ts`, which exports only the named `createApp` factory.
 - Post-merge cashflow compatibility fix: `test/cashflow.controller.test.ts` now asserts the patch-object API introduced by the base branch.
 - Post-merge verification: `npm test` passed with 490 tests; `npm run build`, `git diff --check`, conflict-marker scan, and runtime Socket.IO scan passed.
 - `npm run lint` remains blocked by six Finance errors in files introduced by `dev-KentaSoftware`; no Vercel migration files are implicated.
+- Latest `origin/dev-KentaSoftware` (`c920dab`) was merged and the remaining conflict in `odd/tasks/pr-6-conflict-resolution.md` was resolved in `3bb2bac`.
+- Updated head `3bb2bac` was pushed to PR #9; GitHub currently reports mergeability as `unknown` while recalculating and no checks are currently reported.
 
 ## Next Step
-Commit the compatibility test fix, merge the latest `origin/dev-KentaSoftware` if needed, push PR #9, and wait for the Vercel check before production verification.
+Wait for GitHub/Vercel to recalculate PR #9, then review and merge it before production verification.
