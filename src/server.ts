@@ -3,7 +3,6 @@ import type { Server } from 'http'
 import { createApp } from './app'
 import db from './config/mongo'
 import { seedDatabase } from './services/seed'
-import { init } from './socket'
 
 const PORT = process.env.PORT ?? 3002
 
@@ -23,10 +22,6 @@ const startServer = async (): Promise<Server> => {
 
   const server = app.listen(PORT, () => {
     console.log(`Listening on port ${PORT}...`)
-    const io = init(server)
-    io.on('connection', () => {
-      console.log('Client connected!')
-    })
   })
 
   return server

@@ -1,11 +1,19 @@
 import 'dotenv/config'
 import { connect, connection } from 'mongoose'
 
+export function getMongoUri (): string {
+  const uri = process.env.MONGODB_URI?.trim()
+  if (uri === undefined || uri.length === 0) {
+    throw new Error('MONGODB_URI is required')
+  }
+  return uri
+}
+
 async function dbConnect (): Promise<void> {
-  const MONGODB_URI = process.env.MONGODB_URI as string
+  const mongoUri = getMongoUri()
 
   try {
-    await connect(MONGODB_URI, {
+    await connect(mongoUri, {
       // Configuración simplificada para MongoDB local
       serverSelectionTimeoutMS: 60000,
       socketTimeoutMS: 120000,
@@ -17,9 +25,9 @@ async function dbConnect (): Promise<void> {
       maxIdleTimeMS: 60000
     })
     console.log('✅ Conexión exitosa a MongoDB Local')
-  } catch (error: any) {
-    console.error('❌ Error de conexión a MongoDB:', error.message)
-    console.error('⚠️  Verifica que MongoDB está ejecutándose en localhost:27017')
+  } catch (error: unknown) {
+    console.error('❌ Error de conexión a MongoDB')
+    console.error('⚠️  Verifica que MongoDB está ejecutándose y que MONGODB_URI es válido')
     throw error
   }
 }

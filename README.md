@@ -2,7 +2,7 @@
 
 REST API for the Golozur ecosystem. The backend supports commercial
 management for sales, purchases, products, clients, users, roles, and reports,
-with MongoDB, JWT authentication, Socket.IO, and PDF generation.
+with MongoDB, JWT authentication, and PDF generation.
 
 ## Local development quick path
 
@@ -77,6 +77,25 @@ The application reads `MONGODB_URI`, not `DB_URI`. The main local settings are:
 The base seed creates roles and the `admin` user only. It does not create
 synthetic route-plan data.
 
+## Vercel deployment
+
+Vercel uses `api/index.ts` as the default REST function entrypoint. It routes
+the existing Express paths without adding an `/api` prefix, connects to
+MongoDB, and runs the idempotent base seed during warm-instance
+initialization. Configure these required environment variables in Vercel:
+
+| Variable | Purpose |
+| --- | --- |
+| `MONGODB_URI` | MongoDB connection URI |
+| `JWT_SECRET` | Secret used to sign JWTs |
+| `ADMIN_PASSWORD` | Password used when the seed first creates `admin` |
+
+The optional provider and integration variables are `DOCUMENT_AI_URL`,
+`DOCUMENT_AI_TIMEOUT`, `DOCUMENT_AI_DEBUG`, `BACKUP_URI`, `USER`, and `PASS`.
+Upload settings can also be customized with `UPLOAD_MAX_SIZE` and
+`UPLOAD_ALLOWED_MIMES`. Socket.IO is not part of this Vercel deployment; REST
+call sites retain a no-op compatibility event adapter.
+
 ## Production and build commands
 
 ```bash
@@ -139,7 +158,7 @@ password: route-plan-test-password
 | Framework | Express |
 | Database | MongoDB, Mongoose |
 | Authentication | JWT, bcrypt |
-| Real time | Socket.IO |
+| API transport | Express REST |
 | Validation | TypeScript |
 | Images | Sharp, Multer |
 | PDF | PDFKit |
@@ -155,7 +174,7 @@ src/
 ├── models/       # Mongoose schemas
 ├── routes/       # Dynamically loaded Express routes
 ├── services/     # Business logic
-├── socket.ts     # Socket.IO configuration
+├── socket.ts     # No-op compatibility adapter for legacy event calls
 └── utils/        # JWT, bcrypt, error, and image helpers
 ```
 
