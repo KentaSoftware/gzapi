@@ -196,7 +196,7 @@ describe('TICKET-004 — updateConfig controller', () => {
     const res = makeRes()
     await getController().updateConfig(req, res)
 
-    expect(cashflowService.updateConfig.calledWith(8000)).to.equal(true)
+    expect(cashflowService.updateConfig.calledWith({ openingBalance: 8000 })).to.equal(true)
     expect(res.json.calledWith({ config: { openingBalance: 8000 } })).to.equal(true)
   })
 })

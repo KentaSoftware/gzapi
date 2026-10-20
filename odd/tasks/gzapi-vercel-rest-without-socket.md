@@ -77,6 +77,10 @@ Vercel routes to `src/app.ts`, which exports only the named `createApp` factory.
 - Approved issue created: `https://github.com/KentaSoftware/gzapi/issues/8`.
 - Pull request created: `https://github.com/KentaSoftware/gzapi/pull/9`, based on `dev-KentaSoftware`, with `type:bug`.
 - Vercel Preview check passed and deployment completed.
+- Merge resolution: `c0aa1f8` retained both the Vercel deployment section and the Phase 0 contract gate from `dev-KentaSoftware`.
+- Post-merge cashflow compatibility fix: `test/cashflow.controller.test.ts` now asserts the patch-object API introduced by the base branch.
+- Post-merge verification: `npm test` passed with 490 tests; `npm run build`, `git diff --check`, conflict-marker scan, and runtime Socket.IO scan passed.
+- `npm run lint` remains blocked by six Finance errors in files introduced by `dev-KentaSoftware`; no Vercel migration files are implicated.
 
 ## Next Step
-Review and merge PR #9, then redeploy Production with the configured `MONGODB_URI`, `JWT_SECRET`, and `ADMIN_PASSWORD` values and verify the MongoDB seed.
+Commit the compatibility test fix, merge the latest `origin/dev-KentaSoftware` if needed, push PR #9, and wait for the Vercel check before production verification.
