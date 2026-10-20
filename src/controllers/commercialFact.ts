@@ -153,12 +153,14 @@ const confirmSalePayment = async (req: RequestExt, res: Response): Promise<void>
   const validated = validateBody(res, correlationId, body, ['businessDate', 'idempotencyKey'])
   if (validated === undefined) return
 
+  const [sale] = await getSale(new Types.ObjectId(saleId))
+  const accessible = computeAccessible(req.user, sale === undefined ? undefined : sale.user)
+
   try {
-    // Ownership/RBAC matrix deferred: allow any authenticated caller while contracts are enabled.
     const result = await service.confirmSalePayment(
       buildInput(saleId, validated.body, validated.date),
       contextOf(req.user, correlationId),
-      { accessible: true }
+      { accessible }
     )
     respond(res, result)
   } catch (error) {

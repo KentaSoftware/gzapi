@@ -15,8 +15,8 @@ import {
 
 const router = Router()
 
-// Sale lifecycle — payment: JWT + contracts flag only (RBAC deferred for this iteration).
-router.post('/sales/:saleId/payment', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res) => { void confirmSalePayment(req, res) })
+// Sale lifecycle — gated by sale access (confirm_sale_payment) plus ownership.
+router.post('/sales/:saleId/payment', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void confirmSalePayment(req, res) })
 router.post('/sales/:saleId/delivery', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void recordSaleDelivery(req, res) })
 router.post('/sales/:saleId/cancellation', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void recordSaleCancellation(req, res) })
 
