@@ -1,0 +1,43 @@
+import type { Express, Request, Response } from 'express'
+import { createApp } from '../src/app'
+import dbConnect from '../src/config/mongo'
+import { seedDatabase } from '../src/services/seed'
+
+export interface InitializationDependencies {
+  connect: () => Promise<void>
+  seed: () => Promise<void>
+  createApp: () => Promise<Express>
+}
+
+type VercelHandler = (req: Request, res: Response) => Promise<void>
+
+export function createVercelHandler (dependencies: InitializationDependencies): VercelHandler {
+  let initialization: Promise<Express> | undefined
+
+  const initialize = async (): Promise<Express> => {
+    await dependencies.connect()
+    await dependencies.seed()
+    return await dependencies.createApp()
+  }
+
+  return async (req: Request, res: Response): Promise<void> => {
+    if (initialization === undefined) initialization = initialize()
+
+    try {
+      const app = await initialization
+      app(req, res)
+    } catch (error) {
+      initialization = undefined
+      console.error('Vercel REST application initialization failed')
+      res.status(500).json({ error: 'Service initialization failed' })
+    }
+  }
+}
+
+const handler = createVercelHandler({
+  connect: dbConnect,
+  seed: seedDatabase,
+  createApp
+})
+
+export default handler

@@ -65,6 +65,7 @@ Status: complete with verification blockers recorded
 - `npm run lint`: failed on Finance files/tests; exact locations reported include `src/controllers/finance.ts:166,196`, `src/services/finance.ts:32,51`, and `test/finance.rules.test.ts:15,62`.
 - `npm run build`: blocked by the missing `socket.io` dependency and related type errors.
 - Independent verification: partial; it identified a separate stock-cancellation lifecycle gap outside this conflict-resolution scope.
+- GitHub PR #6: head `5ce57eba4d1b424d2a957465ec446ef53f3e7654`, `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`, Vercel checks successful.
 - GitHub PR #6: latest head `abd8f03fb444056964ea574f8a4e4c712491b76e`; Vercel checks successful; GitHub currently reports `mergeable: UNKNOWN` while recalculating after the documentation-only head update. The preceding merge head `5ce57eb` was reported `MERGEABLE/CLEAN`.
 
 Next step: install repository dependencies and address the separately scoped stock-cancellation finding before treating the PR as fully functionally verified.
