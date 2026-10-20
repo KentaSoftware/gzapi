@@ -135,7 +135,7 @@ describe('Phase 0 — RBAC contract', () => {
     const receipt = await post(tokens['fixture-admin'], `/commercialFact/buys/${ids.buy}/receipt`, {
       businessDate,
       idempotencyKey: 'receipt-before-denied-adjustment',
-      lines: [{ quantity: buyQuantity }]
+      lines: [{ itemBuyId: ids.buyItem, productId: ids.product, quantity: buyQuantity }]
     })
     expect(receipt.status).to.equal(201)
 

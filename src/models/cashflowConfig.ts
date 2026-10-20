@@ -1,12 +1,15 @@
 import { Schema, model } from 'mongoose'
 
 /**
- * CashflowConfig — singleton document that stores the opening balance.
- * Only one record is expected per deployment (upserted by CashflowService on first access).
- * TICKET-002: cash-flow-real-v1
+ * CashflowConfig — singleton for opening balance + editable finance rule knobs (CU-012).
+ * Formula version remains finance-rules-v1 in code; these fields only tune thresholds.
  */
 interface ICashflowConfig {
   openingBalance: number
+  /** Multiplier for reserve = avgMonthlyOutflows * this (default 1). */
+  reserveMonthsMultiplier: number
+  deficitAlertEnabled: boolean
+  idleCapitalRecommendMin: number
 }
 
 const CashflowConfigSchema = new Schema<ICashflowConfig>(
@@ -15,6 +18,23 @@ const CashflowConfigSchema = new Schema<ICashflowConfig>(
       type: Number,
       required: true,
       default: 0
+    },
+    reserveMonthsMultiplier: {
+      type: Number,
+      required: true,
+      default: 1,
+      min: 0
+    },
+    deficitAlertEnabled: {
+      type: Boolean,
+      required: true,
+      default: true
+    },
+    idleCapitalRecommendMin: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0
     }
   },
   {

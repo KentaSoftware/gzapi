@@ -74,7 +74,7 @@ describe('Phase 0 — baseline regression', () => {
     const receipt = await post(tokens['fixture-admin'], `/commercialFact/buys/${ids.buy}/receipt`, {
       businessDate,
       idempotencyKey: 'baseline-buy-receipt',
-      lines: [{ quantity: buyQuantity }]
+      lines: [{ itemBuyId: ids.buyItem, productId: ids.product, quantity: buyQuantity }]
     })
     expect(receipt.status).to.equal(201)
     expect(receipt.body.fact.type).to.equal('PURCHASE_RECEIPT')

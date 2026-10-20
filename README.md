@@ -96,6 +96,18 @@ Upload settings can also be customized with `UPLOAD_MAX_SIZE` and
 `UPLOAD_ALLOWED_MIMES`. Socket.IO is not part of this Vercel deployment; REST
 call sites retain a no-op compatibility event adapter.
 
+## Phase 0 contract gate
+
+`PHASE_0_CONTRACTS_ENABLED` is controlled by the runtime environment. It is
+read at runtime, accepts only the exact string `true`, and defaults to false
+when unset or set to any other value. Do not add this flag to tracked `.env`
+files or commit an environment value for it.
+
+Set the flag to `true` only in an approved intended runtime after the required
+baseline, preflight, backup/restore, opening-count, reconciliation, rollback,
+and owner-approval evidence has been completed and archived. This repository
+does not claim that staging or production is enabled now.
+
 ## Production and build commands
 
 ```bash
@@ -104,6 +116,89 @@ npm start      # Start the compiled server
 npm run lint   # Run the TypeScript lint checks
 npm test       # Run the Mocha test suite
 ```
+
+## Stock migration commands
+
+The six Stock migration commands below expose the existing TypeScript
+entrypoints without adding arguments or bypassing their safety checks. npm
+forwards operator arguments after `--`; the package scripts contain no target,
+approval, proof, or credential values.
+
+Every command requires these base arguments. Set them through the approved
+operator secret mechanism; do not commit credentials or proof contents, and
+remember that shell-expanded values can still be visible in process arguments:
+
+```bash
+export MONGODB_URI
+export MIGRATION_ENVIRONMENT
+export STOCK_APPROVAL_ID
+```
+
+### Safe dry-run templates
+
+All six dry-run paths are non-mutating and do not connect to MongoDB. They
+produce a plan or artifact and preserve the existing argument requirements:
+
+```bash
+npm run migration:stock:preflight -- \
+  --dry-run --uri "$MONGODB_URI" \
+  --environment "$MIGRATION_ENVIRONMENT" \
+  --confirm-target "$MIGRATION_ENVIRONMENT" \
+  --approval-id "$STOCK_APPROVAL_ID"
+
+npm run migration:stock:indexes -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID"
+npm run migration:stock:opening-template -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID"
+npm run migration:stock:opening-count -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID" --input "$STOCK_OPENING_INPUT"
+npm run migration:stock:repair-projections -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID" --input "$STOCK_REPAIR_INPUT"
+npm run migration:stock:verify -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID"
+```
+
+Preflight, opening-template, and verification inspect or describe state; they
+do not change business data. Index creation is non-mutating only with
+`--dry-run`. Opening-count and projection-repair dry-runs only parse and plan
+their inputs.
+
+### Proof-gated apply templates
+
+Only omit `--dry-run` after the required preflight and backup evidence exists.
+The existing helper validates proof status, target fingerprint, artifact hash,
+restore verification, and backup archive hash before mutation-capable work.
+Use paths supplied by the operator environment:
+
+```bash
+npm run migration:stock:indexes -- \
+  --uri "$MONGODB_URI" \
+  --environment "$MIGRATION_ENVIRONMENT" \
+  --confirm-target "$MIGRATION_ENVIRONMENT" \
+  --approval-id "$STOCK_APPROVAL_ID" \
+  --preflight-proof "$STOCK_PREFLIGHT_PROOF" \
+  --backup-proof "$STOCK_BACKUP_PROOF"
+
+npm run migration:stock:opening-count -- \
+  --uri "$MONGODB_URI" \
+  --environment "$MIGRATION_ENVIRONMENT" \
+  --confirm-target "$MIGRATION_ENVIRONMENT" \
+  --approval-id "$STOCK_APPROVAL_ID" \
+  --input "$STOCK_OPENING_INPUT" \
+  --preflight-proof "$STOCK_PREFLIGHT_PROOF" \
+  --backup-proof "$STOCK_BACKUP_PROOF"
+
+npm run migration:stock:repair-projections -- \
+  --uri "$MONGODB_URI" \
+  --environment "$MIGRATION_ENVIRONMENT" \
+  --confirm-target "$MIGRATION_ENVIRONMENT" \
+  --approval-id "$STOCK_APPROVAL_ID" \
+  --input "$STOCK_REPAIR_INPUT" \
+  --preflight-proof "$STOCK_PREFLIGHT_PROOF" \
+  --backup-proof "$STOCK_BACKUP_PROOF"
+```
+
+The index, opening-count, and projection-repair apply commands can mutate
+database state and fail closed when either proof argument is missing or
+invalid. Live verification remains read-only, but its existing entrypoint is
+also proof-gated; use the same proof arguments when running it without
+`--dry-run`. JSON input approval metadata must match `--approval-id` (and
+`--approved-by` when supplied).
 
 ## Route-plan test fixture seed
 
