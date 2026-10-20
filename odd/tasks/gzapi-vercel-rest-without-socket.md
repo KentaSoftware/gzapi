@@ -33,7 +33,7 @@ Vercel routes to `src/app.ts`, which exports only the named `createApp` factory.
 - [x] VRS-01 Add and test the Vercel REST entrypoint and initialization lifecycle.
 - [x] VRS-02 Remove Socket.IO runtime/dependency usage and preserve REST mutation behavior.
 - [x] VRS-03 Update configuration, environment documentation, and deployment-focused tests.
-- [ ] VRS-04 Run verification, commit the work unit, push the branch, and prepare the PR.
+- [x] VRS-04 Run verification, commit the work unit, push the branch, and prepare the PR.
 
 ## Authorized Scope
 - `vercel.json`
@@ -73,6 +73,10 @@ Vercel routes to `src/app.ts`, which exports only the named `createApp` factory.
 - Writer verification: `npm ci` passed; `npm test` passed with 324 tests; `npm run lint` passed; `npm run build` passed; `git diff --check` passed.
 - Parent spot check: `npm test` passed with 324 tests.
 - Native assessment: medium risk, `slice_budget_reached`; receipt-driven development is disabled for this clone and immutable review transport is unavailable in the active runtime.
+- Branch pushed: `origin/fix/vercel-rest-without-socket`.
+- Approved issue created: `https://github.com/KentaSoftware/gzapi/issues/8`.
+- Pull request created: `https://github.com/KentaSoftware/gzapi/pull/9`, based on `dev-KentaSoftware`, with `type:bug`.
+- Vercel Preview check passed and deployment completed.
 
 ## Next Step
-Push `fix/vercel-rest-without-socket`, create the approved-issue PR, and verify the Vercel deployment with production environment variables.
+Review and merge PR #9, then redeploy Production with the configured `MONGODB_URI`, `JWT_SECRET`, and `ADMIN_PASSWORD` values and verify the MongoDB seed.
