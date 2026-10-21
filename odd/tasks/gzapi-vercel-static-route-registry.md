@@ -32,7 +32,7 @@ Production initializes MongoDB and the seed successfully, but `/ping` and `/auth
 - [x] VRL-01 Map route exports and define the static registry preserving current prefixes.
 - [x] VRL-02 Implement the Vercel-safe route registry and focused tests.
 - [x] VRL-03 Run verification and confirm local representative endpoint behavior.
-- [ ] VRL-04 Create the approved issue, push the branch, and open the PR against `master`.
+- [x] VRL-04 Create the approved issue, push the branch, and open the PR against `master`.
 
 ## Authorized Scope
 - `src/routes/index.ts`
@@ -55,6 +55,9 @@ Production initializes MongoDB and the seed successfully, but `/ping` and `/auth
 - Parent spot check: `npm test -- --grep "route loader"` passed with 2 tests.
 - Independent verification of commit `5cc2c26` reproduced 492 passing tests, a passing build, passing diff check, and 27 static route imports; the same six Finance lint errors remain.
 - Approved issue created: `https://github.com/KentaSoftware/gzapi/issues/11`.
+- Branch pushed as `origin/fix/vercel-static-route-registry`.
+- Pull request created: `https://github.com/KentaSoftware/gzapi/pull/12`, based on `master`, with `type:bug`.
+- Vercel Preview Comments passed; the Vercel deployment check is pending.
 
 ## Next Step
-Push the branch and open the approved-issue PR against `master`.
+Wait for Vercel Preview to complete, then verify `/ping` and `/auth/login` on the deployed preview before merging PR #12.
