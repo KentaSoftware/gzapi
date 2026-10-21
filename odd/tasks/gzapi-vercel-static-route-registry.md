@@ -53,7 +53,8 @@ Production initializes MongoDB and the seed successfully, but `/ping` and `/auth
 - Static imports now register all 27 route modules with their filename prefixes; focused route-loader coverage passes for `/ping` and `/auth/login`.
 - `npm test` passes with 492 tests; build and diff checks pass. Lint remains blocked by six pre-existing Finance errors.
 - Parent spot check: `npm test -- --grep "route loader"` passed with 2 tests.
-- GitHub issue creation and PR delivery remain pending implementation and verification.
+- Independent verification of commit `5cc2c26` reproduced 492 passing tests, a passing build, passing diff check, and 27 static route imports; the same six Finance lint errors remain.
+- Approved issue created: `https://github.com/KentaSoftware/gzapi/issues/11`.
 
 ## Next Step
-Commit the implementation, create the approved bug issue, push the branch, and open the PR against `master`.
+Push the branch and open the approved-issue PR against `master`.
