@@ -1,14 +1,15 @@
 # Feature: Load gzapi routes reliably on Vercel
 
 ## Objective
-Make every existing gzapi REST route available through the Vercel handler, including `/ping` and `/auth/login`, by replacing filesystem-scanned variable imports with a statically bundled route registry.
+Make every active gzapi REST route available through the Vercel handler, including `/ping` and `/auth/login`, by replacing filesystem-scanned variable imports with a statically bundled route registry. Keep the unused purchase-document route disconnected until durable object storage is implemented.
 
 ## Problem
 Production initializes MongoDB and the seed successfully, but `/ping` and `/auth/login` return 404. `src/routes/index.ts` discovers route files with `readdirSync` and imports them through a variable dynamic import; Vercel bundling does not reliably include or resolve those modules, and the loader swallows the import failures.
 
 ## Scope
 - Replace Vercel-incompatible dynamic route discovery with explicit static route imports and mounts.
-- Preserve the existing route URLs and local development behavior.
+- Preserve the existing active route URLs and local development behavior.
+- Do not mount `purchaseDoc.ts` until its upload storage is migrated from the deployment filesystem to durable object storage.
 - Make route-loading failures observable instead of silently returning an empty router.
 - Add deterministic coverage proving representative public routes are registered.
 - Update deployment tracking and create an approved issue plus PR against `master`.
@@ -23,7 +24,7 @@ Production initializes MongoDB and the seed successfully, but `/ping` and `/auth
 ## Acceptance Criteria
 - Production `GET /ping` returns `PING`.
 - Production `POST /auth/login` reaches the auth controller instead of returning Express 404.
-- Existing route modules remain mounted under their current filename-based prefixes.
+- Existing active route modules remain mounted under their current filename-based prefixes; `/purchaseDoc` is intentionally not mounted.
 - Local tests and build pass; the route registry does not depend on runtime filesystem scanning.
 - Route import failures are surfaced during app construction rather than swallowed.
 - An approved GitHub issue is linked from the PR against `master`.
@@ -50,7 +51,8 @@ Production initializes MongoDB and the seed successfully, but `/ping` and `/auth
 ## Progress
 - Branch `fix/vercel-static-route-registry` created from `origin/master` at `8d29715`.
 - Production evidence confirms MongoDB connection and seed success before route 404 responses.
-- Static imports now register all 27 route modules with their filename prefixes; focused route-loader coverage passes for `/ping` and `/auth/login`.
+- Static imports now register 26 active route modules with their filename prefixes; focused route-loader coverage passes for `/ping` and `/auth/login`.
+- The `purchaseDoc` route is intentionally excluded from the static registry so its import-time filesystem initialization cannot crash Vercel before durable upload storage is available.
 - `npm test` passes with 492 tests; build and diff checks pass. Lint remains blocked by six pre-existing Finance errors.
 - Parent spot check: `npm test -- --grep "route loader"` passed with 2 tests.
 - Independent verification of commit `5cc2c26` reproduced 492 passing tests, a passing build, passing diff check, and 27 static route imports; the same six Finance lint errors remain.
@@ -58,6 +60,7 @@ Production initializes MongoDB and the seed successfully, but `/ping` and `/auth
 - Branch pushed as `origin/fix/vercel-static-route-registry`.
 - Pull request created: `https://github.com/KentaSoftware/gzapi/pull/12`, based on `master`, with `type:bug`.
 - Vercel Preview Comments passed; the Vercel deployment check is pending.
+- After disconnecting `purchaseDoc`, focused route-loader tests pass with 2 tests, the TypeScript build passes, and `git diff --check` passes.
 
 ## Next Step
-Wait for Vercel Preview to complete, then verify `/ping` and `/auth/login` on the deployed preview before merging PR #12.
+Verify `/ping` and `/auth/login` on the next Vercel deployment. Re-enable `/purchaseDoc` only after implementing durable object storage for purchase documents.

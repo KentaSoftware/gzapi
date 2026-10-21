@@ -21,7 +21,6 @@ import { router as logRouter } from './log'
 import { router as pingRouter } from './ping'
 import { router as productRouter } from './product'
 import { router as providerRouter } from './provider'
-import { router as purchaseDocRouter } from './purchaseDoc'
 import { router as roleRouter } from './role'
 import { router as routePlanRouter } from './routePlan'
 import { router as saleRouter } from './sale'
@@ -55,7 +54,6 @@ const routeRegistry: RouteEntry[] = [
   { prefix: '/ping', router: pingRouter },
   { prefix: '/product', router: productRouter },
   { prefix: '/provider', router: providerRouter },
-  { prefix: '/purchaseDoc', router: purchaseDocRouter },
   { prefix: '/role', router: roleRouter },
   { prefix: '/routePlan', router: routePlanRouter },
   { prefix: '/sale', router: saleRouter },

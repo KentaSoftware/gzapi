@@ -28,7 +28,6 @@ describe('route loader', () => {
       '/ping',
       '/product',
       '/provider',
-      '/purchaseDoc',
       '/role',
       '/routePlan',
       '/sale',
