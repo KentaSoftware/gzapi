@@ -59,10 +59,18 @@ const upsertRole = async (name: string, permissions: string[]): Promise<void> =>
   }
 }
 
+/** Every Phase 0 business permission, derived so new grants stay in sync. */
+const PHASE_0_PERMISSIONS = [
+  ...new Set(PHASE_0_ROLE_GRANTS.flatMap((grant) => grant.permissions))
+]
+
+/** The admin role is a superset: base CRUD plus every Phase 0 grant. */
+const ADMIN_PERMISSIONS = [...new Set([...BASE_PERMISSIONS, ...PHASE_0_PERMISSIONS])]
+
 export const seedDatabase = async (): Promise<void> => {
   console.log('Iniciando seed de la base de datos')
 
-  await upsertRole('admin', BASE_PERMISSIONS)
+  await upsertRole('admin', ADMIN_PERMISSIONS)
 
   for (const grant of PHASE_0_ROLE_GRANTS) {
     await upsertRole(grant.name, grant.permissions)

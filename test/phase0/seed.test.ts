@@ -128,7 +128,7 @@ describe('Phase 0 — role seed idempotency', () => {
 
     const adminPerms = await permissionsOf('admin')
     expect(adminPerms.length).to.be.greaterThan(0)
-    expect(adminPerms).to.not.include.members(PHASE_0_PERMISSIONS)
+    expect(adminPerms).to.include.members(PHASE_0_PERMISSIONS)
   })
 
   it('S-06b: seed on a pre-existing DB appends grants without removing existing permissions', async () => {
@@ -151,7 +151,7 @@ describe('Phase 0 — role seed idempotency', () => {
     const adminPerms = await permissionsOf('admin')
     expect(adminPerms).to.include('custom_admin_perm')
     expect(adminPerms).to.include('read_user')
-    expect(adminPerms).to.not.include.members(PHASE_0_PERMISSIONS)
+    expect(adminPerms).to.include.members(PHASE_0_PERMISSIONS)
 
     const ownerPerms = await permissionsOf('Propietario')
     expect(ownerPerms).to.include('custom_owner_perm')
