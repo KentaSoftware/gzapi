@@ -89,6 +89,7 @@ initialization. Configure these required environment variables in Vercel:
 | `MONGODB_URI` | MongoDB connection URI |
 | `JWT_SECRET` | Secret used to sign JWTs |
 | `ADMIN_PASSWORD` | Password used when the seed first creates `admin` |
+| `GOOGLE_MAPS_SERVER_API_KEY` | Server key required by the demo seed for geocoding and Google Routes DRIVE validation |
 
 The optional provider and integration variables are `DOCUMENT_AI_URL`,
 `DOCUMENT_AI_TIMEOUT`, `DOCUMENT_AI_DEBUG`, `BACKUP_URI`, `USER`, and `PASS`.
@@ -222,6 +223,73 @@ Optional variables:
 ROUTE_PLAN_SERVICE_DATE=2026-10-14 npm run seed:route-plan:test
 ROUTE_PLAN_TEST_PASSWORD=route-plan-local-password npm run seed:route-plan:test
 ```
+
+## One-off Vercel demo-data seed
+
+`seed:demo` is a manually-run operator command. It is not part of application
+startup or the Vercel build. It upserts only documents owned by the
+`gzapi-demo-seed-v1` fixture namespace and never deletes unrelated data.
+
+The seed resolves the depot and client addresses through Google Geocoding,
+accepts only `ROOFTOP` or `RANGE_INTERPOLATED` results matching the requested
+street, house number, and city (ignoring accents and common Spanish street
+abbreviations), and validates every
+depot/client pair in both directions with Google Routes `DRIVE` routing before
+any dependent document is written. Route snapshots use the provider's returned
+distance, duration, and encoded polyline; the seed fails closed if a provider
+result is missing or not routable.
+
+The planned fixture contains 20 clients across three zones, one pending route
+sale per client, three route snapshots, 85 products, nine brands, seven
+categories, six providers, and six calendar months ending at the service-date
+month with 21 paid sales, seven paid purchases, and 11 dated expenses per month.
+No finance event is dated after the service-date anchor. The default anchor is
+today's UTC calendar date; set `DEMO_SERVICE_DATE=YYYY-MM-DD` to reproduce an
+exact run. Existing fixture IDs and keys remain stable for overlapping months.
+Monthly reruns never delete older months: finance records accumulate beyond six
+months, so review dashboard date filters accordingly. Candidate addresses are
+listed publicly at https://www.cgcetucuman.org.ar/sucursales-rapipago/ ;
+their continued existence, Google geocoding precision and DRIVE connectivity
+are **not** verified by `--dry-run`. Review provider results before authorizing
+a real run: any unresolvable address blocks all writes.
+
+Required environment variables for a real run are `MONGODB_URI` and
+`GOOGLE_MAPS_SERVER_API_KEY`. The base startup seed must already have created
+the `admin` user, which is used only as the fixture actor. `DEMO_SERVICE_DATE`
+is optional and accepts a real `YYYY-MM-DD` service date.
+
+Writes are sequential, **not atomic**. Provider checks finish before the first
+write, but a database write failure can leave an incomplete owned fixture. To
+recover, correct the failing condition and rerun against the same target with
+the exact same `DEMO_SERVICE_DATE` (set it explicitly before the first real
+run). Deterministic owned upserts fill missing records and update existing
+ones without deleting or matching unrelated records. Inspect the failure and
+owned fixture before rerunning; do not assume rollback. If the first run used
+the default date, supply that original UTC date explicitly on the rerun.
+
+Run the dry run first; it does not connect to MongoDB or call external
+providers:
+
+```bash
+npm run seed:demo -- --dry-run
+```
+
+Dry-run reports candidate addresses only; it does not prove geocoding
+precision, street-number equality, or DRIVE connectivity.
+
+For Vercel production variables, use the exact operator pattern below. The
+production dry run also requires explicit remote-target confirmation because
+the target guard runs before the dry-run decision. The second command performs
+the actual writes:
+
+```bash
+vercel env run -e production -- npm run seed:demo -- --dry-run --confirm-remote
+vercel env run -e production -- npm run seed:demo -- --confirm-remote
+```
+
+Do not place MongoDB URIs, Google keys, or other credentials in scripts,
+arguments, logs, documentation, or commits. This command is a one-off
+operator action, not startup/build logic.
 
 Fixture credentials:
 

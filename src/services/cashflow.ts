@@ -6,7 +6,7 @@
  *
  * Design constraints (design.md):
  *  - Amount unit: plain decimal. Expense.amountCents ÷ 100 here; never reuse getSimpleResult().
- *  - Cash-date priority chain: paidAt > fecha > createdAt
+ *  - Cash-date priority chain: paidAt > fecha > date > createdAt
  *  - Inflow filter: Sale has paidAt (a confirmed SALE_PAYMENT projection) AND estado !== 'Cancelado'
  *  - Outflow filter Buy: Buy.estado === 'paid'
  *  - Outflow filter Expense: isDeleted is falsy
@@ -27,10 +27,10 @@ import {
 
 /**
  * Resolves the effective cash date for a document.
- * Priority chain: paidAt → fecha → createdAt
+ * Priority chain: paidAt → fecha → date → createdAt
  */
 export function resolveCashDate (doc: any): Date {
-  return doc.paidAt ?? doc.fecha ?? doc.createdAt
+  return doc.paidAt ?? doc.fecha ?? doc.date ?? doc.createdAt
 }
 
 /**
