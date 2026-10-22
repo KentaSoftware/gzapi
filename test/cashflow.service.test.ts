@@ -50,6 +50,10 @@ describe('TICKET-003 — resolveCashDate', () => {
     expect(resolveCashDate(doc)).to.deep.equal(makeDate('2026-03-12'))
   })
 
+  it('uses the expense business date before creation time', () => {
+    expect(resolveCashDate({ date: makeDate('2026-03-12'), createdAt: makeDate('2026-04-01') })).to.deep.equal(makeDate('2026-03-12'))
+  })
+
   it('returns createdAt when neither paidAt nor fecha exist', () => {
     const doc = {
       createdAt: makeDate('2026-03-10')
@@ -82,6 +86,11 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     const exp = result.find((m: any) => m.source === 'expense')
     expect(exp).to.not.equal(undefined)
     expect(exp.amount).to.equal(1500.00)
+  })
+
+  it('includes a backdated expense in its business month, not its creation month', () => {
+    const expenses = [{ _id: 'dated-expense', amountCents: 12500, date: makeDate('2026-03-14'), createdAt: makeDate('2026-04-02') }]
+    expect(buildMovements({ sales: [], buys: [], expenses }, period)).to.have.length(1)
   })
 
   it('uses Sale.total as-is (no conversion)', () => {

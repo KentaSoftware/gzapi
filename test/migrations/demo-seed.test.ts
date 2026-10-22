@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import {
+  DEMO_ADDRESS_SPECS,
   parseDemoArguments,
   resolveTarget,
   runDemoSeed,
@@ -8,7 +9,7 @@ import {
   validateRoadConnectivity
 } from '../../migrations/demo-001-seed-data'
 import { GEOCODING_PRECISION } from '../../src/interfaces/client.interface'
-import type { FixtureCollection } from '../../migrations/demo-001-seed-data'
+import type { DemoDatabase, FixtureCollection } from '../../migrations/demo-001-seed-data'
 import type { RouteLocation } from '../../src/interfaces/routeOptimization.interface'
 import { Types } from 'mongoose'
 
@@ -26,6 +27,111 @@ const locations: RouteLocation[] = [
 ]
 
 describe('demo seed safety seams', () => {
+  const target = resolveTarget('mongodb://127.0.0.1:27017/gzapi', false)
+  const records = new Map<string, Map<string, Record<string, unknown>>>()
+  let writes = 0
+  const database: DemoDatabase = {
+    collection: (name) => ({
+      findOne: async () => name === 'users' ? { _id: new Types.ObjectId('507f1f77bcf86cd799439011') } : null,
+      updateOne: async (filter, update) => {
+        writes += 1
+        const collection = records.get(name) ?? new Map<string, Record<string, unknown>>()
+        records.set(name, collection)
+        const id = String(filter._id)
+        const existing = collection.get(id)
+        if (existing !== undefined && (existing.fixtureNamespace !== filter.fixtureNamespace || existing.fixtureKey !== filter.fixtureKey)) {
+          throw new Error('Cannot update an unowned fixture')
+        }
+        collection.set(id, { ...existing, ...(existing === undefined ? update.$setOnInsert : {}), ...update.$set })
+        return { upsertedCount: existing === undefined ? 1 : 0, modifiedCount: existing === undefined ? 0 : 1 }
+      }
+    })
+  }
+  const providers = {
+    geocoder: async ({ address }: { address: string }) => {
+      const index = DEMO_ADDRESS_SPECS.findIndex((spec) => spec.address === address)
+      return [{ ...candidate, formattedAddress: address, placeId: `offline-place-${index}`, lat: candidate.lat + index * 0.0001 }]
+    },
+    matrix: async ({ origins, destinations }: { origins: RouteLocation[], destinations: RouteLocation[] }) => ({
+      segments: origins.flatMap((from) => destinations.filter((to) => from.id !== to.id).map((to) => ({
+        fromId: from.id, toId: to.id, distanceMeters: 1200, durationSeconds: 120
+      })))
+    }),
+    route: async () => ({ encodedPolyline: 'offline-route', distanceMeters: 5000, durationSeconds: 900 })
+  }
+
+  it('plans 20 candidate clients without calling providers in dry-run', async () => {
+    expect(DEMO_ADDRESS_SPECS).to.have.length(21)
+    const result = await runDemoSeed({ target, dryRun: true })
+    expect(result.addressCount).to.equal(21)
+  })
+
+  it('seeds six months of paid finance, catalog and route snapshots with stable owned IDs', async () => {
+    records.clear()
+    writes = 0
+    const first = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2026-10-21T00:00:00.000Z') })
+    expect(first.summary?.inserted).to.equal(writes)
+    expect(records.get('clients')?.size).to.equal(20)
+    expect(records.get('categories')?.size).to.equal(7)
+    expect(records.get('brands')?.size).to.equal(9)
+    expect(records.get('providers')?.size).to.equal(6)
+    expect(records.get('products')?.size).to.equal(85)
+    expect(records.get('routeplans')?.size).to.equal(3)
+    const sales = [...(records.get('sales')?.values() ?? [])]
+    const buys = [...(records.get('buys')?.values() ?? [])]
+    const expenses = [...(records.get('expenses')?.values() ?? [])]
+    for (const month of ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10']) {
+      expect(sales.filter((sale) => sale.paidAt instanceof Date && sale.paidAt.toISOString().startsWith(month))).to.have.length(21)
+      expect(buys.filter((buy) => buy.paidAt instanceof Date && buy.paidAt.toISOString().startsWith(month))).to.have.length(7)
+      expect(expenses.filter((expense) => expense.date instanceof Date && expense.date.toISOString().startsWith(month))).to.have.length(11)
+    }
+    const clientIds = new Set(records.get('clients')?.keys())
+    for (const snapshot of records.get('routeplans')?.values() ?? []) {
+      for (const stop of snapshot.stops as Array<{ clientId: string }>) {
+        expect(Types.ObjectId.isValid(stop.clientId)).to.equal(true)
+        expect(clientIds.has(stop.clientId)).to.equal(true)
+      }
+    }
+    const counts = [...records].map(([key, value]) => [key, value.size])
+    const firstSale = sales.find((sale) => sale.fixtureKey === 'finance:sale:2026-05:1')
+    expect(firstSale?.createdAt).to.deep.equal(new Date('2026-05-01T12:00:00.000Z'))
+    const second = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2026-10-21T00:00:00.000Z') })
+    expect(second.summary?.inserted).to.equal(0)
+    expect([...records].map(([key, value]) => [key, value.size])).to.deep.equal(counts)
+    expect([...(records.get('sales')?.values() ?? [])].find((sale) => sale.fixtureKey === 'finance:sale:2026-05:1')?.createdAt).to.deep.equal(firstSale?.createdAt)
+  })
+
+  it('performs zero writes when geocoding, matrix, or route validation fails', async () => {
+    for (const unavailable of [
+      { ...providers, geocoder: async () => [] },
+      { ...providers, geocoder: async () => [candidate] },
+      { ...providers, matrix: async () => ({ segments: [] }) },
+      { ...providers, route: async () => { throw new Error('Provider unavailable') } }
+    ]) {
+      writes = 0
+      try {
+        await runDemoSeed({ target, dryRun: false, database, providers: unavailable })
+        expect.fail('Expected provider failure')
+      } catch (error) {
+        expect(error).to.be.instanceOf(Error)
+      }
+      expect(writes).to.equal(0)
+    }
+  })
+
+  it('rejects a matrix above the configured stop limit without calling the provider', async () => {
+    let calls = 0
+    try {
+      await validateRoadConnectivity(locations[0], Array.from({ length: 21 }, (_, index) => ({ ...locations[1], id: `client-${index}` })), async () => {
+        calls += 1
+        return { segments: [] }
+      })
+      expect.fail('Expected stop limit failure')
+    } catch (error) {
+      expect((error as Error).message).to.contain('stop limit')
+    }
+    expect(calls).to.equal(0)
+  })
   it('rejects a remote target without explicit confirmation', () => {
     expect(() => resolveTarget('mongodb+srv://cluster.example/gzapi', false)).to.throw('explicit --confirm-remote')
     expect(resolveTarget('mongodb://127.0.0.1:27017/gzapi', false).remote).to.equal(false)
@@ -87,5 +193,119 @@ describe('demo seed safety seams', () => {
     expect(calls).to.have.length(2)
     expect(calls[0].id).to.equal(calls[1].id)
     expect(calls[0].filter.fixtureNamespace).to.equal('gzapi-demo-seed-v1')
+  })
+
+  it('requires the requested street and number despite precise matching-city results', () => {
+    const requested = 'Av. Córdoba 560, San Miguel de Tucumán, Tucumán, Argentina'
+    const accepted = { ...candidate, formattedAddress: 'Avenida Cordoba 560, San Miguel de Tucuman, Tucuman, Argentina' }
+    expect(selectRoadSafeCandidate([accepted], requested)).to.equal(accepted)
+    for (const formattedAddress of [
+      'Avenida Cordoba 561, San Miguel de Tucuman, Tucuman, Argentina',
+      'Avenida Belgrano 560, San Miguel de Tucuman, Tucuman, Argentina',
+      'Avenida Cordoba, San Miguel de Tucuman, Tucuman, Argentina',
+      'Córdoba 560, Córdoba, Argentina'
+    ]) {
+      expect(() => selectRoadSafeCandidate([{ ...candidate, formattedAddress }], requested)).to.throw()
+    }
+    expect(selectRoadSafeCandidate([{ ...candidate, formattedAddress: 'General Paz 523, San Miguel de Tucumán, Tucumán, Argentina' }], 'Gral. Paz 523, San Miguel de Tucumán, Tucumán, Argentina').precision).to.equal(GEOCODING_PRECISION.ROOFTOP)
+  })
+
+  it('derives six months from the anchor and never schedules finance after it', async () => {
+    records.clear()
+    const anchor = new Date('2027-02-03T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: anchor })
+    const sales = [...(records.get('sales')?.values() ?? [])].filter((sale) => String(sale.fixtureKey).startsWith('finance:'))
+    expect(new Set(sales.map((sale) => (sale.paidAt as Date).toISOString().slice(0, 7)))).to.deep.equal(new Set(['2026-09', '2026-10', '2026-11', '2026-12', '2027-01', '2027-02']))
+    for (const collection of ['sales', 'buys', 'expenses']) {
+      for (const record of records.get(collection)?.values() ?? []) {
+        if (!String(record.fixtureKey).startsWith('finance:')) continue
+        expect((record.paidAt ?? record.date) as Date).to.be.at.most(anchor)
+      }
+    }
+    const oldId = [...(records.get('sales')?.entries() ?? [])].find(([, sale]) => sale.fixtureKey === 'finance:sale:2026-10:1')?.[0]
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2027-03-03T00:00:00.000Z') })
+    expect([...records.get('sales')?.entries() ?? []].find(([, sale]) => sale.fixtureKey === 'finance:sale:2026-10:1')?.[0]).to.equal(oldId)
+    expect(records.get('sales')?.size).to.equal(20 + 21 * 7)
+  })
+
+  it('uses the injected clock as the default service-date anchor', async () => {
+    records.clear()
+    const clock = new Date('2027-03-04T18:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, now: clock })
+    expect([...records.get('sales')?.values() ?? []].some((sale) => sale.fixtureKey === 'finance:sale:2027-03')).to.equal(true)
+    expect([...records.get('sales')?.values() ?? []].some((sale) => sale.fixtureKey === 'finance:sale:2026-09')).to.equal(false)
+    expect([...records.get('sales')?.values() ?? []].filter((sale) => String(sale.fixtureKey).startsWith('finance:')).every((sale) => (sale.paidAt as Date) <= new Date('2027-03-04T00:00:00.000Z'))).to.equal(true)
+  })
+
+  it('rejects a wrong-house-number provider result before any write', async () => {
+    records.clear()
+    writes = 0
+    try {
+      await runDemoSeed({
+        target,
+        dryRun: false,
+        database,
+        providers: {
+          ...providers,
+          geocoder: async ({ address }) => [{ ...candidate, formattedAddress: address.replace(/\b4100\b/, '4102') }]
+        }
+      })
+      expect.fail('Expected house number mismatch')
+    } catch (error) {
+      expect((error as Error).message).to.contain('requested street, number, and city')
+    }
+    expect(writes).to.equal(0)
+  })
+
+  it('recovers a partial sequential write by rerunning with the same anchor, leaving unrelated data untouched', async () => {
+    records.clear()
+    const unrelated = { fixtureNamespace: 'other', fixtureKey: 'operator-record', descripcion: 'Keep me' }
+    records.set('categories', new Map([['unrelated-id', unrelated]]))
+    let attempts = 0
+    const failing: DemoDatabase = {
+      collection: (name) => {
+        const base = database.collection(name)
+        return {
+          findOne: base.findOne,
+          updateOne: async (filter, update, options) => {
+            attempts += 1
+            if (attempts === 5) throw new Error('Injected write failure')
+            return await base.updateOne(filter, update, options)
+          }
+        }
+      }
+    }
+    const anchor = new Date('2026-10-21T00:00:00.000Z')
+    try {
+      await runDemoSeed({ target, dryRun: false, database: failing, providers, serviceDate: anchor })
+      expect.fail('Expected injected write failure')
+    } catch (error) {
+      expect((error as Error).message).to.contain('Injected write failure')
+    }
+    expect(records.get('categories')?.get('unrelated-id')).to.equal(unrelated)
+    expect(records.get('products')?.size).to.equal(1)
+    const firstId = [...records.get('products')?.keys() ?? []][0]
+    const recovered = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: anchor })
+    expect(recovered.summary?.inserted).to.be.greaterThan(0)
+    expect(records.get('products')?.has(firstId)).to.equal(true)
+    expect(records.get('categories')?.get('unrelated-id')).to.equal(unrelated)
+    expect((await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: anchor })).summary?.inserted).to.equal(0)
+  })
+
+  it('does not match unowned records by id during an upsert', async () => {
+    const id = new Types.ObjectId('507f1f77bcf86cd799439012')
+    const collection: FixtureCollection = {
+      findOne: async () => null,
+      updateOne: async (filter) => {
+        expect(filter).to.deep.include({ _id: id, fixtureNamespace: 'gzapi-demo-seed-v1', fixtureKey: 'catalog:product' })
+        throw new Error('Duplicate identifier belongs to an unowned record')
+      }
+    }
+    try {
+      await upsertFixture(collection, 'catalog:product', id, { descripcion: 'Demo' }, new Date())
+      expect.fail('Expected ownership conflict')
+    } catch (error) {
+      expect((error as Error).message).to.contain('unowned')
+    }
   })
 })

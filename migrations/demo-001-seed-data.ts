@@ -26,7 +26,6 @@ import { computeMatrix, computeRoute } from '../src/services/routeMatrixProvider
 
 const DEFAULT_MONGO_URI = 'mongodb://127.0.0.1:27017/gzapi'
 const FIXTURE_NAMESPACE = 'gzapi-demo-seed-v1'
-const DEFAULT_SERVICE_DATE = '2026-10-14'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const ROUTE_FUEL_CONSUMPTION = 8.5
 const ROUTE_MAX_STOPS = 20
@@ -38,6 +37,8 @@ const FIXTURE_OUTCOME = {
 
 type FixtureOutcome = (typeof FIXTURE_OUTCOME)[keyof typeof FIXTURE_OUTCOME]
 
+// Additional street numbers are published at https://www.cgcetucuman.org.ar/sucursales-rapipago/
+// They are candidates only; Google precision and complete DRIVE coverage gate every write.
 const DEMO_ADDRESS_SPECS = [
   {
     key: 'depot',
@@ -61,14 +62,39 @@ const DEMO_ADDRESS_SPECS = [
     name: 'GZ Demo Client Oeste 1',
     address: 'Av. Sarmiento 655, San Miguel de Tucumán, Tucumán, Argentina',
     zoneKey: 'oeste'
-  }
-] as const
+  },
+  ...[
+    ['centro', 3, 'Chacabuco 98'],
+    ['centro', 4, 'Santiago del Estero 455'],
+    ['centro', 5, 'Córdoba 560'],
+    ['centro', 6, '25 de Mayo 319'],
+    ['centro', 7, 'Rivadavia 88'],
+    ['centro', 8, 'San Martín 853'],
+    ['oeste', 2, 'Av. Belgrano 1716'],
+    ['oeste', 3, 'Av. Belgrano 2755'],
+    ['oeste', 4, 'Av. Belgrano 3300'],
+    ['oeste', 5, 'Av. Roca 3057'],
+    ['oeste', 6, 'Av. Roca 3450'],
+    ['oeste', 7, 'Av. Roca 250'],
+    ['sur', 1, 'Entre Ríos 130'],
+    ['sur', 2, 'Congreso 514'],
+    ['sur', 3, 'Gral. Paz 523'],
+    ['sur', 4, 'Jujuy 108'],
+    ['sur', 5, 'Crisóstomo Álvarez 464']
+  ].map(([zone, number, street]) => ({
+    key: `client:${zone}:${number}`,
+    name: `GZ Demo Client ${zone} ${number}`,
+    address: `${street}, San Miguel de Tucumán, Tucumán, Argentina`,
+    zoneKey: zone
+  }))
+] as Array<{ key: string, name: string, address: string, zoneKey?: string }>
 
 type DemoAddressKey = (typeof DEMO_ADDRESS_SPECS)[number]['key']
 
 const DEMO_ZONES = [
   { key: 'centro', code: 'DEMO_CENTRO', name: 'Demo Centro' },
-  { key: 'oeste', code: 'DEMO_OESTE', name: 'Demo Oeste' }
+  { key: 'oeste', code: 'DEMO_OESTE', name: 'Demo Oeste' },
+  { key: 'sur', code: 'DEMO_SUR', name: 'Demo Sur' }
 ] as const
 
 const DEMO_PRODUCT = {
@@ -83,11 +109,19 @@ const DEMO_VEHICLE = {
   fuelConsumptionLitersPer100Km: ROUTE_FUEL_CONSUMPTION
 } as const
 
-const FINANCE_PERIODS = [
-  { key: '2026-08', date: '2026-08-15T12:00:00.000Z', saleTotal: 18500, buyTotal: 9200, expenseCents: 175000 },
-  { key: '2026-09', date: '2026-09-15T12:00:00.000Z', saleTotal: 22400, buyTotal: 10800, expenseCents: 210000 },
-  { key: '2026-10', date: '2026-10-10T12:00:00.000Z', saleTotal: 26750, buyTotal: 12400, expenseCents: 235000 }
+const LEGACY_FINANCE_TOTALS = [
+  { saleTotal: 15800, buyTotal: 7200, expenseCents: 130000 },
+  { saleTotal: 16900, buyTotal: 7900, expenseCents: 145000 },
+  { saleTotal: 17400, buyTotal: 8500, expenseCents: 155000 },
+  { saleTotal: 18500, buyTotal: 9200, expenseCents: 175000 },
+  { saleTotal: 22400, buyTotal: 10800, expenseCents: 210000 },
+  { saleTotal: 26750, buyTotal: 12400, expenseCents: 235000 }
 ] as const
+
+const DEMO_CATEGORIES = ['Beverages', 'Groceries', 'Cleaning', 'Personal care', 'Snacks', 'Pantry'] as const
+const DEMO_BRANDS = ['Andes', 'Norte', 'Pampa', 'Sol', 'Rio', 'Valle', 'Campo', 'Luna'] as const
+const DEMO_PROVIDERS = ['North Distribution', 'Regional Supply', 'Valley Wholesale', 'River Trading', 'Central Goods'] as const
+const DEMO_VARIANTS = ['Classic', 'Family', 'Compact', 'Premium', 'Economy', 'Fresh', 'Large', 'Small', 'Original', 'Select', 'Daily', 'Special', 'Light', 'Extra'] as const
 
 interface DemoTarget {
   uri: string
@@ -218,7 +252,26 @@ export const selectRoadSafeCandidate = (
   if (candidate.precision !== GEOCODING_PRECISION.ROOFTOP && candidate.precision !== GEOCODING_PRECISION.RANGE_INTERPOLATED) {
     throw new Error(`Geocoding for ${address} did not return a road-safe precision`)
   }
+  const requested = parseStreetAddress(address)
+  const resolved = parseStreetAddress(candidate.formattedAddress)
+  if (requested === undefined || resolved === undefined || requested.street !== resolved.street || requested.number !== resolved.number ||
+      requested.city !== resolved.city) {
+    throw new Error(`Geocoding for ${address} did not match the requested street, number, and city`)
+  }
   return candidate
+}
+
+const normalizeAddressText = (value: string): string => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/\bav(?:enida)?\.?\b/g, 'avenida').replace(/\bgral\.?\b/g, 'general')
+  .replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ')
+
+const parseStreetAddress = (value: string): { street: string, number: string, city: string } | undefined => {
+  const [line, city] = value.split(',').map(normalizeAddressText)
+  if (line === undefined || city === undefined || city === '') return undefined
+  const match = /^(.*\D)\s+(\d+[a-z]?)$/.exec(line) ?? /^(\d+[a-z]?)\s+(.*\D)$/.exec(line)
+  if (match === null) return undefined
+  const numberFirst = /^\d/.test(match[1])
+  return { street: numberFirst ? match[2].trim() : match[1].trim(), number: numberFirst ? match[1] : match[2], city }
 }
 
 export const validateRoadConnectivity = async (
@@ -226,6 +279,7 @@ export const validateRoadConnectivity = async (
   clients: RouteLocation[],
   matrix: DemoProviders['matrix']
 ): Promise<RouteMatrix> => {
+  if (clients.length > ROUTE_MAX_STOPS) throw new Error('Demo clients exceed the route stop limit')
   const locations = [depot, ...clients]
   const result = await matrix({ origins: locations, destinations: locations })
   const segments = new Set(result.segments.map((segment) => `${segment.fromId}\u0000${segment.toId}`))
@@ -247,11 +301,12 @@ export const upsertFixture = async (
   payload: Record<string, unknown>,
   now: Date
 ): Promise<FixtureOutcome> => {
+  const { createdAt, ...fields } = payload
   const result = await collection.updateOne(
     { _id: id, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: key },
     {
-      $set: { ...payload, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: key, updatedAt: now },
-      $setOnInsert: { _id: id, createdAt: now }
+      $set: { ...fields, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: key, updatedAt: now },
+      $setOnInsert: { _id: id, createdAt: createdAt ?? now }
     },
     { upsert: true }
   )
@@ -265,8 +320,8 @@ const recordOutcome = (summary: DemoSummary, collection: string, outcome: Fixtur
   summary.collections[collection] = (summary.collections[collection] ?? 0) + 1
 }
 
-const resolveServiceDate = (value: string | undefined): Date => {
-  const serviceDate = value === undefined || value.trim() === '' ? DEFAULT_SERVICE_DATE : value.trim()
+const resolveServiceDate = (value: string | undefined, now: Date): Date => {
+  const serviceDate = value === undefined || value.trim() === '' ? now.toISOString().slice(0, 10) : value.trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) throw new Error('DEMO_SERVICE_DATE must be a YYYY-MM-DD date')
   const date = new Date(`${serviceDate}T00:00:00.000Z`)
   const [year, month, day] = serviceDate.split('-').map(Number)
@@ -275,6 +330,26 @@ const resolveServiceDate = (value: string | undefined): Date => {
   }
   return date
 }
+
+const financeDate = (key: string, day: number, anchor: Date): Date => {
+  const date = new Date(`${key}-${String(day).padStart(2, '0')}T12:00:00.000Z`)
+  return date > anchor ? new Date(anchor) : date
+}
+
+const financePeriods = (anchor: Date): Array<{ key: string, date: Date, saleTotal: number, buyTotal: number, expenseCents: number }> =>
+  Array.from({ length: 6 }, (_, index) => {
+    const month = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 5 + index, 1))
+    const key = month.toISOString().slice(0, 7)
+    const absoluteIndex = (month.getUTCFullYear() - 2026) * 12 + month.getUTCMonth() - 4
+    const legacy = LEGACY_FINANCE_TOTALS[absoluteIndex]
+    return {
+      key,
+      date: financeDate(key, key === '2026-10' ? 10 : 15, anchor),
+      saleTotal: legacy?.saleTotal ?? 15800 + Math.max(0, absoluteIndex) * 1150,
+      buyTotal: legacy?.buyTotal ?? 7200 + Math.max(0, absoluteIndex) * 650,
+      expenseCents: legacy?.expenseCents ?? 130000 + Math.max(0, absoluteIndex) * 21000
+    }
+  })
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
@@ -331,6 +406,12 @@ const prepareSeed = async (
 ): Promise<{ depot: GeocodedLocation, clients: GeocodedLocation[], snapshots: PreparedSnapshot[] }> => {
   const depot = await geocodeLocation(DEMO_ADDRESS_SPECS[0], providers.geocoder)
   const clients = await Promise.all(DEMO_ADDRESS_SPECS.slice(1).map(async (spec) => await geocodeLocation(spec, providers.geocoder)))
+  const places = [depot, ...clients]
+  if (new Set(places.map((location) => location.placeId)).size !== places.length ||
+      new Set(places.map((location) => `${location.latitude}:${location.longitude}`)).size !== places.length ||
+      places.some((location) => !/san miguel de tucum[aá]n/i.test(location.formattedAddress))) {
+    throw new Error('Demo geocoding did not resolve distinct locations in San Miguel de Tucumán')
+  }
   const matrix = await validateRoadConnectivity(depot, clients, providers.matrix)
   const snapshots: PreparedSnapshot[] = []
 
@@ -379,7 +460,7 @@ const buildSnapshot = (
   saleIds: string[]
 ): Record<string, unknown> => {
   const stops: RoutePlanStop[] = snapshot.clients.map((client, index) => ({
-    clientId: client.id,
+    clientId: String(fixtureObjectId(client.key)),
     saleIds: [saleIds[index]],
     sequence: index + 1,
     latitude: client.latitude,
@@ -477,6 +558,41 @@ const seedPreparedData = async (
     proveedor: providerId
   })
 
+  const categoryIds: Types.ObjectId[] = []
+  const brandIds: Types.ObjectId[] = []
+  const providerIds: Types.ObjectId[] = []
+  for (const [index, name] of DEMO_CATEGORIES.entries()) {
+    const id = fixtureObjectId(`catalog:category:${index + 1}`)
+    categoryIds.push(id)
+    await write('categories', `catalog:category:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+  }
+  for (const [index, name] of DEMO_BRANDS.entries()) {
+    const id = fixtureObjectId(`catalog:brand:${index + 1}`)
+    brandIds.push(id)
+    await write('brands', `catalog:brand:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+  }
+  for (const [index, name] of DEMO_PROVIDERS.entries()) {
+    const id = fixtureObjectId(`catalog:provider:${index + 1}`)
+    providerIds.push(id)
+    await write('providers', `catalog:provider:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+  }
+  for (const [categoryIndex, category] of DEMO_CATEGORIES.entries()) {
+    for (const [variantIndex, variant] of DEMO_VARIANTS.entries()) {
+      const key = `catalog:product:${categoryIndex + 1}:${variantIndex + 1}`
+      const purchasePrice = 80 + categoryIndex * 25 + variantIndex * 7
+      await write('products', key, fixtureObjectId(key), {
+        descripcion: `GZ Demo ${category} ${variant}`,
+        stock: 120 + variantIndex * 10,
+        codigoBarra: `GZ-DEMO-${categoryIndex + 1}-${String(variantIndex + 1).padStart(2, '0')}`,
+        precioCompra: purchasePrice,
+        precioUnitario: purchasePrice + 40,
+        categoria: categoryIds[categoryIndex],
+        marca: brandIds[(categoryIndex + variantIndex) % brandIds.length],
+        proveedor: providerIds[(categoryIndex + variantIndex) % providerIds.length]
+      })
+    }
+  }
+
   const zoneIds = new Map<string, Types.ObjectId>()
   for (const zone of DEMO_ZONES) {
     const id = fixtureObjectId(`zone:${zone.key}`)
@@ -557,12 +673,12 @@ const seedPreparedData = async (
     await write('routeplans', `route-snapshot:${snapshot.zoneKey}`, fixtureObjectId(`route-snapshot:${snapshot.zoneKey}`), buildSnapshot(snapshot, depot, serviceDate, adminId, vehicleId, saleIds))
   }
 
-  for (let index = 0; index < FINANCE_PERIODS.length; index += 1) {
-    const period = FINANCE_PERIODS[index]
+  for (const period of financePeriods(serviceDate)) {
+    const index = (Number(period.key.slice(0, 4)) - 2026) * 12 + Number(period.key.slice(5)) - 5
     const client = prepared.clients[index % prepared.clients.length]
     const clientId = clientIds.get(client.key)
     if (clientId === undefined) throw new Error('Finance fixture client identifier is missing')
-    const date = new Date(period.date)
+    const date = period.date
     const saleId = fixtureObjectId(`finance:sale:${period.key}`)
     await write('sales', `finance:sale:${period.key}`, saleId, {
       estado: 'COMPLETED',
@@ -615,6 +731,75 @@ const seedPreparedData = async (
       createdBy: adminId,
       isDeleted: false
     })
+
+    for (let saleIndex = 1; saleIndex <= 20; saleIndex += 1) {
+      const key = `finance:sale:${period.key}:${saleIndex}`
+      const saleClient = prepared.clients[(index * 20 + saleIndex) % prepared.clients.length]
+      const saleClientId = clientIds.get(saleClient.key)
+      if (saleClientId === undefined) throw new Error('Finance fixture client identifier is missing')
+      const paidAt = financeDate(period.key, saleIndex, serviceDate)
+      const total = 900 + index * 135 + saleIndex * 47
+      const id = fixtureObjectId(key)
+      await write('sales', key, id, {
+        estado: 'COMPLETED',
+        total,
+        user: adminId,
+        cliente: saleClient.name,
+        idCliente: saleClientId,
+        paidAt,
+        createdAt: paidAt,
+        delivery: { status: SALE_DELIVERY_STATUS.DELIVERED, deliveredAt: paidAt }
+      })
+      await write('itemsales', `finance:item-sale:${period.key}:${saleIndex}`, fixtureObjectId(`finance:item-sale:${period.key}:${saleIndex}`), {
+        idVenta: id,
+        idProducto: fixtureObjectId(`catalog:product:${(saleIndex % DEMO_CATEGORIES.length) + 1}:${(saleIndex % DEMO_VARIANTS.length) + 1}`),
+        cantidad: 1,
+        total,
+        estado: true,
+        precioUnitario: total
+      })
+    }
+
+    for (let buyIndex = 1; buyIndex <= 6; buyIndex += 1) {
+      const key = `finance:buy:${period.key}:${buyIndex}`
+      const date = financeDate(period.key, buyIndex + 4, serviceDate)
+      const total = 2500 + index * 270 + buyIndex * 115
+      const id = fixtureObjectId(key)
+      await write('buys', key, id, {
+        estado: 'paid',
+        total,
+        user: adminId,
+        proveedor: `GZ Demo ${DEMO_PROVIDERS[(buyIndex - 1) % DEMO_PROVIDERS.length]}`,
+        fecha: date,
+        paidAt: date,
+        createdAt: date,
+        docNumber: `GZ-DEMO-${period.key}-${buyIndex}`
+      })
+      await write('itembuys', `finance:item-buy:${period.key}:${buyIndex}`, fixtureObjectId(`finance:item-buy:${period.key}:${buyIndex}`), {
+        idBuy: id,
+        idProducto: fixtureObjectId(`catalog:product:1:${buyIndex}`),
+        cantidad: 10,
+        total,
+        precio: total / 10,
+        estado: true
+      })
+    }
+
+    for (let expenseIndex = 1; expenseIndex <= 10; expenseIndex += 1) {
+      const key = `finance:expense:${period.key}:${expenseIndex}`
+      await write('expenses', key, fixtureObjectId(key), {
+        date: financeDate(period.key, expenseIndex + 10, serviceDate),
+        amountCents: 15000 + index * 2000 + expenseIndex * 700,
+        currency: 'ARS',
+        category: ['Fuel', 'Utilities', 'Operations', 'Rent'][expenseIndex % 4],
+        type: EXPENSE_TYPE.OPERATIVO,
+        paymentMethod: PAYMENT_METHOD.TRANSFERENCIA,
+        description: `GZ demo operating expense ${period.key} ${expenseIndex}`,
+        relatedTo: { kind: RELATED_KIND.NONE },
+        createdBy: adminId,
+        isDeleted: false
+      })
+    }
   }
 
   await write('cashflowconfigs', 'finance:cashflow-config', fixtureObjectId('finance:cashflow-config'), {
@@ -638,7 +823,8 @@ export const runDemoSeed = async (input: {
     return { dryRun: true, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length }
   }
   if (input.database === undefined || input.providers === undefined) throw new Error('Demo seed dependencies are not configured')
-  const serviceDate = input.serviceDate ?? resolveServiceDate(undefined)
+  const serviceDate = input.serviceDate ?? resolveServiceDate(undefined, input.now ?? new Date())
+  if (Number.isNaN(serviceDate.getTime())) throw new Error('DEMO_SERVICE_DATE must be a real calendar date')
   const prepared = await prepareSeed(input.providers)
   const summary = await seedPreparedData(input.database, prepared, serviceDate, input.now ?? new Date())
   return { dryRun: false, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length, summary }
@@ -663,7 +849,7 @@ const mongoDatabase = (): DemoDatabase => {
 
 const printResult = (result: DemoSeedResult): void => {
   if (result.dryRun) {
-    process.stdout.write(`Demo seed dry run: ${result.addressCount} provider-resolved addresses planned for ${result.target.remote ? 'remote' : 'local'} database ${result.target.database}\n`)
+    process.stdout.write(`Demo seed dry run: ${result.addressCount} candidate addresses planned for ${result.target.remote ? 'remote' : 'local'} database ${result.target.database}\n`)
     process.stdout.write('No database connection, geocoding request, or write was performed.\n')
     return
   }
@@ -689,7 +875,7 @@ const main = async (): Promise<void> => {
       dryRun: false,
       database: mongoDatabase(),
       providers: { geocoder: geocode, matrix: computeMatrix, route: computeRoute },
-      serviceDate: resolveServiceDate(process.env.DEMO_SERVICE_DATE)
+      serviceDate: resolveServiceDate(process.env.DEMO_SERVICE_DATE, new Date())
     })
     printResult(result)
   } finally {
