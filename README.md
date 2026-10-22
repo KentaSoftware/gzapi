@@ -255,7 +255,7 @@ the target guard runs before the dry-run decision. The second command performs
 the actual writes:
 
 ```bash
-vercel env run -e production -- npm run seed:demo -- --dry-run
+vercel env run -e production -- npm run seed:demo -- --dry-run --confirm-remote
 vercel env run -e production -- npm run seed:demo -- --confirm-remote
 ```
 
