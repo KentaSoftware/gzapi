@@ -4,6 +4,7 @@ import ProductAliasModel from '../models/productAlias'
 import CatalogVersionModel from '../models/catalogVersion'
 import ProviderModel from '../models/provider'
 import { normalizeText, normalizeBarcode } from '../utils/normalize'
+import { FUZZY_MIN_SCORE, extractSearchTokens, fuzzyScore } from '../utils/fuzzy'
 import {
   CatalogSnapshotResponse,
   CatalogVersionResponse,
@@ -167,8 +168,88 @@ export const getCatalogSnapshotService = async (
   }
 }
 
+/** Pool máximo de candidatos que se traen para puntuar con similitud difusa. */
+const FUZZY_CANDIDATE_POOL = 200
+
+/** Candidatos mínimos del proveedor antes de caer al catálogo global. */
+const MIN_PROVIDER_CANDIDATES = 10
+
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 /**
- * Búsqueda de productos para matching
+ * Trae productos que coinciden con el filtro indicado, ya proyectados con los
+ * datos de proveedor, marca y categoría. Reutilizado por la búsqueda exacta,
+ * la difusa y el fallback global.
+ */
+const aggregateDescriptionCandidates = async (match: any, limit: number): Promise<any[]> =>
+  ProductModel.aggregate([
+    { $match: match },
+    {
+      $lookup: {
+        from: 'providers',
+        localField: 'proveedor',
+        foreignField: '_id',
+        as: 'providerData'
+      }
+    },
+    {
+      $lookup: {
+        from: 'brands',
+        localField: 'marca',
+        foreignField: '_id',
+        as: 'brandData'
+      }
+    },
+    {
+      $lookup: {
+        from: 'categories',
+        localField: 'categoria',
+        foreignField: '_id',
+        as: 'categoryData'
+      }
+    },
+    { $unwind: { path: '$providerData', preserveNullAndEmptyArrays: true } },
+    { $unwind: { path: '$brandData', preserveNullAndEmptyArrays: true } },
+    { $unwind: { path: '$categoryData', preserveNullAndEmptyArrays: true } },
+    {
+      $project: {
+        productId: '$_id',
+        name: '$descripcion',
+        barcode: '$codigoBarra',
+        providerId: '$proveedor',
+        providerName: '$providerData.descripcion',
+        brandId: '$marca',
+        brandName: '$brandData.descripcion',
+        categoryId: '$categoria',
+        categoryName: '$categoryData.descripcion'
+      }
+    },
+    { $limit: limit }
+  ])
+
+/**
+ * Construye una consulta OR por tokens: recupera candidatos aunque el OCR haya
+ * deformado alguna palabra. Después se puntúan con fuzzyScore.
+ */
+const buildTokenQuery = (q: string, providerId?: string): any | null => {
+  const tokens = extractSearchTokens(q)
+  if (tokens.length === 0) return null
+
+  const query: any = {
+    $or: tokens.map(token => ({ descripcion: { $regex: escapeRegex(token), $options: 'i' } }))
+  }
+
+  if (providerId) {
+    query.proveedor = new Types.ObjectId(providerId)
+  }
+
+  return query
+}
+
+/**
+ * Búsqueda de productos para matching (PS-T10).
+ * Orden de prioridad: código de barras exacto → alias exacto → descripción exacta
+ * → similitud difusa → fallback global cuando el proveedor no alcanza el mínimo.
  */
 export const searchProductsService = async (
   query: ProductSearchQuery
@@ -349,50 +430,7 @@ export const searchProductsService = async (
       descQuery.proveedor = new Types.ObjectId(providerId)
     }
 
-    const descMatches = await ProductModel.aggregate([
-      { $match: descQuery },
-      {
-        $lookup: {
-          from: 'providers',
-          localField: 'proveedor',
-          foreignField: '_id',
-          as: 'providerData'
-        }
-      },
-      {
-        $lookup: {
-          from: 'brands',
-          localField: 'marca',
-          foreignField: '_id',
-          as: 'brandData'
-        }
-      },
-      {
-        $lookup: {
-          from: 'categories',
-          localField: 'categoria',
-          foreignField: '_id',
-          as: 'categoryData'
-        }
-      },
-      { $unwind: { path: '$providerData', preserveNullAndEmptyArrays: true } },
-      { $unwind: { path: '$brandData', preserveNullAndEmptyArrays: true } },
-      { $unwind: { path: '$categoryData', preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          productId: '$_id',
-          name: '$descripcion',
-          barcode: '$codigoBarra',
-          providerId: '$proveedor',
-          providerName: '$providerData.descripcion',
-          brandId: '$marca',
-          brandName: '$brandData.descripcion',
-          categoryId: '$categoria',
-          categoryName: '$categoryData.descripcion'
-        }
-      },
-      { $limit: limit }
-    ])
+    const descMatches = await aggregateDescriptionCandidates(descQuery, limit)
 
     for (const match of descMatches) {
       // Evitar duplicados si ya lo encontramos por alias
@@ -410,7 +448,76 @@ export const searchProductsService = async (
           categoryId: match.categoryId.toString(),
           categoryName: match.categoryName || '',
           matchScore: 0.5, // Score menor para regex
-          matchSource: 'DESCRIPTION'
+          matchSource: 'DESCRIPTION',
+          matchScope: 'PROVIDER'
+        })
+      }
+    }
+
+    // Búsqueda difusa: tolera errores de OCR en las palabras
+    if (results.length < limit) {
+      const fuzzyQuery = buildTokenQuery(q, providerId)
+
+      if (fuzzyQuery !== null) {
+        const fuzzyCandidates = await aggregateDescriptionCandidates(fuzzyQuery, FUZZY_CANDIDATE_POOL)
+
+        for (const candidate of fuzzyCandidates) {
+          if (results.some(r => r.productId === candidate.productId.toString())) continue
+
+          const score = fuzzyScore(q, candidate.name)
+          if (score < FUZZY_MIN_SCORE) continue
+
+          results.push({
+            productId: candidate.productId.toString(),
+            name: candidate.name,
+            normalizedName: normalizeText(candidate.name),
+            barcode: candidate.barcode || null,
+            providerId: candidate.providerId.toString(),
+            providerName: candidate.providerName || '',
+            brandId: candidate.brandId.toString(),
+            brandName: candidate.brandName || '',
+            categoryId: candidate.categoryId.toString(),
+            categoryName: candidate.categoryName || '',
+            matchScore: score,
+            matchSource: 'FUZZY',
+            matchScope: 'PROVIDER'
+          })
+        }
+      }
+    }
+  }
+
+  // Fallback global: si el proveedor no alcanza el mínimo de candidatos
+  if (q && providerId && results.length < MIN_PROVIDER_CANDIDATES) {
+    const globalQuery = buildTokenQuery(q)
+
+    if (globalQuery !== null) {
+      const globalCandidates = await aggregateDescriptionCandidates(
+        globalQuery,
+        FUZZY_CANDIDATE_POOL
+      )
+
+      for (const candidate of globalCandidates) {
+        if (results.some(r => r.productId === candidate.productId.toString())) continue
+        if (candidate.providerId.toString() === providerId) continue
+
+        const score = fuzzyScore(q, candidate.name)
+        if (score < FUZZY_MIN_SCORE) continue
+
+        results.push({
+          productId: candidate.productId.toString(),
+          name: candidate.name,
+          normalizedName: normalizeText(candidate.name),
+          barcode: candidate.barcode || null,
+          providerId: candidate.providerId.toString(),
+          providerName: candidate.providerName || '',
+          brandId: candidate.brandId.toString(),
+          brandName: candidate.brandName || '',
+          categoryId: candidate.categoryId.toString(),
+          categoryName: candidate.categoryName || '',
+          matchScore: score,
+          matchSource: 'FUZZY',
+          matchScope: 'GLOBAL'
         })
       }
     }

@@ -187,7 +187,9 @@ export interface ProductSearchResult {
   categoryId: string
   categoryName: string
   matchScore?: number
-  matchSource?: 'BARCODE' | 'DESCRIPTION' | 'ALIAS'
+  matchSource?: 'BARCODE' | 'DESCRIPTION' | 'ALIAS' | 'FUZZY'
+  /** PROVIDER when the candidate belongs to the requested provider, GLOBAL when it came from the fallback. */
+  matchScope?: 'PROVIDER' | 'GLOBAL'
 }
 
 // ============================================
