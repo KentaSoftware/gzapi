@@ -10,6 +10,7 @@ import {
   confirmMatch,
   batchSearch
 } from '../controllers/catalog'
+import { listAliases } from '../controllers/catalogAliases'
 
 const router = Router()
 
@@ -74,6 +75,17 @@ router.post('/search/batch', checkJwt, checkPermission('catalog_read'), batchSea
  * @body    confidence - Confianza 0-1 (optional, default: 0.95)
  */
 router.post('/aliases', checkJwt, checkPermission('catalog_write'), createOrUpdateAlias)
+
+/**
+ * @route   GET /catalog/aliases
+ * @desc    Lista paginada de aliases aprendidos de un proveedor
+ * @access  Private (catalog_read)
+ * @query   providerId - ID del proveedor (required)
+ * @query   aliasType - DESCRIPTION | BARCODE | SKU (optional)
+ * @query   limit - Cantidad por página (default: 100, max: 500)
+ * @query   cursor - Último _id de la página anterior (optional)
+ */
+router.get('/aliases', checkJwt, checkPermission('catalog_read'), listAliases)
 
 /**
  * @route   POST /catalog/matches/confirm

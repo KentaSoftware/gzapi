@@ -125,6 +125,63 @@ export const getAliasesByProvider = async (
     .lean()
 }
 
+export interface AliasPageItem {
+  aliasType: AliasType
+  aliasValueNormalized: string
+  productId: string
+  confidence: number
+}
+
+export interface AliasPage {
+  aliases: AliasPageItem[]
+  nextCursor: string | null
+}
+
+/**
+ * Listado paginado de aliases activos de un proveedor, ordenado por _id ascendente.
+ * La forma de cada alias coincide con la que expone el snapshot del catálogo.
+ * El cursor es el _id del último registro de la página; no se expone en la respuesta.
+ */
+export const listAliasesByProvider = async (
+  providerId: string,
+  options?: { aliasType?: AliasType; limit?: number; cursor?: string }
+): Promise<AliasPage> => {
+  const limit = Math.min(Math.max(options?.limit ?? 100, 1), 500)
+
+  const query: any = {
+    providerId: new Types.ObjectId(providerId),
+    isActive: true
+  }
+
+  if (options?.aliasType !== undefined) {
+    query.aliasType = options.aliasType
+  }
+
+  if (options?.cursor !== undefined) {
+    query._id = { $gt: new Types.ObjectId(options.cursor) }
+  }
+
+  const docs = await ProductAliasModel.find(query)
+    .sort({ _id: 1 })
+    .limit(limit + 1)
+    .select('aliasType aliasValueNormalized productId confidence')
+    .lean()
+
+  const hasMore = docs.length > limit
+  const page = hasMore ? docs.slice(0, limit) : docs
+  const last = page[page.length - 1]
+
+  return {
+    aliases: page.map(alias => ({
+      aliasType: alias.aliasType,
+      aliasValueNormalized: alias.aliasValueNormalized,
+      productId: alias.productId.toString(),
+      confidence: alias.confidence
+    })),
+    nextCursor: hasMore && last ? String(last._id) : null
+  }
+}
+
 /**
  * Buscar alias exacto
  */
