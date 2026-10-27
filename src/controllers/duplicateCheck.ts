@@ -163,7 +163,7 @@ export const getCheckHistory = async (req: RequestExt, res: Response) => {
       draftId
     })
       .sort({ createdAt: -1 })
-      .populate('decidedBy', 'nombre email')
+      .populate('decidedBy', 'nickname email')
       .lean()
 
     return res.status(200).json({

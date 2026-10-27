@@ -13,6 +13,8 @@ export interface Buy {
   paidAt?: Date
   /** Compra principal (la primera registrada) cuando se aceptó un duplicado. */
   duplicateOf?: Types.ObjectId
+  /** El usuario descartó la advertencia: se revisó y no era un duplicado. */
+  duplicateDismissed?: boolean
 }
 
 export interface ItemBuy {

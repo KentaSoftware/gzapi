@@ -2,6 +2,7 @@ import { Types } from 'mongoose'
 import DraftPurchaseDocModel from '../models/draftPurchaseDoc'
 import BuyModel from '../models/buy'
 import ProductModel from '../models/product'
+import PurchaseDocDuplicateCheckModel from '../models/purchaseDocDuplicateCheck'
 import {
   DraftPurchaseDoc,
   DraftStatus,
@@ -9,11 +10,12 @@ import {
   PossibleDuplicate,
   ConfirmItem,
   NewProductData,
-  HeaderEdits
+  HeaderEdits,
+  DuplicateDecisionData
 } from '../interfaces/draftPurchaseDoc.interface'
 import { checkForDuplicates } from './duplicateCheck'
 import { describeDocumentAiFailure, userFacingDocumentAiFailure } from './documentAiError'
-import { pickPrimaryDuplicate } from './duplicateFlag'
+import { pickPrimaryDuplicate, toCheckDecision } from './duplicateFlag'
 import { CheckDuplicateRequestDTO } from '../interfaces/duplicateCheck.interface'
 import { insertItemBuy } from './itemBuy'
 import * as fs from 'fs'
@@ -322,8 +324,8 @@ export const runDuplicateCheck = async (
       fingerprint: `${analysis.header.providerId}-${analysis.header.documentDate}-${analysis.header.total}`
     }
 
-    // Llamar al servicio de duplicate check
-    const duplicateResult = await checkForDuplicates(checkRequest)
+    // Llamar al servicio de duplicate check (con draft y usuario para que quede auditado)
+    const duplicateResult = await checkForDuplicates(checkRequest, draftId.toString())
 
     // Mapear respuesta al formato PossibleDuplicate
     const possibleDuplicate: PossibleDuplicate = {
@@ -441,7 +443,7 @@ export const confirmDraft = async (
   userId: Types.ObjectId,
   headerEdits?: HeaderEdits,
   items?: ConfirmItem[],
-  duplicateDecision?: { checkId?: string; decision?: 'CANCEL' | 'PROCEED'; reason?: string }
+  duplicateDecision?: DuplicateDecisionData
 ): Promise<{ buyId: Types.ObjectId; draftId: Types.ObjectId }> => {
   // 1. Validar que draft existe y está READY
   const draft = await getDraftById(draftId)
@@ -521,12 +523,21 @@ export const confirmDraft = async (
   }
 
   // 5. Crear compra (Buy)
-  // Si el usuario aceptó un duplicado, la compra queda marcada con la principal:
-  // la primera registrada entre los comprobantes detectados.
+  // Tres escenarios posibles ante una advertencia de duplicado:
+  //  - PROCEED: se acepta el duplicado y la compra queda marcada con la principal.
+  //  - NOT_DUPLICATE: el usuario descarta la advertencia (puede ser un error de
+  //    lectura del comprobante); se registra como compra distinta, sin marca y
+  //    con el rastro de que la advertencia fue revisada.
+  //  - CANCEL: ya se rechazó arriba.
+  const hadDuplicateWarning = Boolean(draft.possibleDuplicate?.duplicates?.length)
+
   const duplicateOf =
-    duplicateDecision?.decision === 'PROCEED' && draft.possibleDuplicate?.duplicates?.length
-      ? pickPrimaryDuplicate(draft.possibleDuplicate.duplicates.map(dup => dup.purchaseId))
+    hadDuplicateWarning && duplicateDecision?.decision === 'PROCEED'
+      ? pickPrimaryDuplicate(draft.possibleDuplicate!.duplicates.map(dup => dup.purchaseId))
       : null
+
+  const duplicateDismissed =
+    hadDuplicateWarning && duplicateDecision?.decision === 'NOT_DUPLICATE' ? true : undefined
 
   const buy = await BuyModel.create({
     estado: 'activo',
@@ -536,11 +547,14 @@ export const confirmDraft = async (
     fecha: header.documentDate ? new Date(header.documentDate) : new Date(),
     docNumber: header.documentNumber,
     fingerprint: `${header.providerId}-${header.documentDate}-${header.total}`, // Simple fingerprint
-    ...(duplicateOf ? { duplicateOf: new Types.ObjectId(duplicateOf) } : {})
+    ...(duplicateOf ? { duplicateOf: new Types.ObjectId(duplicateOf) } : {}),
+    ...(duplicateDismissed ? { duplicateDismissed } : {})
   })
 
   console.log(
-    `[Confirm Draft] Compra creada: ${buy._id}${duplicateOf ? ` (duplicada de ${duplicateOf})` : ''}`
+    `[Confirm Draft] Compra creada: ${buy._id}` +
+      (duplicateOf ? ` (duplicada de ${duplicateOf})` : '') +
+      (duplicateDismissed ? ' (advertencia de duplicado descartada)' : '')
   )
 
   // 6. Crear items de compra (ItemBuy)
@@ -568,7 +582,26 @@ export const confirmDraft = async (
     )
   )
 
-  // 8. Actualizar draft como confirmado
+  // 8. Registrar la decisión en el historial de checks de duplicado (auditoría)
+  const checkId = duplicateDecision?.checkId || draft.possibleDuplicate?.checkId
+  const checkDecision = toCheckDecision(duplicateDecision?.decision)
+
+  if (checkId && checkDecision && Types.ObjectId.isValid(checkId)) {
+    try {
+      await PurchaseDocDuplicateCheckModel.findByIdAndUpdate(checkId, {
+        $set: {
+          decision: checkDecision,
+          decidedAt: new Date(),
+          decidedBy: userId
+        }
+      })
+    } catch (decisionError) {
+      // No bloquear la confirmación por un problema de auditoría
+      console.error('[Confirm Draft] No se pudo registrar la decisión de duplicado:', decisionError)
+    }
+  }
+
+  // 9. Actualizar draft como confirmado
   await updateDraft(draftId, {
     status: DraftStatus.CONFIRMED,
     confirmedBuyId: buy._id as Types.ObjectId,

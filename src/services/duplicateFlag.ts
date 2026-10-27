@@ -22,3 +22,22 @@ export function pickPrimaryDuplicate(
 
   return valid.length > 0 ? valid[0].id : null;
 }
+
+/**
+ * Traduce la decisión del wizard al vocabulario del historial de checks.
+ * Devuelve null cuando no hubo decisión que registrar.
+ */
+export function toCheckDecision(
+  decision?: 'CANCEL' | 'PROCEED' | 'NOT_DUPLICATE'
+): 'CANCEL' | 'CONTINUE' | 'NOT_DUPLICATE' | null {
+  switch (decision) {
+    case 'CANCEL':
+      return 'CANCEL';
+    case 'PROCEED':
+      return 'CONTINUE';
+    case 'NOT_DUPLICATE':
+      return 'NOT_DUPLICATE';
+    default:
+      return null;
+  }
+}

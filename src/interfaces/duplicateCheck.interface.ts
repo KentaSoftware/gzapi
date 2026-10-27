@@ -26,6 +26,7 @@ export enum MatchReason {
 export enum DuplicateDecision {
   CANCEL = 'CANCEL',
   CONTINUE = 'CONTINUE',
+  NOT_DUPLICATE = 'NOT_DUPLICATE',
   NOT_PROMPTED = 'NOT_PROMPTED'
 }
 

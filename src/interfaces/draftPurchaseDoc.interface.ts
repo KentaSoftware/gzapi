@@ -209,7 +209,7 @@ export interface ConfirmItem {
  */
 export interface DuplicateDecisionData {
   checkId?: string
-  decision?: 'CANCEL' | 'PROCEED'
+  decision?: 'CANCEL' | 'PROCEED' | 'NOT_DUPLICATE'
   reason?: string
 }
 

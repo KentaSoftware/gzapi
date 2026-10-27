@@ -39,6 +39,10 @@ const BuySchema = new Schema<Buy>(
       type: Schema.ObjectId,
       ref: 'buy',
       required: false
+    },
+    duplicateDismissed: {
+      type: Boolean,
+      required: false
     }
   },
   {

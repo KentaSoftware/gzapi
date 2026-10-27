@@ -85,7 +85,7 @@ const PurchaseDocDuplicateCheckSchema = new Schema<PurchaseDocDuplicateCheck>(
     },
     decidedBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'user',
       required: false
     }
   },
