@@ -26,11 +26,12 @@ import {
 // ─── Exported helpers (also used by unit tests directly) ─────────────────────
 
 /**
- * Resolves the effective cash date for a document.
- * Priority chain: paidAt → fecha → createdAt
+ * Resuelve la efectiva cash date para un documento.
+ * Priority chain: paidAt → fecha → date → createdAt
+ * `fecha` es el campo de ventas y compras; `date` el de egresos (PS-T25).
  */
 export function resolveCashDate (doc: any): Date {
-  return doc.paidAt ?? doc.fecha ?? doc.createdAt
+  return doc.paidAt ?? doc.fecha ?? doc.date ?? doc.createdAt
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * TICKET-003: CashflowService — Unit Tests
+ * TICKET-003: CashflowService â€” Unit Tests
  * Change: cash-flow-real-v1
  *
  * Covers all REQ scenarios from specs/cashflow-derivation/spec.md:
@@ -10,7 +10,7 @@
  *   - REQ: Outflow Filter Expense
  *   - REQ: Period Filter
  *
- * Strategy: pure-unit tests — CashflowService methods are exercised with
+ * Strategy: pure-unit tests â€” CashflowService methods are exercised with
  * in-memory mock documents (no DB connection required). We import the
  * internal helpers by accessing them through the service interface.
  *
@@ -24,15 +24,15 @@ const { expect } = require('chai')
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { resolveCashDate, buildMovements, filterByPeriod } = require('../src/services/cashflow')
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function makeDate (iso: string): Date {
   return new Date(iso)
 }
 
-// ─── REQ: Cash-Date Resolution ────────────────────────────────────────────────
+// â”€â”€â”€ REQ: Cash-Date Resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-describe('TICKET-003 — resolveCashDate', () => {
+describe('TICKET-003 â€” resolveCashDate', () => {
   it('returns paidAt when set (paidAt > fecha > createdAt)', () => {
     const doc = {
       paidAt: makeDate('2026-03-15'),
@@ -58,17 +58,17 @@ describe('TICKET-003 — resolveCashDate', () => {
   })
 })
 
-// ─── REQ: Amount Normalization + Inflow/Outflow Filters ──────────────────────
+// â”€â”€â”€ REQ: Amount Normalization + Inflow/Outflow Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-describe('TICKET-003 — buildMovements (normalization + filters)', () => {
+describe('TICKET-003 â€” buildMovements (normalization + filters)', () => {
   const period = {
     startDate: makeDate('2026-03-01'),
     endDate: makeDate('2026-03-31T23:59:59.999Z')
   }
 
-  // ── Amount Normalization ──
+  // â”€â”€ Amount Normalization â”€â”€
 
-  it('normalizes Expense.amountCents ÷ 100', () => {
+  it('normalizes Expense.amountCents Ã· 100', () => {
     const expenses = [
       {
         _id: 'exp1',
@@ -116,7 +116,7 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     expect(buy.amount).to.equal(800.00)
   })
 
-  // ── Inflow Filter (Sale) ──
+  // â”€â”€ Inflow Filter (Sale) â”€â”€
 
   it('includes Sale with estado != Cancelado as inflow', () => {
     const sales = [
@@ -134,7 +134,7 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     expect(result.some((m: any) => m.source === 'sale')).to.equal(false)
   })
 
-  // ── Outflow Filter (Buy) ──
+  // â”€â”€ Outflow Filter (Buy) â”€â”€
 
   it('includes Buy with estado = paid as outflow', () => {
     const buys = [
@@ -152,7 +152,7 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
     expect(result.some((m: any) => m.source === 'buy')).to.equal(false)
   })
 
-  // ── Outflow Filter (Expense) ──
+  // â”€â”€ Outflow Filter (Expense) â”€â”€
 
   it('includes Expense with isDeleted = false as outflow', () => {
     const expenses = [
@@ -171,9 +171,9 @@ describe('TICKET-003 — buildMovements (normalization + filters)', () => {
   })
 })
 
-// ─── REQ: Period Filter ───────────────────────────────────────────────────────
+// â”€â”€â”€ REQ: Period Filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-describe('TICKET-003 — filterByPeriod', () => {
+describe('TICKET-003 â€” filterByPeriod', () => {
   const start = makeDate('2026-03-01')
   const end = makeDate('2026-03-31T23:59:59.999Z')
 
@@ -199,5 +199,34 @@ describe('TICKET-003 — filterByPeriod', () => {
     ]
     const result = filterByPeriod(movements, start, end)
     expect(result).to.have.length(1)
+  })
+})
+
+// â”€â”€â”€ PS-T24: los egresos usan el campo `date`, no `fecha` â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+describe('PS-T24 - resolveCashDate incluye el campo date de los egresos', () => {
+  const makeDate = (iso: string) => new Date(iso)
+  const same = (a: Date, b: Date) => a.getTime() === b.getTime()
+
+  it('usa date cuando el documento no tiene paidAt ni fecha', () => {
+    const gasto = {
+      date: makeDate('2025-07-08T00:00:00.000Z'),
+      createdAt: makeDate('2026-10-27T18:29:09.000Z')
+    }
+    expect(same(resolveCashDate(gasto), makeDate('2025-07-08T00:00:00.000Z'))).to.equal(true)
+  })
+
+  it('mantiene createdAt como Ãºltimo recurso', () => {
+    const doc = { createdAt: makeDate('2026-01-01T00:00:00.000Z') }
+    expect(same(resolveCashDate(doc), makeDate('2026-01-01T00:00:00.000Z'))).to.equal(true)
+  })
+
+  it('sigue priorizando paidAt sobre date', () => {
+    const gasto = {
+      paidAt: makeDate('2025-07-20T00:00:00.000Z'),
+      date: makeDate('2025-07-08T00:00:00.000Z'),
+      createdAt: makeDate('2026-10-27T18:29:09.000Z')
+    }
+    expect(same(resolveCashDate(gasto), makeDate('2025-07-20T00:00:00.000Z'))).to.equal(true)
   })
 })
