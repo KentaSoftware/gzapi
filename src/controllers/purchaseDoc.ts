@@ -127,6 +127,24 @@ export const uploadPurchaseDoc = async (req: RequestExt, res: Response): Promise
 }
 
 /**
+ * PS-T23: traduce los rechazos de negocio de `confirmDraft` a un status de
+ * cliente. Devuelve null cuando el error es inesperado y debe ir como 500.
+ */
+const resolveConfirmBusinessStatus = (message: string): number | null => {
+  const normalized = message.toLowerCase()
+
+  if (normalized.includes('cancelada por duplicado')) return 409
+  if (normalized.includes('no está listo')) return 409
+  if (normalized.includes('decisión sobre duplicados')) return 409
+  if (normalized.includes('draft no encontrado')) return 404
+  if (normalized.includes('header incompleto')) return 400
+  if (normalized.includes('sin producto asignado')) return 400
+  if (normalized.includes('no hay items')) return 400
+
+  return null
+}
+
+/**
  * GET /purchase-docs/:draftId
  * Obtiene el estado actual de un draft
  */
@@ -230,8 +248,7 @@ export const listDrafts = async (req: RequestExt, res: Response): Promise<void> 
  * POST /purchase-docs/:draftId/confirm
  * Confirma un draft y crea la compra definitiva
  */
-export const confirmPurchaseDoc = async (req: RequestExt, res: Response): Promise<void> => {
-  try {
+export const confirmPurchaseDoc = async (req: RequestExt, res: Response): Promise<void> => {  try {
     const { draftId } = req.params
     const userId = new Types.ObjectId(req.user.id)
     const body: ConfirmPurchaseDocRequest = req.body
@@ -343,7 +360,19 @@ export const confirmPurchaseDoc = async (req: RequestExt, res: Response): Promis
       },
       message: 'Compra confirmada exitosamente'
     })
-  } catch (error) {
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : String(error)
+    const businessStatus = resolveConfirmBusinessStatus(message)
+
+    if (businessStatus !== null) {
+      console.warn(`[Confirm] Rechazo de negocio (${businessStatus}): ${message}`)
+      res.status(businessStatus).json({
+        success: false,
+        error: message
+      })
+      return
+    }
+
     console.error('[Confirm] Error:', error)
     handleHttp(res, 'ERROR_CONFIRM_PURCHASE_DOC', error)
   }
