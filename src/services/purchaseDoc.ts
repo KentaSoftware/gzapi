@@ -13,6 +13,7 @@ import {
 } from '../interfaces/draftPurchaseDoc.interface'
 import { checkForDuplicates } from './duplicateCheck'
 import { describeDocumentAiFailure, userFacingDocumentAiFailure } from './documentAiError'
+import { pickPrimaryDuplicate } from './duplicateFlag'
 import { CheckDuplicateRequestDTO } from '../interfaces/duplicateCheck.interface'
 import { insertItemBuy } from './itemBuy'
 import * as fs from 'fs'
@@ -520,6 +521,13 @@ export const confirmDraft = async (
   }
 
   // 5. Crear compra (Buy)
+  // Si el usuario aceptó un duplicado, la compra queda marcada con la principal:
+  // la primera registrada entre los comprobantes detectados.
+  const duplicateOf =
+    duplicateDecision?.decision === 'PROCEED' && draft.possibleDuplicate?.duplicates?.length
+      ? pickPrimaryDuplicate(draft.possibleDuplicate.duplicates.map(dup => dup.purchaseId))
+      : null
+
   const buy = await BuyModel.create({
     estado: 'activo',
     total: header.total,
@@ -527,10 +535,13 @@ export const confirmDraft = async (
     proveedor: header.providerId,
     fecha: header.documentDate ? new Date(header.documentDate) : new Date(),
     docNumber: header.documentNumber,
-    fingerprint: `${header.providerId}-${header.documentDate}-${header.total}` // Simple fingerprint
+    fingerprint: `${header.providerId}-${header.documentDate}-${header.total}`, // Simple fingerprint
+    ...(duplicateOf ? { duplicateOf: new Types.ObjectId(duplicateOf) } : {})
   })
 
-  console.log(`[Confirm Draft] Compra creada: ${buy._id}`)
+  console.log(
+    `[Confirm Draft] Compra creada: ${buy._id}${duplicateOf ? ` (duplicada de ${duplicateOf})` : ''}`
+  )
 
   // 6. Crear items de compra (ItemBuy)
   await Promise.all(

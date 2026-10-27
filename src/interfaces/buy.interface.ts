@@ -11,6 +11,8 @@ export interface Buy {
   docNumber?: string
   fingerprint?: string
   paidAt?: Date
+  /** Compra principal (la primera registrada) cuando se aceptó un duplicado. */
+  duplicateOf?: Types.ObjectId
 }
 
 export interface ItemBuy {

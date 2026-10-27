@@ -34,6 +34,11 @@ const BuySchema = new Schema<Buy>(
     paidAt: {
       type: Date,
       required: false
+    },
+    duplicateOf: {
+      type: Schema.ObjectId,
+      ref: 'buy',
+      required: false
     }
   },
   {
