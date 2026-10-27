@@ -636,18 +636,21 @@ class ExpenseService {
       {
         $group: {
           _id: null,
-          totalCents: { $sum: '$amountCents' }
+          totalCents: { $sum: '$amountCents' },
+          count: { $sum: 1 }
         }
       }
     ]
 
     const result = await ExpenseModel.aggregate(pipeline)
     const totalCents = result[0]?.totalCents || 0
+    const count = result[0]?.count || 0
     const totalAmount = parseFloat((totalCents / 100).toFixed(2))
 
     return {
       totalCents,
       totalAmount,
+      count,
       currency: 'ARS'
     }
   }
