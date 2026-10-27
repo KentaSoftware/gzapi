@@ -145,14 +145,46 @@ describe('PS-T14 — analyzeDraftWithAI contract', () => {
     }
   })
 
-  it('degrades instead of throwing when the body is not JSON', async () => {
+  it('rejects a non-JSON body instead of degrading, after three attempts', async () => {
     stubFs()
-    sinon.stub(axios, 'post').resolves({ data: '<html>Bad Gateway</html>' } as any)
+    const post = sinon.stub(axios, 'post').resolves({ data: '<html>Bad Gateway</html>' } as any)
 
-    const result = await analyzeDraftWithAI(makeDraft(), 'Bearer test')
+    const clock = sinon.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      let captured: any = null
+      const promise = analyzeDraftWithAI(makeDraft(), 'Bearer test').catch((error: any) => {
+        captured = error
+      })
 
-    // Documented behaviour: a non-JSON body does not throw, it produces a degraded result.
-    expect(result).to.be.an('object')
-    expect(Array.isArray((result as any).items)).to.equal(true)
+      await clock.tickAsync(10000)
+      await promise
+
+      expect(post.callCount).to.equal(3)
+      expect(captured).to.be.instanceOf(Error)
+      expect(captured.message).to.match(/respuesta inválida/i)
+    } finally {
+      clock.restore()
+    }
+  })
+
+  it('rejects a JSON body that is not an analysis', async () => {
+    stubFs()
+    sinon.stub(axios, 'post').resolves({ data: { detail: 'proxy error' } } as any)
+
+    const clock = sinon.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      let captured: any = null
+      const promise = analyzeDraftWithAI(makeDraft(), 'Bearer test').catch((error: any) => {
+        captured = error
+      })
+
+      await clock.tickAsync(10000)
+      await promise
+
+      expect(captured).to.be.instanceOf(Error)
+      expect(captured.message).to.match(/respuesta inválida/i)
+    } finally {
+      clock.restore()
+    }
   })
 })

@@ -28,6 +28,18 @@ const DOCUMENT_AI_DEBUG = parseInt(process.env.DOCUMENT_AI_DEBUG || '1', 10) // 
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
 /**
+ * Valida la forma mínima de una respuesta de Document AI (PS-T21).
+ * Sin esto, el HTML de un proxy se transformaba en un comprobante vacío.
+ */
+const isValidAnalyzePayload = (value: any): boolean =>
+  typeof value === 'object' &&
+  value !== null &&
+  !Array.isArray(value) &&
+  typeof value.header === 'object' &&
+  value.header !== null &&
+  Array.isArray(value.items)
+
+/**
  * Transforma el resultado de Document AI al formato esperado por DraftPurchaseDoc
  * Document AI devuelve objetos { value, origin, confidence, rawText }
  * Necesitamos extraer solo los valores simples
@@ -229,7 +241,13 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
 
       // Document AI devuelve el resultado directamente (no tiene wrapper success/data)
       const aiResult = response.data
-      
+
+      if (!isValidAnalyzePayload(aiResult)) {
+        throw new Error(
+          'Document AI devolvió una respuesta inválida: se esperaba un objeto con header e items'
+        )
+      }
+
       // Transformar resultado de Document AI al formato esperado por DraftPurchaseDoc
       const result: AnalyzeResult = transformDocumentAIResult(aiResult)
 
