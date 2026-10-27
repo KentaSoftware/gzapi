@@ -210,3 +210,43 @@ describe('TICKET-004 — updateConfig controller', () => {
     expect(res.json.calledWith({ config: { openingBalance: 8000 } })).to.equal(true)
   })
 })
+
+// ─── PS-T22: the end date must cover the whole day ──────────────────────────
+
+describe('PS-T22 — getSummary period boundaries', () => {
+  afterEach(() => sinon.restore())
+
+  it('expands a date-only endDate to the end of that day', async () => {
+    const compute = sinon.stub(cashflowService, 'computeSummary').resolves({
+      openingBalance: 0,
+      totalInflows: 0,
+      totalOutflows: 0,
+      netCashFlow: 0,
+      closingBalance: 0
+    })
+
+    const req = makeReq({ query: { startDate: '2026-10-27', endDate: '2026-10-27' } })
+    await getController().getSummary(req, makeRes())
+
+    const endDate: Date = compute.firstCall.args[1]
+    expect(endDate.toISOString()).to.equal('2026-10-27T23:59:59.999Z')
+  })
+
+  it('keeps an explicit time in endDate untouched', async () => {
+    const compute = sinon.stub(cashflowService, 'computeSummary').resolves({
+      openingBalance: 0,
+      totalInflows: 0,
+      totalOutflows: 0,
+      netCashFlow: 0,
+      closingBalance: 0
+    })
+
+    const req = makeReq({
+      query: { startDate: '2026-10-27T00:00:00.000Z', endDate: '2026-10-27T12:00:00.000Z' }
+    })
+    await getController().getSummary(req, makeRes())
+
+    const endDate: Date = compute.firstCall.args[1]
+    expect(endDate.toISOString()).to.equal('2026-10-27T12:00:00.000Z')
+  })
+})

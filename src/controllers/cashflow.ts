@@ -42,6 +42,14 @@ function parseDateRange (
     res.status(400).json({ error: 'startDate and endDate must be valid ISO date strings' })
     return null
   }
+
+  // PS-T22: a date-only endDate ("2026-10-27") parses as midnight, which excluded
+  // every movement of that same day. Expand it to the end of the day so the range
+  // stays inclusive, matching the KPI endpoints.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(e))) {
+    endDate.setUTCHours(23, 59, 59, 999)
+  }
+
   return { startDate, endDate }
 }
 
