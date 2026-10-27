@@ -1,0 +1,187 @@
+{
+    "header":  {
+                   "provider":  {
+                                    "id":  null,
+                                    "name":  "BE-GON S.R.L.",
+                                    "taxId":  "30708066652",
+                                    "confidence":  1.0
+                                },
+                   "invoiceType":  null,
+                   "invoiceTypeConfidence":  null,
+                   "date":  {
+                                "value":  "2026-01-28",
+                                "origin":  "DETECTED",
+                                "confidence":  1.0,
+                                "rawText":  "Fecha: 28/01/2026"
+                            },
+                   "documentNumber":  {
+                                          "value":  "00010-00007885",
+                                          "origin":  "DETECTED",
+                                          "confidence":  1.0,
+                                          "rawText":  "NÂº 00010-00007885"
+                                      },
+                   "currency":  "ARS",
+                   "total":  {
+                                 "value":  279536.7,
+                                 "origin":  "DETECTED",
+                                 "confidence":  1.0,
+                                 "rawText":  "TOTAL 279536.70"
+                             },
+                   "taxTotal":  {
+                                    "value":  48514.63,
+                                    "origin":  "DETECTED",
+                                    "confidence":  1.0,
+                                    "rawText":  "IMPORTE TOTAL IVA 48514.63"
+                                },
+                   "discountTotal":  {
+                                         "value":  0.0,
+                                         "origin":  "DETECTED",
+                                         "confidence":  1.0,
+                                         "rawText":  "Desc: 0.00"
+                                     },
+                   "notes":  null
+               },
+    "items":  [
+                  {
+                      "lineId":  "L1",
+                      "rawDescription":  "253_PAPAS FRITAS 5 X 1 KGS.",
+                      "normalizedDescription":  "253_papas fritas 5 x 1 kgs.",
+                      "quantity":  {
+                                       "value":  6.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  1.0,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  "KGS.",
+                                   "origin":  "DETECTED",
+                                   "confidence":  1.0,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  38.03,
+                                        "origin":  "DETECTED",
+                                        "confidence":  1.0,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  231022.07,
+                                       "origin":  "DETECTED",
+                                       "confidence":  1.0,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  },
+                  {
+                      "lineId":  "L2",
+                      "rawDescription":  "1253_PROMO PAPAS X 1 KG.-(100%)",
+                      "normalizedDescription":  "1253_promo papas x 1 kg.-(100%)",
+                      "quantity":  {
+                                       "value":  3.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  1.0,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  "KG.",
+                                   "origin":  "DETECTED",
+                                   "confidence":  1.0,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  0.0,
+                                        "origin":  "DETECTED",
+                                        "confidence":  1.0,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  0.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  1.0,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  }
+              ],
+    "warnings":  [
+
+                 ],
+    "possibleDuplicate":  {
+                              "triggered":  false,
+                              "matches":  [
+
+                                          ]
+                          },
+    "duplicateSignals":  {
+                             "providerId":  {
+                                                "value":  null,
+                                                "origin":  "NOT_FOUND",
+                                                "confidence":  0.0,
+                                                "rawText":  null
+                                            },
+                             "date":  {
+                                          "value":  "2026-01-28",
+                                          "origin":  "DETECTED",
+                                          "confidence":  1.0,
+                                          "rawText":  "Fecha: 28/01/2026"
+                                      },
+                             "total":  {
+                                           "value":  279536.7,
+                                           "origin":  "DETECTED",
+                                           "confidence":  1.0,
+                                           "rawText":  "TOTAL 279536.70"
+                                       },
+                             "docNumber":  {
+                                               "value":  "00010-00007885",
+                                               "origin":  "DETECTED",
+                                               "confidence":  1.0,
+                                               "rawText":  "NÂº 00010-00007885"
+                                           },
+                             "fingerprint":  {
+                                                 "value":  "sha256:fbcef07ab2469db04d6be50d0f5073d371a82ce684a6d98de2d085651c813712",
+                                                 "origin":  "CALCULATED",
+                                                 "confidence":  0.75,
+                                                 "rawText":  null
+                                             },
+                             "toleranceSuggestion":  {
+                                                         "days":  2,
+                                                         "totalPct":  0.01,
+                                                         "totalAbs":  5000.0
+                                                     }
+                         },
+    "confidenceGlobal":  0.95,
+    "fallbackRecommended":  false,
+    "fallbackReason":  null,
+    "normalizedNumbers":  true,
+    "debug":  null
+}

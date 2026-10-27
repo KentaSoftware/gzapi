@@ -1,0 +1,412 @@
+{
+    "header":  {
+                   "provider":  {
+                                    "id":  null,
+                                    "name":  "LA TRANQUERA",
+                                    "taxId":  null,
+                                    "confidence":  0.9
+                                },
+                   "invoiceType":  null,
+                   "invoiceTypeConfidence":  null,
+                   "date":  {
+                                "value":  "2026-01-29",
+                                "origin":  "DETECTED",
+                                "confidence":  0.9,
+                                "rawText":  "Fecha: 29/01/26"
+                            },
+                   "documentNumber":  {
+                                          "value":  "559588",
+                                          "origin":  "DETECTED",
+                                          "confidence":  0.9,
+                                          "rawText":  "PRESUPUESTO NÂ°: 559588"
+                                      },
+                   "currency":  "ARS",
+                   "total":  {
+                                 "value":  207800.0,
+                                 "origin":  "DETECTED",
+                                 "confidence":  0.9,
+                                 "rawText":  "TOTAL $ 207800.00"
+                             },
+                   "taxTotal":  {
+                                    "value":  null,
+                                    "origin":  "NOT_FOUND",
+                                    "confidence":  0.0,
+                                    "rawText":  null
+                                },
+                   "discountTotal":  {
+                                         "value":  null,
+                                         "origin":  "NOT_FOUND",
+                                         "confidence":  0.0,
+                                         "rawText":  null
+                                     },
+                   "notes":  "Comprobante No VÃ¡lido Como Factura"
+               },
+    "items":  [
+                  {
+                      "lineId":  "L1",
+                      "rawDescription":  "(842)-PIMENTON ESPECIAL SUELTO",
+                      "normalizedDescription":  "pimenton especial suelto",
+                      "quantity":  {
+                                       "value":  6.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  null,
+                                   "origin":  "NOT_FOUND",
+                                   "confidence":  0.0,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  2000.0,
+                                        "origin":  "DETECTED",
+                                        "confidence":  0.9,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  12000.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  },
+                  {
+                      "lineId":  "L2",
+                      "rawDescription":  "(841)-PROVENZAL SUELT",
+                      "normalizedDescription":  "provenzal suelt",
+                      "quantity":  {
+                                       "value":  6.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  null,
+                                   "origin":  "NOT_FOUND",
+                                   "confidence":  0.0,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  2000.0,
+                                        "origin":  "DETECTED",
+                                        "confidence":  0.9,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  12000.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  },
+                  {
+                      "lineId":  "L3",
+                      "rawDescription":  "(840)-OREGANO SUELTO",
+                      "normalizedDescription":  "oregano suelto",
+                      "quantity":  {
+                                       "value":  6.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  null,
+                                   "origin":  "NOT_FOUND",
+                                   "confidence":  0.0,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  1950.0,
+                                        "origin":  "DETECTED",
+                                        "confidence":  0.9,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  11700.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  },
+                  {
+                      "lineId":  "L4",
+                      "rawDescription":  "(838)-COMINO MOLIDO ESPECIAL SUELTO",
+                      "normalizedDescription":  "comino molido especial suelto",
+                      "quantity":  {
+                                       "value":  3.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  null,
+                                   "origin":  "NOT_FOUND",
+                                   "confidence":  0.0,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  2000.0,
+                                        "origin":  "DETECTED",
+                                        "confidence":  0.9,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  6000.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  },
+                  {
+                      "lineId":  "L5",
+                      "rawDescription":  "(124)-SANDIA X1KG",
+                      "normalizedDescription":  "sandia x1kg",
+                      "quantity":  {
+                                       "value":  4.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  "kg",
+                                   "origin":  "DETECTED",
+                                   "confidence":  0.9,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  740.0,
+                                        "origin":  "DETECTED",
+                                        "confidence":  0.9,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  2960.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  },
+                  {
+                      "lineId":  "L6",
+                      "rawDescription":  "(1530)-MANI C/CF TE X1KG",
+                      "normalizedDescription":  "mani c/cf te x1kg",
+                      "quantity":  {
+                                       "value":  12.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  "kg",
+                                   "origin":  "DETECTED",
+                                   "confidence":  0.9,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  8900.0,
+                                        "origin":  "DETECTED",
+                                        "confidence":  0.9,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  106800.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  },
+                  {
+                      "lineId":  "L7",
+                      "rawDescription":  "(247)-ROCKLETS ECONOM",
+                      "normalizedDescription":  "rocklets econom",
+                      "quantity":  {
+                                       "value":  3.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "unit":  {
+                                   "value":  null,
+                                   "origin":  "NOT_FOUND",
+                                   "confidence":  0.0,
+                                   "rawText":  null
+                               },
+                      "unitPrice":  {
+                                        "value":  9900.0,
+                                        "origin":  "DETECTED",
+                                        "confidence":  0.9,
+                                        "rawText":  null
+                                    },
+                      "subtotal":  {
+                                       "value":  29700.0,
+                                       "origin":  "DETECTED",
+                                       "confidence":  0.9,
+                                       "rawText":  null
+                                   },
+                      "productCode":  {
+                                          "value":  null,
+                                          "origin":  "NOT_FOUND",
+                                          "confidence":  null,
+                                          "rawText":  null
+                                      },
+                      "productCodeType":  null,
+                      "catalogLink":  {
+                                          "status":  "UNLINKED",
+                                          "linkedProductId":  null,
+                                          "suggestions":  [
+
+                                                          ],
+                                          "actionRequired":  null,
+                                          "reason":  null
+                                      }
+                  }
+              ],
+    "warnings":  [
+
+                 ],
+    "possibleDuplicate":  {
+                              "triggered":  false,
+                              "matches":  [
+
+                                          ]
+                          },
+    "duplicateSignals":  {
+                             "providerId":  {
+                                                "value":  null,
+                                                "origin":  "NOT_FOUND",
+                                                "confidence":  0.0,
+                                                "rawText":  null
+                                            },
+                             "date":  {
+                                          "value":  "2026-01-29",
+                                          "origin":  "DETECTED",
+                                          "confidence":  0.9,
+                                          "rawText":  "Fecha: 29/01/26"
+                                      },
+                             "total":  {
+                                           "value":  207800.0,
+                                           "origin":  "DETECTED",
+                                           "confidence":  0.9,
+                                           "rawText":  "TOTAL $ 207800.00"
+                                       },
+                             "docNumber":  {
+                                               "value":  "559588",
+                                               "origin":  "DETECTED",
+                                               "confidence":  0.9,
+                                               "rawText":  "PRESUPUESTO NÂ°: 559588"
+                                           },
+                             "fingerprint":  {
+                                                 "value":  "sha256:4425f17612aede1b22476e18f2606e4942d4c7e9a4bf9a7cb1dfcb9b54b8c52f",
+                                                 "origin":  "CALCULATED",
+                                                 "confidence":  0.75,
+                                                 "rawText":  null
+                                             },
+                             "toleranceSuggestion":  {
+                                                         "days":  2,
+                                                         "totalPct":  0.01,
+                                                         "totalAbs":  5000.0
+                                                     }
+                         },
+    "confidenceGlobal":  0.95,
+    "fallbackRecommended":  false,
+    "fallbackReason":  null,
+    "normalizedNumbers":  true,
+    "debug":  null
+}
