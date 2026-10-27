@@ -3,6 +3,7 @@ import BuyModel from '../models/buy'
 import ItemSaleModel from '../models/itemSale'
 import SaleModel from '../models/sale'
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, addDays, addWeeks, addMonths, addYears, addHours } from 'date-fns'
+import { cashDateBetween } from './datasetRange'
 
 interface Response {
   totalSales: number
@@ -33,10 +34,7 @@ const getDailyData = async (): Promise<Response[]> => {
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: start,
-          $lte: end
-        }
+        ...cashDateBetween(start, end)
       }
     },
     {
@@ -52,10 +50,7 @@ const getDailyData = async (): Promise<Response[]> => {
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: startBefore,
-          $lte: endBefore
-        }
+        ...cashDateBetween(startBefore, endBefore)
       }
     },
     {
@@ -70,10 +65,7 @@ const getDailyData = async (): Promise<Response[]> => {
   const responseBuy = await BuyModel.aggregate([
     {
       $match: {
-        createdAt: {
-          $gte: start,
-          $lte: end
-        }
+        ...cashDateBetween(start, end)
       }
     },
     {
@@ -124,10 +116,7 @@ const getWeeklyData = async (): Promise<Response[]> => {
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: start,
-          $lte: end
-        }
+        ...cashDateBetween(start, end)
       }
     },
     {
@@ -143,10 +132,7 @@ const getWeeklyData = async (): Promise<Response[]> => {
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: startBefore,
-          $lte: endBefore
-        }
+        ...cashDateBetween(startBefore, endBefore)
       }
     },
     {
@@ -161,10 +147,7 @@ const getWeeklyData = async (): Promise<Response[]> => {
   const responseBuy = await BuyModel.aggregate([
     {
       $match: {
-        createdAt: {
-          $gte: start,
-          $lte: end
-        }
+        ...cashDateBetween(start, end)
       }
     },
     {
@@ -213,10 +196,7 @@ const getMonthlyData = async (): Promise<Response[]> => {
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: start,
-          $lte: end
-        }
+        ...cashDateBetween(start, end)
       }
     },
     {
@@ -232,10 +212,7 @@ const getMonthlyData = async (): Promise<Response[]> => {
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: startBefore,
-          $lte: endBefore
-        }
+        ...cashDateBetween(startBefore, endBefore)
       }
     },
     {
@@ -250,10 +227,7 @@ const getMonthlyData = async (): Promise<Response[]> => {
   const responseBuy = await BuyModel.aggregate([
     {
       $match: {
-        createdAt: {
-          $gte: start,
-          $lte: end
-        }
+        ...cashDateBetween(start, end)
       }
     },
     {
@@ -307,10 +281,7 @@ const getAnnuallyData = async (): Promise<Response[]> => {
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: start,
-          $lte: end
-        }
+        ...cashDateBetween(start, end)
       }
     },
     {
@@ -326,10 +297,7 @@ const getAnnuallyData = async (): Promise<Response[]> => {
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: startBefore,
-          $lte: endBefore
-        }
+        ...cashDateBetween(startBefore, endBefore)
       }
     },
     {
@@ -344,10 +312,7 @@ const getAnnuallyData = async (): Promise<Response[]> => {
   const responseBuy = await BuyModel.aggregate([
     {
       $match: {
-        createdAt: {
-          $gte: start,
-          $lte: end
-        }
+        ...cashDateBetween(start, end)
       }
     },
     {
@@ -406,10 +371,7 @@ const getCustomData = async (start: string, end: string): Promise<Response[]> =>
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: clearStartDate,
-          $lte: clearEndDate
-        }
+        ...cashDateBetween(clearStartDate, clearEndDate)
       }
     },
     {
@@ -425,10 +387,7 @@ const getCustomData = async (start: string, end: string): Promise<Response[]> =>
     {
       $match: {
         estado: { $ne: 'Cancelado' },
-        createdAt: {
-          $gte: startBefore,
-          $lte: endBefore
-        }
+        ...cashDateBetween(startBefore, endBefore)
       }
     },
     {
@@ -443,10 +402,7 @@ const getCustomData = async (start: string, end: string): Promise<Response[]> =>
   const responseBuy = await BuyModel.aggregate([
     {
       $match: {
-        createdAt: {
-          $gte: clearStartDate,
-          $lte: clearEndDate
-        }
+        ...cashDateBetween(clearStartDate, clearEndDate)
       }
     },
     {
@@ -492,12 +448,12 @@ const getDailyDataGraph = async (): Promise<any> => {
     const end = addHours(endOfDay(dayOfWeek), 3)
 
     const responseSale = await SaleModel.aggregate([
-      { $match: { estado: { $ne: 'Cancelado' }, createdAt: { $gte: start, $lte: end } } },
+      { $match: { estado: { $ne: 'Cancelado' }, ...cashDateBetween(start, end) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
     const responseBuy = await BuyModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
+      { $match: { ...cashDateBetween(start, end) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
@@ -554,12 +510,12 @@ const getWeeklyDataGraph = async (): Promise<any> => {
     }
 
     const responseSale = await SaleModel.aggregate([
-      { $match: { estado: { $ne: 'Cancelado' }, createdAt: { $gte: start, $lte: end } } },
+      { $match: { estado: { $ne: 'Cancelado' }, ...cashDateBetween(start, end) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
     const responseBuy = await BuyModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
+      { $match: { ...cashDateBetween(start, end) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
@@ -609,12 +565,12 @@ const getMonthlyDataGraph = async (): Promise<any> => {
     }
 
     const responseSale = await SaleModel.aggregate([
-      { $match: { estado: { $ne: 'Cancelado' }, createdAt: { $gte: start, $lte: end } } },
+      { $match: { estado: { $ne: 'Cancelado' }, ...cashDateBetween(start, end) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
     const responseBuy = await BuyModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
+      { $match: { ...cashDateBetween(start, end) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
@@ -675,12 +631,12 @@ const getAnnuallyDataGraph = async (): Promise<any> => {
     const end = addHours(endOfYear(addYears(today, -i)), 3)
 
     const responseSale = await SaleModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
+      { $match: { estado: { $ne: 'Cancelado' }, ...cashDateBetween(start, end) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
     const responseBuy = await BuyModel.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end } } },
+      { $match: { ...cashDateBetween(start, end) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ])
 
@@ -743,13 +699,13 @@ const getCustomDataGraph = async (start: string, end: string): Promise<any> => {
 
     // Realizar la consulta de ventas
     const responseSale = await SaleModel.aggregate([
-      { $match: { estado: { $ne: 'Cancelado' }, createdAt: { $gte: startDay, $lte: endDay } } },
+      { $match: { estado: { $ne: 'Cancelado' }, ...cashDateBetween(startDay, endDay) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ]);
 
     // Realizar la consulta de compras
     const responseBuy = await BuyModel.aggregate([
-      { $match: { createdAt: { $gte: startDay, $lte: endDay } } },
+      { $match: { ...cashDateBetween(startDay, endDay) } },
       { $group: { _id: null, totalSales: { $sum: '$total' }, salesCount: { $sum: 1 } } }
     ]);
 
