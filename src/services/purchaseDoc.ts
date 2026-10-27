@@ -12,6 +12,7 @@ import {
   HeaderEdits
 } from '../interfaces/draftPurchaseDoc.interface'
 import { checkForDuplicates } from './duplicateCheck'
+import { describeDocumentAiFailure } from './documentAiError'
 import { CheckDuplicateRequestDTO } from '../interfaces/duplicateCheck.interface'
 import { insertItemBuy } from './itemBuy'
 import * as fs from 'fs'
@@ -256,12 +257,8 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
     } catch (error) {
       // Manejar errores de axios
       if (axios.isAxiosError(error)) {
-        const status = error.response?.status || 'Unknown'
-        const statusText = error.response?.statusText || ''
-        const errorData = error.response?.data ? JSON.stringify(error.response.data) : error.message
-        
-        console.error(`[Document AI] Error ${status}:`, errorData)
-        lastError = new Error(`Document AI error: ${status} ${statusText} - ${errorData}`)
+        console.error(`[Document AI] Error ${error.response?.status ?? 'sin respuesta'}:`, error.message)
+        lastError = new Error(describeDocumentAiFailure(error, DOCUMENT_AI_URL))
       } else {
         lastError = error as Error
       }
