@@ -188,7 +188,10 @@ export const getDraftStatus = async (req: RequestExt, res: Response): Promise<vo
       sourceType: draft.sourceType,
       analysis: draft.analysisResult,
       possibleDuplicate: draft.possibleDuplicate,
+      // Solo lo que el usuario necesita: sin stack ni rutas del servidor.
       error: draft.error
+        ? { code: draft.error.code, message: draft.error.message }
+        : undefined
     }
 
     res.status(200).json({
@@ -230,10 +233,21 @@ export const listDrafts = async (req: RequestExt, res: Response): Promise<void> 
 
     const result = await listUserDrafts(userId, options)
 
+    // No exponer el stack ni rutas del servidor en la lista
+    const drafts = result.drafts.map(draft => {
+      const plain = typeof (draft as any).toObject === 'function' ? (draft as any).toObject() : draft
+      return {
+        ...plain,
+        error: plain.error
+          ? { code: plain.error.code, message: plain.error.message }
+          : undefined
+      }
+    })
+
     res.status(200).json({
       success: true,
       data: {
-        drafts: result.drafts,
+        drafts,
         total: result.total,
         skip: options.skip,
         limit: options.limit

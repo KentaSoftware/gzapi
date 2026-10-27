@@ -12,7 +12,7 @@ import {
   HeaderEdits
 } from '../interfaces/draftPurchaseDoc.interface'
 import { checkForDuplicates } from './duplicateCheck'
-import { describeDocumentAiFailure } from './documentAiError'
+import { describeDocumentAiFailure, userFacingDocumentAiFailure } from './documentAiError'
 import { CheckDuplicateRequestDTO } from '../interfaces/duplicateCheck.interface'
 import { insertItemBuy } from './itemBuy'
 import * as fs from 'fs'
@@ -255,11 +255,15 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
       console.log(`[Document AI] Análisis exitoso para draft ${draft._id}`)
       return result
     } catch (error) {
-      // Manejar errores de axios
+      // Manejar errores de axios: detalle técnico al log, texto legible para el usuario
       if (axios.isAxiosError(error)) {
-        console.error(`[Document AI] Error ${error.response?.status ?? 'sin respuesta'}:`, error.message)
-        lastError = new Error(describeDocumentAiFailure(error, DOCUMENT_AI_URL))
+        console.error(
+          `[Document AI] Error ${error.response?.status ?? 'sin respuesta'} en intento ${attempt}:`,
+          describeDocumentAiFailure(error, DOCUMENT_AI_URL)
+        )
+        lastError = new Error(userFacingDocumentAiFailure(error))
       } else {
+        console.error(`[Document AI] Error no HTTP en intento ${attempt}:`, error)
         lastError = error as Error
       }
       
@@ -276,8 +280,8 @@ export const analyzeDraftWithAI = async (draft: DraftPurchaseDoc, authToken?: st
 
   // Si llegamos aquí, todos los intentos fallaron
   const errorMessage = lastError
-    ? `Document AI no responde: ${lastError.message}`
-    : 'Error desconocido en Document AI'
+    ? lastError.message
+    : 'No pudimos analizar el comprobante. Probá de nuevo en unos minutos.'
 
   throw new Error(errorMessage)
 }

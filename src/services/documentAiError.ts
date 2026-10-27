@@ -47,3 +47,21 @@ export function describeDocumentAiFailure(error: unknown, url: string): string {
 
   return candidate.message ?? 'Error desconocido en Document AI';
 }
+
+/**
+ * Mensaje para el usuario final: nunca incluye URL interna, código de red,
+ * estado HTTP ni cuerpo del servicio. El detalle queda en el log del servidor.
+ */
+export function userFacingDocumentAiFailure(error: unknown): string {
+  const candidate = error as AxiosLikeError | undefined;
+
+  if (candidate?.isAxiosError && !candidate.response) {
+    return 'No pudimos analizar el comprobante porque el servicio de análisis no está disponible. Probá de nuevo en unos minutos.';
+  }
+
+  if (candidate?.response) {
+    return 'No pudimos analizar el comprobante porque el servicio de análisis devolvió un error. Probá de nuevo en unos minutos.';
+  }
+
+  return 'No pudimos analizar el comprobante. Verificá que la imagen se lea bien y volvé a intentarlo.';
+}
