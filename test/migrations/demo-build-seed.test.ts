@@ -1,14 +1,11 @@
 import { expect } from 'chai'
-import { runProductionBuildSeed } from '../../migrations/demo-002-build-seed'
-import type { DemoDatabase } from '../../migrations/demo-001-seed-data'
 import { Types } from 'mongoose'
+import { runProductionStartupSeed } from '../../migrations/demo-002-build-seed'
+import type { DemoDatabase } from '../../migrations/demo-001-seed-data'
 
 const production = {
   VERCEL_ENV: 'production',
-  DEMO_SEED_MODE: 'run',
   MONGODB_URI: 'mongodb://127.0.0.1:27017/demo',
-  DEMO_SEED_EXPECTED_DATABASE: 'demo',
-  DEMO_SERVICE_DATE: '2026-10-21',
   GOOGLE_MAPS_SERVER_API_KEY: 'offline-test-placeholder'
 }
 
@@ -19,164 +16,98 @@ const databaseWithAdmin = (present: boolean): DemoDatabase => ({
   })
 })
 
-describe('demo seed production build', () => {
-  it('does not open a connection outside Production', async () => {
-    let calls = 0
-    for (const stage of [undefined, 'preview', 'development']) {
-      const result = await runProductionBuildSeed({ VERCEL_ENV: stage, DEMO_SEED_MODE: 'run' }, async () => {
-        calls += 1
-        throw new Error('Unexpected connection')
-      })
-      expect(result).to.equal('skipped')
+describe('demo seed production startup', () => {
+  it('skips outside Production before inspecting fixtures or credentials', async () => {
+    for (const environment of [
+      { VERCEL_ENV: undefined }, { VERCEL_ENV: 'preview' },
+      { VERCEL_ENV: 'development' }, { VERCEL_ENV: 'production', NODE_ENV: 'test' }
+    ]) {
+      expect(await runProductionStartupSeed(environment, {
+        database: () => { throw new Error('Unexpected database access') },
+        inspect: async () => { throw new Error('Unexpected inventory') },
+        seed: async () => { throw new Error('Unexpected seed') }
+      })).to.equal('skipped')
     }
-    expect(calls).to.equal(0)
   })
 
-  it('skips Production with no mode or disabled mode before requiring URI or Google credentials', async () => {
-    let calls = 0
-    for (const mode of [undefined, 'disabled']) {
-      const result = await runProductionBuildSeed({ VERCEL_ENV: 'production', DEMO_SEED_MODE: mode }, async () => {
-        calls += 1
-        throw new Error('Unexpected connection')
-      })
-      expect(result).to.equal('skipped')
-    }
-    expect(calls).to.equal(0)
-  })
-
-  it('rejects unexpected Production modes without connecting or seeding', async () => {
-    let calls = 0
-    for (const mode of ['', 'RUN', 'enabled', ' run ']) {
-      try {
-        await runProductionBuildSeed({ VERCEL_ENV: 'production', DEMO_SEED_MODE: mode }, async () => { calls += 1 })
-        expect.fail('Expected invalid mode failure')
-      } catch (error) {
-        expect((error as Error).message).to.contain('DEMO_SEED_MODE')
-      }
-    }
-    expect(calls).to.equal(0)
-  })
-
-  it('skips Preview even with run mode and missing credentials', async () => {
-    let calls = 0
-    expect(await runProductionBuildSeed({ VERCEL_ENV: 'preview', DEMO_SEED_MODE: 'run' }, async () => { calls += 1 })).to.equal('skipped')
-    expect(calls).to.equal(0)
-  })
-
-  it('rejects missing configuration before connecting in Production', async () => {
-    let calls = 0
-    try {
-      await runProductionBuildSeed({ VERCEL_ENV: 'production', DEMO_SEED_MODE: 'run' }, async () => { calls += 1 })
-      expect.fail('Expected missing target failure')
-    } catch (error) {
-      expect((error as Error).message).to.contain('MONGODB_URI')
-    }
-    expect(calls).to.equal(0)
-  })
-
-  it('requires the exact explicit database name and fixed calendar date before connecting', async () => {
-    const baseline = {
-      VERCEL_ENV: 'production',
-      DEMO_SEED_MODE: 'run',
-      MONGODB_URI: 'mongodb://127.0.0.1:27017/demo',
-      DEMO_SEED_EXPECTED_DATABASE: 'demo',
-      DEMO_SERVICE_DATE: '2026-10-21'
-    }
-    let calls = 0
-    for (const [environment, errorText] of [
-      [{ ...baseline, DEMO_SEED_EXPECTED_DATABASE: '' }, 'DEMO_SEED_EXPECTED_DATABASE'],
-      [{ ...baseline, DEMO_SEED_EXPECTED_DATABASE: 'other' }, 'does not match'],
-      [{ ...baseline, DEMO_SERVICE_DATE: '' }, 'DEMO_SERVICE_DATE'],
-      [{ ...baseline, DEMO_SERVICE_DATE: '2026-02-30' }, 'real calendar date']
+  it('requires a configured explicit MongoDB database before inventory', async () => {
+    for (const [environment, message] of [
+      [{ VERCEL_ENV: 'production' }, 'MONGODB_URI'],
+      [{ VERCEL_ENV: 'production', MONGODB_URI: 'mongodb://127.0.0.1:27017' }, 'database']
     ] as const) {
       try {
-        await runProductionBuildSeed(environment, async () => { calls += 1 })
-        expect.fail('Expected validation failure')
+        await runProductionStartupSeed(environment, {
+          database: () => { throw new Error('Unexpected database access') },
+          inspect: async () => { throw new Error('Unexpected inventory') },
+          seed: async () => { throw new Error('Unexpected seed') }
+        })
+        expect.fail('Expected unsafe target failure')
       } catch (error) {
-        expect((error as Error).message).to.contain(errorText)
+        expect((error as Error).message).to.contain(message)
       }
     }
-    expect(calls).to.equal(0)
   })
 
-  it('fails closed and disconnects if a complete fixture inventory has no admin', async () => {
-    let disconnected = 0
-    let seeded = 0
+  it('checks admin and skips Google when the fixed-anchor inventory is complete', async () => {
+    let date: Date | undefined
+    const result = await runProductionStartupSeed({ ...production, GOOGLE_MAPS_SERVER_API_KEY: undefined }, {
+      database: () => databaseWithAdmin(true),
+      inspect: async (_database, serviceDate) => {
+        date = serviceDate
+        return { total: 578, missing: 0 }
+      },
+      seed: async () => { throw new Error('Unexpected provider access') }
+    })
+    expect(result).to.equal('complete')
+    expect(date?.toISOString()).to.equal('2026-10-21T00:00:00.000Z')
+  })
+
+  it('fails closed without base admin even for complete fixtures', async () => {
     try {
-      await runProductionBuildSeed(production, async () => {}, {
+      await runProductionStartupSeed(production, {
         database: () => databaseWithAdmin(false),
         inspect: async () => ({ total: 578, missing: 0 }),
-        seed: async () => { seeded += 1; throw new Error('Unexpected seed') },
-        disconnect: async () => { disconnected += 1 }
+        seed: async () => { throw new Error('Unexpected seed') }
       })
       expect.fail('Expected missing admin')
     } catch (error) {
       expect((error as Error).message).to.contain('base admin user is required')
     }
-    expect(seeded).to.equal(0)
-    expect(disconnected).to.equal(1)
   })
 
-  it('returns complete without Google or writes and disconnects on success', async () => {
-    let connections = 0
-    let disconnections = 0
-    const result = await runProductionBuildSeed({ ...production, GOOGLE_MAPS_SERVER_API_KEY: undefined }, async () => { connections += 1 }, {
-      database: () => databaseWithAdmin(true),
-      inspect: async () => ({ total: 578, missing: 0 }),
-      seed: async () => { throw new Error('Unexpected seed') },
-      disconnect: async () => { disconnections += 1 }
-    })
-    expect(result).to.equal('complete')
-    expect(connections).to.equal(1)
-    expect(disconnections).to.equal(1)
-  })
-
-  it('seeds missing fixtures through the insert-only path and disconnects', async () => {
-    let insertOnly: boolean | undefined
-    let disconnections = 0
-    const result = await runProductionBuildSeed(production, async () => {}, {
-      database: () => databaseWithAdmin(true),
-      inspect: async () => ({ total: 578, missing: 1 }),
-      seed: async (input) => {
-        insertOnly = input.insertOnly
-        return { dryRun: false, target: { database: 'demo', remote: false }, addressCount: 21 }
-      },
-      disconnect: async () => { disconnections += 1 }
-    })
-    expect(result).to.equal('seeded')
-    expect(insertOnly).to.equal(true)
-    expect(disconnections).to.equal(1)
-  })
-
-  it('rejects missing Google configuration when fixtures are absent and disconnects', async () => {
-    let disconnections = 0
+  it('requires Google credentials only for missing fixtures', async () => {
     try {
-      await runProductionBuildSeed({ ...production, GOOGLE_MAPS_SERVER_API_KEY: undefined }, async () => {}, {
+      await runProductionStartupSeed({ ...production, GOOGLE_MAPS_SERVER_API_KEY: undefined }, {
         database: () => databaseWithAdmin(true),
         inspect: async () => ({ total: 578, missing: 1 }),
-        seed: async () => { throw new Error('Unexpected seed') },
-        disconnect: async () => { disconnections += 1 }
+        seed: async () => { throw new Error('Unexpected seed') }
       })
-      expect.fail('Expected missing key failure')
+      expect.fail('Expected missing Google key')
     } catch (error) {
       expect((error as Error).message).to.contain('GOOGLE_MAPS_SERVER_API_KEY')
     }
-    expect(disconnections).to.equal(1)
   })
 
-  it('disconnects when a prepared seed fails', async () => {
-    let disconnections = 0
+  it('uses insert-only repair on the stable date and propagates provider failure', async () => {
+    let called = 0
+    const dependencies = {
+      database: () => databaseWithAdmin(true),
+      inspect: async () => ({ total: 578, missing: 1 }),
+      seed: async (input: Parameters<typeof import('../../migrations/demo-001-seed-data').runDemoSeed>[0]) => {
+        called += 1
+        expect(input.insertOnly).to.equal(true)
+        expect(input.serviceDate?.toISOString()).to.equal('2026-10-21T00:00:00.000Z')
+        if (called === 1) throw new Error('Offline DRIVE failure')
+        return { dryRun: false as const, target: { database: 'demo', remote: false }, addressCount: 21 }
+      }
+    }
     try {
-      await runProductionBuildSeed(production, async () => {}, {
-        database: () => databaseWithAdmin(true),
-        inspect: async () => ({ total: 578, missing: 1 }),
-        seed: async () => { throw new Error('Offline provider failure') },
-        disconnect: async () => { disconnections += 1 }
-      })
+      await runProductionStartupSeed(production, dependencies)
       expect.fail('Expected provider failure')
     } catch (error) {
-      expect((error as Error).message).to.equal('Offline provider failure')
+      expect((error as Error).message).to.equal('Offline DRIVE failure')
     }
-    expect(disconnections).to.equal(1)
+    expect(await runProductionStartupSeed(production, dependencies)).to.equal('seeded')
+    expect(called).to.equal(2)
   })
 })
