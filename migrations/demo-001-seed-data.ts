@@ -150,7 +150,7 @@ export interface FixtureCollection {
 }
 
 interface FixtureUpdate {
-  $set: Record<string, unknown>
+  $set?: Record<string, unknown>
   $setOnInsert: Record<string, unknown>
 }
 
@@ -197,6 +197,93 @@ export interface DemoSeedResult {
 const fixtureObjectId = (key: string): Types.ObjectId => new Types.ObjectId(
   createHash('sha256').update(`${FIXTURE_NAMESPACE}:${key}`).digest('hex').slice(0, 24)
 )
+
+const ownedFixtureKeys = (serviceDate: Date): Array<{ collection: string, key: string }> => {
+  const keys: Array<{ collection: string, key: string }> = []
+  const add = (collection: string, key: string): void => { keys.push({ collection, key }) }
+  for (const collection of ['categories', 'brands', 'providers', 'products']) {
+    add(collection, `catalog:${collection === 'categories' ? 'category' : collection === 'brands' ? 'brand' : collection === 'providers' ? 'provider' : 'product'}`)
+  }
+  for (const [collection, prefix, count] of [
+    ['categories', 'category', DEMO_CATEGORIES.length],
+    ['brands', 'brand', DEMO_BRANDS.length],
+    ['providers', 'provider', DEMO_PROVIDERS.length]
+  ] as const) {
+    for (let index = 1; index <= count; index += 1) add(collection, `catalog:${prefix}:${index}`)
+  }
+  for (let category = 1; category <= DEMO_CATEGORIES.length; category += 1) {
+    for (let variant = 1; variant <= DEMO_VARIANTS.length; variant += 1) add('products', `catalog:product:${category}:${variant}`)
+  }
+  for (const zone of DEMO_ZONES) add('deliveryzones', `zone:${zone.key}`)
+  for (const client of DEMO_ADDRESS_SPECS.slice(1)) {
+    add('clients', client.key)
+    add('sales', `route-sale:${client.key}`)
+    add('itemsales', `route-item-sale:${client.key}`)
+  }
+  add('vehicles', 'vehicle:primary')
+  add('routingconfigs', 'routing-config:depot')
+  for (const zone of DEMO_ZONES) add('routeplans', `route-snapshot:${zone.key}`)
+  for (const period of financePeriods(serviceDate)) {
+    for (const [collection, prefix] of [
+      ['sales', 'sale'], ['itemsales', 'item-sale'], ['buys', 'buy'],
+      ['itembuys', 'item-buy'], ['expenses', 'expense']
+    ] as const) add(collection, `finance:${prefix}:${period.key}`)
+    for (let index = 1; index <= 20; index += 1) {
+      add('sales', `finance:sale:${period.key}:${index}`)
+      add('itemsales', `finance:item-sale:${period.key}:${index}`)
+    }
+    for (let index = 1; index <= 6; index += 1) {
+      add('buys', `finance:buy:${period.key}:${index}`)
+      add('itembuys', `finance:item-buy:${period.key}:${index}`)
+    }
+    for (let index = 1; index <= 10; index += 1) add('expenses', `finance:expense:${period.key}:${index}`)
+  }
+  add('cashflowconfigs', 'finance:cashflow-config')
+  return keys
+}
+
+const assertOwned = (value: unknown, key: string): void => {
+  const record = asRecord(value)
+  if (record?.fixtureNamespace !== FIXTURE_NAMESPACE || record.fixtureKey !== key) {
+    throw new Error(`Demo fixture identity conflict for ${key}`)
+  }
+}
+
+export const inspectDemoFixtures = async (database: DemoDatabase, serviceDate: Date): Promise<{ total: number, missing: number }> => {
+  const keys = ownedFixtureKeys(serviceDate)
+  let missing = 0
+  for (const { collection, key } of keys) {
+    const existing = await database.collection(collection).findOne({ _id: fixtureObjectId(key) })
+    if (existing === null) missing += 1
+    else assertOwned(existing, key)
+  }
+  return { total: keys.length, missing }
+}
+
+const insertMissingFixture = async (
+  collection: FixtureCollection, key: string, id: Types.ObjectId,
+  payload: Record<string, unknown>, now: Date
+): Promise<FixtureOutcome> => {
+  const existing = await collection.findOne({ _id: id })
+  if (existing !== null) {
+    assertOwned(existing, key)
+    return FIXTURE_OUTCOME.UPDATED
+  }
+  const { createdAt, ...fields } = payload
+  try {
+    const result = await collection.updateOne(
+      { _id: id },
+      { $setOnInsert: { ...fields, _id: id, createdAt: createdAt ?? now, updatedAt: now, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: key } },
+      { upsert: true }
+    )
+    if (result.upsertedCount > 0) return FIXTURE_OUTCOME.INSERTED
+  } catch (error) {
+    if (asRecord(error)?.code !== 11000) throw error
+  }
+  const winner = await collection.findOne({ _id: id })
+  assertOwned(winner, key)
+  return FIXTURE_OUTCOME.UPDATED
+}
 
 const isLocalHost = (hostname: string): boolean => ['localhost', '127.0.0.1', '::1'].includes(hostname.toLowerCase())
 
@@ -320,7 +407,7 @@ const recordOutcome = (summary: DemoSummary, collection: string, outcome: Fixtur
   summary.collections[collection] = (summary.collections[collection] ?? 0) + 1
 }
 
-const resolveServiceDate = (value: string | undefined, now: Date): Date => {
+export const resolveServiceDate = (value: string | undefined, now: Date): Date => {
   const serviceDate = value === undefined || value.trim() === '' ? now.toISOString().slice(0, 10) : value.trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) throw new Error('DEMO_SERVICE_DATE must be a YYYY-MM-DD date')
   const date = new Date(`${serviceDate}T00:00:00.000Z`)
@@ -362,6 +449,10 @@ const readAdminId = async (database: DemoDatabase): Promise<Types.ObjectId> => {
   if (value instanceof Types.ObjectId) return value
   if (typeof value === 'string' && Types.ObjectId.isValid(value)) return new Types.ObjectId(value)
   throw new Error('The base admin user is required before running the demo seed')
+}
+
+export const assertDemoAdmin = async (database: DemoDatabase): Promise<void> => {
+  await readAdminId(database)
 }
 
 const geocodeLocation = async (
@@ -532,12 +623,16 @@ const seedPreparedData = async (
   database: DemoDatabase,
   prepared: Awaited<ReturnType<typeof prepareSeed>>,
   serviceDate: Date,
-  now: Date
+  now: Date,
+  insertOnly = false
 ): Promise<DemoSummary> => {
   const summary = createSummary()
   const adminId = await readAdminId(database)
   const write = async (collectionName: string, key: string, id: Types.ObjectId, payload: Record<string, unknown>): Promise<void> => {
-    recordOutcome(summary, collectionName, await upsertFixture(database.collection(collectionName), key, id, payload, now))
+    const collection = database.collection(collectionName)
+    recordOutcome(summary, collectionName, await (insertOnly
+      ? insertMissingFixture(collection, key, id, payload, now)
+      : upsertFixture(collection, key, id, payload, now)))
   }
 
   const categoryId = fixtureObjectId('catalog:category')
@@ -818,6 +913,7 @@ export const runDemoSeed = async (input: {
   providers?: DemoProviders
   serviceDate?: Date
   now?: Date
+  insertOnly?: boolean
 }): Promise<DemoSeedResult> => {
   if (input.dryRun) {
     return { dryRun: true, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length }
@@ -825,12 +921,19 @@ export const runDemoSeed = async (input: {
   if (input.database === undefined || input.providers === undefined) throw new Error('Demo seed dependencies are not configured')
   const serviceDate = input.serviceDate ?? resolveServiceDate(undefined, input.now ?? new Date())
   if (Number.isNaN(serviceDate.getTime())) throw new Error('DEMO_SERVICE_DATE must be a real calendar date')
+  if (input.insertOnly === true) {
+    const inventory = await inspectDemoFixtures(input.database, serviceDate)
+    if (inventory.missing === 0) {
+      return { dryRun: false, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length, summary: createSummary() }
+    }
+    await readAdminId(input.database)
+  }
   const prepared = await prepareSeed(input.providers)
-  const summary = await seedPreparedData(input.database, prepared, serviceDate, input.now ?? new Date())
+  const summary = await seedPreparedData(input.database, prepared, serviceDate, input.now ?? new Date(), input.insertOnly)
   return { dryRun: false, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length, summary }
 }
 
-const mongoDatabase = (): DemoDatabase => {
+export const mongoDatabase = (): DemoDatabase => {
   const database = mongoose.connection.db
   if (database === undefined) throw new Error('MongoDB connection did not expose a database')
   return {

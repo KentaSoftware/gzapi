@@ -3,6 +3,8 @@
 ## Objective
 Provide a manually-run, idempotent `seed:demo` command that populates the MongoDB used by Vercel with realistic route-optimization and finance fixtures without mutating application startup behavior.
 
+The accepted DMS-10 extension additionally requests a Production-only Vercel build hook that fills missing fixtures without modifying existing documents. The original manual seed remains available and unchanged in intent.
+
 Client coordinates must come from real geocoded addresses and must be validated as drivable before any client or dependent fixture is written. The seed must fail closed when geocoding or route validation is unavailable.
 
 ## Problem
@@ -44,6 +46,12 @@ The deployed database currently contains only bootstrap roles and the `admin` us
 - [x] DMS-07 Reject precise geocoding candidates whose normalized street or house number differs from the requested address.
 - [x] DMS-08 Document sequential partial writes and prove deterministic rerun recovery without modifying unrelated records.
 - [x] DMS-09 Derive six calendar months from a validated service-date anchor, preserve overlapping fixture keys, and report dry-run addresses as planned only.
+- [x] DMS-10 Wire the documented `vercel-build` hook for Production only; local, preview, and test executions must not connect or write.
+- [x] DMS-11 Require explicit URI, matching database name, fixed service date, and Google key when work is needed; require existing admin before dependent writes. Never log secrets.
+- [x] DMS-12 Inventory all owned deterministic fixtures before Google or writes; skip complete sets, validate geocoding and bidirectional DRIVE before partial repair, insert only missing fixtures with ownership checks and concurrency-safe behavior.
+- [ ] DMS-13 Add deterministic offline RED/GREEN tests, documentation, and full verification. A live Vercel invocation remains unverified until independently observed.
+- [x] DMS-14 Fail closed when the base admin is absent even if the fixture inventory is complete; cover connected `complete`, `seeded`, and disconnect-on-failure branches with injected dependencies and offline RED/GREEN tests.
+- [x] DMS-15 Gate automatic Production writes behind explicit `DEMO_SEED_MODE=run`; default and `disabled` skip before reading credentials, unexpected modes fail closed, and Preview always skips. Offline RED/GREEN tests and an audit-only Production build with no secrets or database access are recorded. The actual Vercel hook remains unverified.
 
 ## Authorized Scope
 - `migrations/demo-001-seed-data.ts`
@@ -53,23 +61,42 @@ The deployed database currently contains only bootstrap roles and the `admin` us
 - `test/cashflow.service.test.ts`
 - `odd/tasks/gzapi-demo-data-seed.md`
 
+DMS-10 through DMS-14 scope only: `package.json`, `vercel.json`, `migrations/demo-001-seed-data.ts`, `migrations/demo-002-build-seed.ts`, `test/migrations/demo-seed.test.ts`, `test/migrations/demo-build-seed.test.ts`, `README.md`, and this task document. No remote calls, live seed, deployment, startup changes, or deletions.
+
+DMS-15 bounded scope: `migrations/demo-002-build-seed.ts`, `test/migrations/demo-build-seed.test.ts`, `README.md`, and this task document only. Do not run ambient full-suite tests or execute a live seed.
+
 ## Route
 - DMS-01: delegated direct writer; multi-file implementation with external-provider and persistence safety.
 - DMS-02: delegated direct writer; same bounded writer owns the coherent seed implementation.
 - DMS-03: delegated verification after implementation.
+- DMS-10 through DMS-13: delegated bounded writer; multi-file preparation, build wiring, and tests on the existing feature branch.
+- DMS-14: same bounded writer, isolated correction to the existing work-unit; no full-suite rerun because the unrelated fixture test can drop its test database.
+- DMS-15: bounded writer; one explicit Production opt-in plus audit-only verification, independently reviewed before the work-unit commit.
+- Current delivery boundary: `feat/gzapi-production-build-seed` starts from the merged `master` state after PR #17. Commits `59f660a` and `8bb31f1` are published in draft PR #19 against `master`, linked to approved issue #18. No merge, Production deployment, or live seed was authorized.
 
 ## Forecast
 - Forecast authored changes: approximately 350 lines, excluding generated files.
-- Delivery strategy: `single-pr` (explicit user choice on the expanded seed). Keep the existing PR #17 targeting `master` as the only delivery vehicle; the enlarged diff exceeds the ~400-line review heuristic by user choice.
+- Delivery strategy: `single-pr` for the current Production build-seed unit as draft PR #19 against `master`, linked to approved issue #18. PR #17 was the completed, merged historical seed-expansion slice; its associated issue #16 is closed. The new PR contains only the seven changed files from the two new commits.
+- DMS-10 through DMS-13 forecast: roughly 280–450 authored lines including tests and docs; keep one coherent work-unit on the existing single-PR delivery strategy. The 400-line heuristic is advisory, not a reason to omit safety checks.
+- DMS-14 follow-up forecast (historical): about 80–140 additional authored lines of tests and explicit dependencies; included in the current `single-pr` work-unit with the unavailable full suite disclosed.
+- DMS-15 follow-up forecast (historical): about 60–100 additional authored lines including docs and tests; included in the current `single-pr` work-unit.
 
 ## Verification
-- `npm test`
+- `npm test -- --grep "demo seed"` (first observe RED on new focused tests, then GREEN)
+- `npm test` (pending: do not run in the current environment; the unrelated fixture test connects to and drops its test database, and the user explicitly prohibited touching the local test DB).
 - `npm run build`
 - `npm run lint`
 - `git diff --check`
+- `npm run vercel-build` only with a verified clean synthetic Production environment, `DEMO_SEED_MODE=disabled`, and no credentials; do not execute on uncertainty.
 - `npm run seed:demo -- --dry-run` with a safe non-production target
 
 ## Progress
+- Current branch/base: `feat/gzapi-production-build-seed` from the `master` state after merged PR #17. Work-unit commit `59f660a` contains DMS-10 through DMS-12, DMS-14 and DMS-15 with tests and docs; `8bb31f1` records its evidence. DMS-13 remains unchecked. Approved issue #18 and draft PR #19 are published; Vercel Preview is pending at first inspection. The latest DMS-15 focused run passed 32 tests; build and the sanitized synthetic Production-disabled `vercel-build` path passed. Lint still reports six pre-existing Finance errors. Full `npm test` is intentionally unavailable under the explicit prohibition on touching the local test database, and the live Vercel Production hook is still unobserved; do not claim full proof.
+- DMS-15 RED: focused `npm test -- --grep "demo seed"` returned 30 passing and two failing (unset/disabled mode and unexpected mode reached URI validation). GREEN: 32 passing, including Preview skip and explicit `run` validation/insert-only paths. `npm run build` and `git diff --check` passed; `npm run lint` reports the same six pre-existing Finance errors outside scope. A sanitized child environment containing only Path, SystemRoot, TEMP, TMP, `VERCEL_ENV=production`, and `DEMO_SEED_MODE=disabled` ran `npm run vercel-build`; it compiled and printed `Production demo seed: skipped` with no URI, expected database, service date, or Google key. This proves only the local script path, not actual Vercel Production hook execution. No Mongo/Google connection, live seed, deployment, commit, or full-suite test was performed. DMS-13 remains open pending controlled Vercel proof and isolated full-suite verification.
+- DMS-14 RED: five new isolated build-runner cases failed because the existing runner ignored injected dependencies and reached the absent real connection; GREEN: all 29 focused `demo seed` cases passed after injecting database/inspection/seed/disconnect and validating `admin` before the complete skip. `npm run build` and `git diff --check` passed; lint reports only the same six pre-existing Finance errors outside authorized files. No Mongo or Google calls. The full suite was intentionally not rerun because its unrelated fixture test can drop a test database. DMS-13 remains open pending live Vercel Production hook proof and safe full-suite verification; no commit.
+- DMS-14 independent review confirmed `complete` bypasses admin validation and prior build-runner tests cover only skip/config gates. Focused `demo seed` tests previously ran without database effects; do not rerun full `npm test` because `test/phase0/seed.test.ts` connects to and drops its test database. Live Production Vercel hook proof remains pending.
+- DMS-10–13 offline verification: new focused test first RED (`MODULE_NOT_FOUND` for missing build runner), then GREEN 24 passing; Preview `npm run vercel-build` built and printed `skipped`; `npm run build` passed; `git diff --check` passed. `npm run lint` retains six pre-existing Finance errors and no new errors. `npm test` returned 517 passing, one failure in the unrelated route-plan fixture idempotency test because its seed rejects the ambient non-local Mongo target; the test suite's fixture setup connects to and drops its designated test database. Do not rerun that suite without separately approving its database effects. No real demo seed or Google request was invoked. Production Vercel hook execution remains unverified. No commit until required tests pass.
+- DMS-10 accepted: official Vercel Node runtime documentation supports `vercel-build` in the nearest function package; the observed previous Production log did not show `npm run build`. Hook execution in a real Production build cannot be proven locally and remains pending.
 - Existing startup seed and route fixture audited.
 - Existing route fixture is local-only and uses synthetic coordinates; no finance fixture exists.
 - Guarded implementation and deterministic seam tests are now present; verification results are recorded in the implementation handoff.
@@ -83,4 +110,4 @@ The deployed database currently contains only bootstrap roles and the `admin` us
 - Work-unit commit `a5db616` contains DMS-04 through DMS-09, associated regression tests, cashflow correction, and operator documentation. The selected PR slice is the existing PR #17 against `master`; no production seed has run.
 
 ## Next Step
-An operator must independently review the candidate addresses and run the production dry-run before attempting the real seed. The real run can fail closed if Google rejects any address or DRIVE route; do not claim road validation from dry-run or offline tests.
+Review draft PR #19 and its checks; separately authorize any Production deployment with `DEMO_SEED_MODE=disabled` to verify the legacy Vercel build executes `vercel-build` without writes. Confirm expected database and service-date configuration and review the candidate addresses before any separately authorized live run. The real run may fail closed if Google rejects any address or DRIVE route; dry-run and offline tests do not prove road validation. Full-suite verification remains unavailable under the user's explicit prohibition on touching the local test database; do not rerun it in the current environment or substitute Production as a test database.

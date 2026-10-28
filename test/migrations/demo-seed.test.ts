@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import {
   DEMO_ADDRESS_SPECS,
+  inspectDemoFixtures,
   parseDemoArguments,
   resolveTarget,
   runDemoSeed,
@@ -32,17 +33,19 @@ describe('demo seed safety seams', () => {
   let writes = 0
   const database: DemoDatabase = {
     collection: (name) => ({
-      findOne: async () => name === 'users' ? { _id: new Types.ObjectId('507f1f77bcf86cd799439011') } : null,
+      findOne: async (filter) => name === 'users'
+        ? { _id: new Types.ObjectId('507f1f77bcf86cd799439011') }
+        : records.get(name)?.get(String(filter._id)) ?? null,
       updateOne: async (filter, update) => {
         writes += 1
         const collection = records.get(name) ?? new Map<string, Record<string, unknown>>()
         records.set(name, collection)
         const id = String(filter._id)
         const existing = collection.get(id)
-        if (existing !== undefined && (existing.fixtureNamespace !== filter.fixtureNamespace || existing.fixtureKey !== filter.fixtureKey)) {
+        if (existing !== undefined && update.$set !== undefined && (existing.fixtureNamespace !== filter.fixtureNamespace || existing.fixtureKey !== filter.fixtureKey)) {
           throw new Error('Cannot update an unowned fixture')
         }
-        collection.set(id, { ...existing, ...(existing === undefined ? update.$setOnInsert : {}), ...update.$set })
+        collection.set(id, { ...existing, ...(existing === undefined ? update.$setOnInsert : {}), ...(update.$set ?? {}) })
         return { upsertedCount: existing === undefined ? 1 : 0, modifiedCount: existing === undefined ? 0 : 1 }
       }
     })
@@ -99,6 +102,106 @@ describe('demo seed safety seams', () => {
     expect(second.summary?.inserted).to.equal(0)
     expect([...records].map(([key, value]) => [key, value.size])).to.deep.equal(counts)
     expect([...(records.get('sales')?.values() ?? [])].find((sale) => sale.fixtureKey === 'finance:sale:2026-05:1')?.createdAt).to.deep.equal(firstSale?.createdAt)
+  })
+
+  it('skips a complete owned dataset without a provider call or write', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
+    const inventory = await inspectDemoFixtures(database, date)
+    expect(inventory.missing).to.equal(0)
+    writes = 0
+    const result = await runDemoSeed({
+      target,
+      dryRun: false,
+      database,
+      serviceDate: date,
+      insertOnly: true,
+      providers: { ...providers, geocoder: async () => { throw new Error('Provider should not be called') } }
+    })
+    expect(result.summary?.inserted).to.equal(0)
+    expect(writes).to.equal(0)
+  })
+
+  it('repairs only a missing fixture while retaining edited owned data', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
+    const products = records.get('products') as Map<string, Record<string, unknown>>
+    const first = [...products.values()].find((item) => item.fixtureKey === 'catalog:product') as Record<string, unknown>
+    first.stock = 13
+    const missing = [...products.entries()].find(([, item]) => item.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
+    products.delete(missing[0])
+    expect((await inspectDemoFixtures(database, date)).missing).to.equal(1)
+    writes = 0
+    const result = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
+    expect(result.summary?.inserted).to.equal(1)
+    expect(products.get(missing[0])?.fixtureKey).to.equal('catalog:product:1:1')
+    expect(first.stock).to.equal(13)
+    expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)
+  })
+
+  it('rejects an identity collision before contacting Google or writing', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
+    const products = records.get('products') as Map<string, Record<string, unknown>>
+    const item = [...products.values()].find((value) => value.fixtureKey === 'catalog:product') as Record<string, unknown>
+    item.fixtureNamespace = 'someone-else'
+    writes = 0
+    try {
+      await runDemoSeed({
+        target,
+        dryRun: false,
+        database,
+        serviceDate: date,
+        insertOnly: true,
+        providers: { ...providers, geocoder: async () => { throw new Error('Provider should not be called') } }
+      })
+      expect.fail('Expected identity conflict')
+    } catch (error) {
+      expect((error as Error).message).to.contain('identity conflict')
+    }
+    expect(writes).to.equal(0)
+  })
+
+  it('does not write a partial repair when provider preflight fails', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
+    const products = records.get('products') as Map<string, Record<string, unknown>>
+    const missing = [...products.entries()].find(([, value]) => value.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
+    products.delete(missing[0])
+    writes = 0
+    try {
+      await runDemoSeed({
+        target,
+        dryRun: false,
+        database,
+        serviceDate: date,
+        insertOnly: true,
+        providers: { ...providers, matrix: async () => ({ segments: [] }) }
+      })
+      expect.fail('Expected provider failure')
+    } catch (error) {
+      expect((error as Error).message).to.contain('DRIVE route')
+    }
+    expect(writes).to.equal(0)
+    expect(products.has(missing[0])).to.equal(false)
+  })
+
+  it('allows two concurrent repairs without overwriting a winning insert', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
+    const products = records.get('products') as Map<string, Record<string, unknown>>
+    const missing = [...products.entries()].find(([, value]) => value.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
+    products.delete(missing[0])
+    const results = await Promise.all([1, 2].map(async () => await runDemoSeed({
+      target, dryRun: false, database, providers, serviceDate: date, insertOnly: true
+    })))
+    expect(results.reduce((sum, result) => sum + (result.summary?.inserted ?? 0), 0)).to.equal(1)
+    expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)
   })
 
   it('performs zero writes when geocoding, matrix, or route validation fails', async () => {
