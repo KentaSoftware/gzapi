@@ -251,13 +251,20 @@ The startup service date is fixed in code at `2026-10-21`. This preserves the
 same six-month fixture IDs across cold starts without an environment variable.
 Tradeoff: the demo history becomes older over time; changing this constant
 creates additional monthly IDs and must be reviewed as a fixture migration.
-Writes are sequential, not transactional: a failed write can leave partial
-owned fixtures. After correcting the cause, the next startup retries the same
-anchor and inserts missing fixtures. No real Google route or Production startup
-has been verified by these offline tests. The first Production request also
-awaits a serial inventory of hundreds of records and, when fixtures are
-missing, provider calls and writes. Its runtime and Vercel request-duration
-limits have not been measured here; a timeout could block initialization.
+Inventory checks every deterministic ID with at most 16 simultaneous Mongo
+reads. Insert-only repair reuses that validated inventory: it skips existing
+owned records and attempts inserts only for missing keys. If another writer
+inserts a missing key first, its namespace/key must pass ownership validation;
+the repair never overwrites it. The manual upsert command remains unchanged.
+Writes use bounded concurrency (at most 8 inserts in flight), not transactions:
+a failed write can leave partial owned fixtures. After correcting the cause,
+the next startup retries the same anchor and inserts missing fixtures. No real
+Google route or Production startup has been verified by these offline tests.
+The first Production request also awaits hundreds of inventory reads (bounded
+concurrency) and, when fixtures are missing, provider calls and bounded
+inserts. Mock-only operation counts do not establish Google/network latency or
+Vercel request-duration safety; a timeout could still block initialization.
+Production runtime proof is pending.
 
 `seed:demo` remains a manually-run operator command. It upserts only documents owned by the
 `gzapi-demo-seed-v1` fixture namespace and never deletes unrelated data.

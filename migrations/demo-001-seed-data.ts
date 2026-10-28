@@ -249,14 +249,33 @@ const assertOwned = (value: unknown, key: string): void => {
   }
 }
 
-export const inspectDemoFixtures = async (database: DemoDatabase, serviceDate: Date): Promise<{ total: number, missing: number }> => {
+export const inspectDemoFixtures = async (
+  database: DemoDatabase, serviceDate: Date, missingKeys?: Set<string>
+): Promise<{ total: number, missing: number }> => {
   const keys = ownedFixtureKeys(serviceDate)
   let missing = 0
-  for (const { collection, key } of keys) {
-    const existing = await database.collection(collection).findOne({ _id: fixtureObjectId(key) })
-    if (existing === null) missing += 1
-    else assertOwned(existing, key)
+  let next = 0
+  let failed = false
+  let failure: unknown
+  const worker = async (): Promise<void> => {
+    while (next < keys.length && !failed) {
+      const { collection, key } = keys[next++]
+      try {
+        const existing = await database.collection(collection).findOne({ _id: fixtureObjectId(key) })
+        if (existing === null) {
+          missing += 1
+          missingKeys?.add(key)
+        } else {
+          assertOwned(existing, key)
+        }
+      } catch (error) {
+        failed = true
+        failure = error
+      }
+    }
   }
+  await Promise.all(Array.from({ length: Math.min(16, keys.length) }, worker))
+  if (failed) throw failure instanceof Error ? failure : new Error('Demo fixture inventory failed')
   return { total: keys.length, missing }
 }
 
@@ -264,11 +283,6 @@ const insertMissingFixture = async (
   collection: FixtureCollection, key: string, id: Types.ObjectId,
   payload: Record<string, unknown>, now: Date
 ): Promise<FixtureOutcome> => {
-  const existing = await collection.findOne({ _id: id })
-  if (existing !== null) {
-    assertOwned(existing, key)
-    return FIXTURE_OUTCOME.UPDATED
-  }
   const { createdAt, ...fields } = payload
   try {
     const result = await collection.updateOne(
@@ -619,30 +633,38 @@ const buildSnapshot = (
   }
 }
 
+const SEED_WRITE_CONCURRENCY = 8
+
 const seedPreparedData = async (
   database: DemoDatabase,
   prepared: Awaited<ReturnType<typeof prepareSeed>>,
   serviceDate: Date,
   now: Date,
-  insertOnly = false
+  insertOnly = false,
+  missingKeys?: Set<string>,
+  existingAdminId?: Types.ObjectId
 ): Promise<DemoSummary> => {
   const summary = createSummary()
-  const adminId = await readAdminId(database)
-  const write = async (collectionName: string, key: string, id: Types.ObjectId, payload: Record<string, unknown>): Promise<void> => {
-    const collection = database.collection(collectionName)
-    recordOutcome(summary, collectionName, await (insertOnly
-      ? insertMissingFixture(collection, key, id, payload, now)
-      : upsertFixture(collection, key, id, payload, now)))
+  const adminId = existingAdminId ?? await readAdminId(database)
+  const pending: Array<() => Promise<void>> = []
+  const write = (collectionName: string, key: string, id: Types.ObjectId, payload: Record<string, unknown>): void => {
+    if (insertOnly && missingKeys !== undefined && !missingKeys.has(key)) return
+    pending.push(async () => {
+      const collection = database.collection(collectionName)
+      recordOutcome(summary, collectionName, await (insertOnly
+        ? insertMissingFixture(collection, key, id, payload, now)
+        : upsertFixture(collection, key, id, payload, now)))
+    })
   }
 
   const categoryId = fixtureObjectId('catalog:category')
   const brandId = fixtureObjectId('catalog:brand')
   const providerId = fixtureObjectId('catalog:provider')
   const productId = fixtureObjectId('catalog:product')
-  await write('categories', 'catalog:category', categoryId, { descripcion: 'GZ Demo Catalog' })
-  await write('brands', 'catalog:brand', brandId, { descripcion: 'GZ Demo Brand' })
-  await write('providers', 'catalog:provider', providerId, { descripcion: 'GZ Demo Supplier' })
-  await write('products', 'catalog:product', productId, {
+  write('categories', 'catalog:category', categoryId, { descripcion: 'GZ Demo Catalog' })
+  write('brands', 'catalog:brand', brandId, { descripcion: 'GZ Demo Brand' })
+  write('providers', 'catalog:provider', providerId, { descripcion: 'GZ Demo Supplier' })
+  write('products', 'catalog:product', productId, {
     descripcion: DEMO_PRODUCT.description,
     stock: 500,
     codigoBarra: DEMO_PRODUCT.barcode,
@@ -659,23 +681,23 @@ const seedPreparedData = async (
   for (const [index, name] of DEMO_CATEGORIES.entries()) {
     const id = fixtureObjectId(`catalog:category:${index + 1}`)
     categoryIds.push(id)
-    await write('categories', `catalog:category:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+    write('categories', `catalog:category:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
   }
   for (const [index, name] of DEMO_BRANDS.entries()) {
     const id = fixtureObjectId(`catalog:brand:${index + 1}`)
     brandIds.push(id)
-    await write('brands', `catalog:brand:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+    write('brands', `catalog:brand:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
   }
   for (const [index, name] of DEMO_PROVIDERS.entries()) {
     const id = fixtureObjectId(`catalog:provider:${index + 1}`)
     providerIds.push(id)
-    await write('providers', `catalog:provider:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+    write('providers', `catalog:provider:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
   }
   for (const [categoryIndex, category] of DEMO_CATEGORIES.entries()) {
     for (const [variantIndex, variant] of DEMO_VARIANTS.entries()) {
       const key = `catalog:product:${categoryIndex + 1}:${variantIndex + 1}`
       const purchasePrice = 80 + categoryIndex * 25 + variantIndex * 7
-      await write('products', key, fixtureObjectId(key), {
+      write('products', key, fixtureObjectId(key), {
         descripcion: `GZ Demo ${category} ${variant}`,
         stock: 120 + variantIndex * 10,
         codigoBarra: `GZ-DEMO-${categoryIndex + 1}-${String(variantIndex + 1).padStart(2, '0')}`,
@@ -692,7 +714,7 @@ const seedPreparedData = async (
   for (const zone of DEMO_ZONES) {
     const id = fixtureObjectId(`zone:${zone.key}`)
     zoneIds.set(zone.key, id)
-    await write('deliveryzones', `zone:${zone.key}`, id, { code: zone.code, name: zone.name, normalizedName: zone.key, active: true })
+    write('deliveryzones', `zone:${zone.key}`, id, { code: zone.code, name: zone.name, normalizedName: zone.key, active: true })
   }
 
   const clientIds = new Map<string, Types.ObjectId>()
@@ -702,11 +724,11 @@ const seedPreparedData = async (
     const zoneKey = client.key.split(':')[1]
     const zoneId = zoneIds.get(zoneKey)
     if (zoneId === undefined) throw new Error('Demo client zone is not configured')
-    await write('clients', client.key, id, { ...locationDocument(client, now, adminId), deliveryZoneId: zoneId })
+    write('clients', client.key, id, { ...locationDocument(client, now, adminId), deliveryZoneId: zoneId })
   }
 
   const vehicleId = fixtureObjectId('vehicle:primary')
-  await write('vehicles', 'vehicle:primary', vehicleId, {
+  write('vehicles', 'vehicle:primary', vehicleId, {
     code: DEMO_VEHICLE.code,
     fuelConsumptionLitersPer100Km: DEMO_VEHICLE.fuelConsumptionLitersPer100Km,
     attributes: { fixture: FIXTURE_NAMESPACE, capacity: 'demo' },
@@ -714,7 +736,7 @@ const seedPreparedData = async (
   })
 
   const depot = prepared.depot
-  await write('routingconfigs', 'routing-config:depot', fixtureObjectId('routing-config:depot'), {
+  write('routingconfigs', 'routing-config:depot', fixtureObjectId('routing-config:depot'), {
     key: ROUTING_CONFIG_KEYS.DEPOSITO_1,
     enabled: true,
     revision: 1,
@@ -745,7 +767,7 @@ const seedPreparedData = async (
     const saleId = fixtureObjectId(`route-sale:${client.key}`)
     routeSaleIds.set(client.key, saleId)
     const quantity = client.key.endsWith(':1') ? 2 : 1
-    await write('sales', `route-sale:${client.key}`, saleId, {
+    write('sales', `route-sale:${client.key}`, saleId, {
       estado: 'CREATED',
       total: quantity * DEMO_PRODUCT.salePrice,
       user: adminId,
@@ -753,7 +775,7 @@ const seedPreparedData = async (
       idCliente: clientId,
       delivery: { status: SALE_DELIVERY_STATUS.PENDING, serviceDate }
     })
-    await write('itemsales', `route-item-sale:${client.key}`, fixtureObjectId(`route-item-sale:${client.key}`), {
+    write('itemsales', `route-item-sale:${client.key}`, fixtureObjectId(`route-item-sale:${client.key}`), {
       idVenta: saleId,
       idProducto: productId,
       cantidad: quantity,
@@ -765,7 +787,7 @@ const seedPreparedData = async (
 
   for (const snapshot of prepared.snapshots) {
     const saleIds = snapshot.clients.map((client) => String(routeSaleIds.get(client.key)))
-    await write('routeplans', `route-snapshot:${snapshot.zoneKey}`, fixtureObjectId(`route-snapshot:${snapshot.zoneKey}`), buildSnapshot(snapshot, depot, serviceDate, adminId, vehicleId, saleIds))
+    write('routeplans', `route-snapshot:${snapshot.zoneKey}`, fixtureObjectId(`route-snapshot:${snapshot.zoneKey}`), buildSnapshot(snapshot, depot, serviceDate, adminId, vehicleId, saleIds))
   }
 
   for (const period of financePeriods(serviceDate)) {
@@ -775,7 +797,7 @@ const seedPreparedData = async (
     if (clientId === undefined) throw new Error('Finance fixture client identifier is missing')
     const date = period.date
     const saleId = fixtureObjectId(`finance:sale:${period.key}`)
-    await write('sales', `finance:sale:${period.key}`, saleId, {
+    write('sales', `finance:sale:${period.key}`, saleId, {
       estado: 'COMPLETED',
       total: period.saleTotal,
       user: adminId,
@@ -785,7 +807,7 @@ const seedPreparedData = async (
       createdAt: date,
       delivery: { status: SALE_DELIVERY_STATUS.DELIVERED, deliveredAt: date }
     })
-    await write('itemsales', `finance:item-sale:${period.key}`, fixtureObjectId(`finance:item-sale:${period.key}`), {
+    write('itemsales', `finance:item-sale:${period.key}`, fixtureObjectId(`finance:item-sale:${period.key}`), {
       idVenta: saleId,
       idProducto: productId,
       cantidad: 10,
@@ -795,7 +817,7 @@ const seedPreparedData = async (
     })
 
     const buyId = fixtureObjectId(`finance:buy:${period.key}`)
-    await write('buys', `finance:buy:${period.key}`, buyId, {
+    write('buys', `finance:buy:${period.key}`, buyId, {
       estado: 'paid',
       total: period.buyTotal,
       user: adminId,
@@ -805,7 +827,7 @@ const seedPreparedData = async (
       createdAt: date,
       docNumber: `GZ-DEMO-${period.key}`
     })
-    await write('itembuys', `finance:item-buy:${period.key}`, fixtureObjectId(`finance:item-buy:${period.key}`), {
+    write('itembuys', `finance:item-buy:${period.key}`, fixtureObjectId(`finance:item-buy:${period.key}`), {
       idBuy: buyId,
       idProducto: productId,
       cantidad: 10,
@@ -814,7 +836,7 @@ const seedPreparedData = async (
       estado: true
     })
 
-    await write('expenses', `finance:expense:${period.key}`, fixtureObjectId(`finance:expense:${period.key}`), {
+    write('expenses', `finance:expense:${period.key}`, fixtureObjectId(`finance:expense:${period.key}`), {
       date,
       amountCents: period.expenseCents,
       currency: 'ARS',
@@ -835,7 +857,7 @@ const seedPreparedData = async (
       const paidAt = financeDate(period.key, saleIndex, serviceDate)
       const total = 900 + index * 135 + saleIndex * 47
       const id = fixtureObjectId(key)
-      await write('sales', key, id, {
+      write('sales', key, id, {
         estado: 'COMPLETED',
         total,
         user: adminId,
@@ -845,7 +867,7 @@ const seedPreparedData = async (
         createdAt: paidAt,
         delivery: { status: SALE_DELIVERY_STATUS.DELIVERED, deliveredAt: paidAt }
       })
-      await write('itemsales', `finance:item-sale:${period.key}:${saleIndex}`, fixtureObjectId(`finance:item-sale:${period.key}:${saleIndex}`), {
+      write('itemsales', `finance:item-sale:${period.key}:${saleIndex}`, fixtureObjectId(`finance:item-sale:${period.key}:${saleIndex}`), {
         idVenta: id,
         idProducto: fixtureObjectId(`catalog:product:${(saleIndex % DEMO_CATEGORIES.length) + 1}:${(saleIndex % DEMO_VARIANTS.length) + 1}`),
         cantidad: 1,
@@ -860,7 +882,7 @@ const seedPreparedData = async (
       const date = financeDate(period.key, buyIndex + 4, serviceDate)
       const total = 2500 + index * 270 + buyIndex * 115
       const id = fixtureObjectId(key)
-      await write('buys', key, id, {
+      write('buys', key, id, {
         estado: 'paid',
         total,
         user: adminId,
@@ -870,7 +892,7 @@ const seedPreparedData = async (
         createdAt: date,
         docNumber: `GZ-DEMO-${period.key}-${buyIndex}`
       })
-      await write('itembuys', `finance:item-buy:${period.key}:${buyIndex}`, fixtureObjectId(`finance:item-buy:${period.key}:${buyIndex}`), {
+      write('itembuys', `finance:item-buy:${period.key}:${buyIndex}`, fixtureObjectId(`finance:item-buy:${period.key}:${buyIndex}`), {
         idBuy: id,
         idProducto: fixtureObjectId(`catalog:product:1:${buyIndex}`),
         cantidad: 10,
@@ -882,7 +904,7 @@ const seedPreparedData = async (
 
     for (let expenseIndex = 1; expenseIndex <= 10; expenseIndex += 1) {
       const key = `finance:expense:${period.key}:${expenseIndex}`
-      await write('expenses', key, fixtureObjectId(key), {
+      write('expenses', key, fixtureObjectId(key), {
         date: financeDate(period.key, expenseIndex + 10, serviceDate),
         amountCents: 15000 + index * 2000 + expenseIndex * 700,
         currency: 'ARS',
@@ -897,12 +919,29 @@ const seedPreparedData = async (
     }
   }
 
-  await write('cashflowconfigs', 'finance:cashflow-config', fixtureObjectId('finance:cashflow-config'), {
+  write('cashflowconfigs', 'finance:cashflow-config', fixtureObjectId('finance:cashflow-config'), {
     openingBalance: 100000,
     reserveMonthsMultiplier: 1,
     deficitAlertEnabled: true,
     idleCapitalRecommendMin: 25000
   })
+
+  let next = 0
+  let failed = false
+  let failure: unknown
+  const worker = async (): Promise<void> => {
+    while (next < pending.length && !failed) {
+      const task = pending[next++]
+      try {
+        await task()
+      } catch (error) {
+        failed = true
+        failure = error
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(SEED_WRITE_CONCURRENCY, pending.length) }, worker))
+  if (failed) throw failure instanceof Error ? failure : new Error('Demo fixture write failed')
   return summary
 }
 
@@ -922,11 +961,15 @@ export const runDemoSeed = async (input: {
   const serviceDate = input.serviceDate ?? resolveServiceDate(undefined, input.now ?? new Date())
   if (Number.isNaN(serviceDate.getTime())) throw new Error('DEMO_SERVICE_DATE must be a real calendar date')
   if (input.insertOnly === true) {
-    const inventory = await inspectDemoFixtures(input.database, serviceDate)
+    const missingKeys = new Set<string>()
+    const inventory = await inspectDemoFixtures(input.database, serviceDate, missingKeys)
     if (inventory.missing === 0) {
       return { dryRun: false, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length, summary: createSummary() }
     }
-    await readAdminId(input.database)
+    const adminId = await readAdminId(input.database)
+    const prepared = await prepareSeed(input.providers)
+    const summary = await seedPreparedData(input.database, prepared, serviceDate, input.now ?? new Date(), true, missingKeys, adminId)
+    return { dryRun: false, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length, summary }
   }
   const prepared = await prepareSeed(input.providers)
   const summary = await seedPreparedData(input.database, prepared, serviceDate, input.now ?? new Date(), input.insertOnly)
