@@ -224,10 +224,42 @@ ROUTE_PLAN_SERVICE_DATE=2026-10-14 npm run seed:route-plan:test
 ROUTE_PLAN_TEST_PASSWORD=route-plan-local-password npm run seed:route-plan:test
 ```
 
-## One-off Vercel demo-data seed
+## Demo-data seed: automatic Production build and manual CLI
 
-`seed:demo` is a manually-run operator command. It is not part of application
-startup or the Vercel build. It upserts only documents owned by the
+The `vercel-build` script always runs `npm run build`. Its demo seed defaults
+to **no database or provider access**: unset `DEMO_SEED_MODE` or
+`DEMO_SEED_MODE=disabled` prints `Production demo seed: skipped`, even when
+`VERCEL_ENV=production` and the URI or Google key is absent. An unexpected
+mode fails the Production build without connecting. Preview, local builds,
+and tests always skip regardless of the mode. This is not application startup
+logic. A local build with synthetic `VERCEL_ENV=production` and
+`DEMO_SEED_MODE=disabled` can audit the script path without credentials; it
+does **not** prove Vercel executed the hook.
+
+Only set `DEMO_SEED_MODE=run` in Vercel Production after confirming the target
+and approving writes. A complete fixture skips Google and all writes; missing
+owned fixtures are geocoded and road-validated before the hook inserts only
+absent records.
+Existing records, including edited demo documents, are never overwritten by
+the automatic path. The documented Vercel Node runtime hook is configured,
+but its actual execution in a Production build has **not** been verified.
+
+Before enabling `run`, set `MONGODB_URI`, `DEMO_SEED_EXPECTED_DATABASE`, and a
+fixed `DEMO_SERVICE_DATE=YYYY-MM-DD` in Vercel Production. The expected-database
+variable is **our application-level safety guard**, not a Vercel-provided
+variable: its value must be the exact database name selected by the URI. Use
+`test` only if the Production URI has been independently confirmed to select
+that database; never infer it from a local default. `GOOGLE_MAPS_SERVER_API_KEY`
+is required when any fixture is missing. The base `admin` user must already
+exist; if it does not, the build fails rather than creating unrelated startup
+data. Build failures abort the deployment; no secret value is printed. A missing URI never
+falls back to localhost. Multiple builds use deterministic IDs and insert-only
+upserts; concurrent winners are checked for namespace/key ownership. Writes
+are sequential, not transactional: a failed build can leave partial demo data,
+which the next Production build with the **same** service date can complete.
+Do not rotate that date casually: a different month creates additional history.
+
+`seed:demo` remains a manually-run operator command. It upserts only documents owned by the
 `gzapi-demo-seed-v1` fixture namespace and never deletes unrelated data.
 
 The seed resolves the depot and client addresses through Google Geocoding,
@@ -289,7 +321,7 @@ vercel env run -e production -- npm run seed:demo -- --confirm-remote
 
 Do not place MongoDB URIs, Google keys, or other credentials in scripts,
 arguments, logs, documentation, or commits. This command is a one-off
-operator action, not startup/build logic.
+operator action, separate from the Production build hook.
 
 Fixture credentials:
 
