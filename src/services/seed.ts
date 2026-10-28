@@ -81,11 +81,16 @@ export const seedDatabase = async (): Promise<void> => {
       throw new Error('No se pudo encontrar el rol de administrador')
     }
 
-    await UserModel.create({
-      nickname: 'admin',
-      password: passHash,
-      role: adminRole._id
-    })
+    try {
+      await UserModel.create({
+        nickname: 'admin',
+        password: passHash,
+        role: adminRole._id
+      })
+    } catch (error) {
+      // Another instance created the admin between our read and write: that is the desired end state.
+      if ((error as { code?: number }).code !== 11000) throw error
+    }
   } else {
     const adminRole = await RoleModel.findOne({ name: 'admin' })
     if (adminRole !== null && String(adminUser.role) !== String(adminRole._id)) {

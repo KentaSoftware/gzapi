@@ -43,7 +43,7 @@ const DEMO_ADDRESS_SPECS = [
   {
     key: 'depot',
     name: 'GZ Demo Depot',
-    address: 'Av. Mate de Luna 4100, San Miguel de Tucumán, Tucumán, Argentina'
+    address: 'Av. Mate de Luna 4357, San Miguel de Tucumán, Tucumán, Argentina'
   },
   {
     key: 'client:centro:1',
