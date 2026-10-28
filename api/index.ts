@@ -13,6 +13,14 @@ export interface InitializationDependencies {
 
 type VercelHandler = (req: Request, res: Response) => Promise<void>
 
+// Operator-facing diagnosis: the message only, with secrets and connection strings redacted.
+const describeInitializationError = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : 'non-Error failure'
+  return message
+    .replace(/mongodb(?:\+srv)?:\/\/\S+/gi, '[redacted MongoDB target]')
+    .replace(/AIza[\w-]{20,}/g, '[redacted Google key]')
+}
+
 export function createVercelHandler (dependencies: InitializationDependencies): VercelHandler {
   let initialization: Promise<Express> | undefined
 
@@ -31,7 +39,7 @@ export function createVercelHandler (dependencies: InitializationDependencies): 
       app(req, res)
     } catch (error) {
       initialization = undefined
-      console.error('Vercel REST application initialization failed')
+      console.error('Vercel REST application initialization failed:', describeInitializationError(error))
       res.status(500).json({ error: 'Service initialization failed' })
     }
   }
