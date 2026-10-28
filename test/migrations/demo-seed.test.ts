@@ -63,6 +63,116 @@ describe('demo seed safety seams', () => {
     route: async () => ({ encodedPolyline: 'offline-route', distanceMeters: 5000, durationSeconds: 900 })
   }
 
+  it('bounds concurrent inventory reads while checking every owned fixture', async () => {
+    let active = 0
+    let peak = 0
+    let reads = 0
+    const slow: DemoDatabase = {
+      collection: () => ({
+        findOne: async () => {
+          active += 1
+          peak = Math.max(peak, active)
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          active -= 1
+          reads += 1
+          return null
+        },
+        updateOne: async () => { throw new Error('Unexpected write') }
+      })
+    }
+    const inventory = await inspectDemoFixtures(slow, new Date('2026-10-21T00:00:00.000Z'))
+    expect(reads).to.equal(inventory.total)
+    expect(inventory.missing).to.equal(inventory.total)
+    expect(peak).to.be.greaterThan(1)
+    expect(peak).to.be.at.most(16)
+  })
+
+  it('avoids repeat reads and writes for inventoried owned fixtures during a repair', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    let reads = 0
+    let updates = 0
+    const counted: DemoDatabase = {
+      collection: (name) => {
+        const base = database.collection(name)
+        return {
+          findOne: async (filter) => { reads += 1; return await base.findOne(filter) },
+          updateOne: async (filter, update, options) => { updates += 1; return await base.updateOne(filter, update, options) }
+        }
+      }
+    }
+    const first = await runDemoSeed({ target, dryRun: false, database: counted, providers, serviceDate: date, insertOnly: true })
+    const total = first.summary?.inserted ?? 0
+    expect(total).to.equal((await inspectDemoFixtures(database, date)).total)
+    expect(reads).to.equal(total + 1)
+    expect(updates).to.equal(total)
+    reads = 0
+    updates = 0
+    records.get('products')?.delete(String([...records.get('products')?.entries() ?? []].find(([, value]) => value.fixtureKey === 'catalog:product:1:1')?.[0]))
+    const repaired = await runDemoSeed({ target, dryRun: false, database: counted, providers, serviceDate: date, insertOnly: true })
+    expect(repaired.summary?.inserted).to.equal(1)
+    expect(updates).to.equal(1)
+    expect(reads).to.equal(total + 1)
+  })
+
+  it('bounds concurrent fixture writes during an insert-only repair', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    let active = 0
+    let peak = 0
+    const slow: DemoDatabase = {
+      collection: (name) => ({
+        findOne: database.collection(name).findOne,
+        updateOne: async (filter, update, options) => {
+          active += 1
+          peak = Math.max(peak, active)
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          try {
+            return await database.collection(name).updateOne(filter, update, options)
+          } finally {
+            active -= 1
+          }
+        }
+      })
+    }
+    const result = await runDemoSeed({ target, dryRun: false, database: slow, providers, serviceDate: date, insertOnly: true })
+    expect(result.summary?.inserted ?? 0).to.be.greaterThan(100)
+    expect(peak).to.be.greaterThan(1)
+    expect(peak).to.be.at.most(8)
+  })
+
+  it('rejects an unowned concurrent insert after inventory without overwriting it', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
+    const products = records.get('products') as Map<string, Record<string, unknown>>
+    const [id] = [...products.entries()].find(([, value]) => value.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
+    products.delete(id)
+    const unowned = { fixtureNamespace: 'other-owner', fixtureKey: 'other-product', stock: 99 }
+    const racing: DemoDatabase = {
+      collection: (name) => {
+        const base = database.collection(name)
+        return {
+          findOne: base.findOne,
+          updateOne: async (filter, update, options) => {
+            if (name === 'products' && String(filter._id) === id) {
+              products.set(id, unowned)
+              return { upsertedCount: 0, modifiedCount: 0 }
+            }
+            return await base.updateOne(filter, update, options)
+          }
+        }
+      }
+    }
+    try {
+      await runDemoSeed({ target, dryRun: false, database: racing, providers, serviceDate: date, insertOnly: true })
+      expect.fail('Expected concurrent ownership conflict')
+    } catch (error) {
+      expect((error as Error).message).to.contain('identity conflict')
+    }
+    expect(products.get(id)).to.equal(unowned)
+  })
+
   it('plans 20 candidate clients without calling providers in dry-run', async () => {
     expect(DEMO_ADDRESS_SPECS).to.have.length(21)
     const result = await runDemoSeed({ target, dryRun: true })

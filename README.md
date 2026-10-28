@@ -224,40 +224,47 @@ ROUTE_PLAN_SERVICE_DATE=2026-10-14 npm run seed:route-plan:test
 ROUTE_PLAN_TEST_PASSWORD=route-plan-local-password npm run seed:route-plan:test
 ```
 
-## Demo-data seed: automatic Production build and manual CLI
+## Demo-data seed: Production startup and manual CLI
 
-The `vercel-build` script always runs `npm run build`. Its demo seed defaults
-to **no database or provider access**: unset `DEMO_SEED_MODE` or
-`DEMO_SEED_MODE=disabled` prints `Production demo seed: skipped`, even when
-`VERCEL_ENV=production` and the URI or Google key is absent. An unexpected
-mode fails the Production build without connecting. Preview, local builds,
-and tests always skip regardless of the mode. This is not application startup
-logic. A local build with synthetic `VERCEL_ENV=production` and
-`DEMO_SEED_MODE=disabled` can audit the script path without credentials; it
-does **not** prove Vercel executed the hook.
+`vercel-build` only compiles TypeScript. On the first Production API request,
+initialization connects to MongoDB, awaits the existing roles/admin seed, then
+inspects the demo fixture inventory before constructing the application. The
+handler caches successful initialization across warm requests. Local, Preview,
+and test startup do not inspect or write demo fixtures. No activation flag is
+required. A missing fixture that cannot be prepared or written, a fixture
+identity conflict, or a provider validation failure prevents **all** requests,
+including login, until initialization can retry successfully. Initialization
+errors return a generic response without logging credentials.
 
-Only set `DEMO_SEED_MODE=run` in Vercel Production after confirming the target
-and approving writes. A complete fixture skips Google and all writes; missing
-owned fixtures are geocoded and road-validated before the hook inserts only
-absent records.
-Existing records, including edited demo documents, are never overwritten by
-the automatic path. The documented Vercel Node runtime hook is configured,
-but its actual execution in a Production build has **not** been verified.
+Production requires `MONGODB_URI` selecting an explicit database. The base
+seed ensures the admin before demo inspection. A complete owned fixture needs
+no Google key and makes no demo writes; missing fixtures require
+`GOOGLE_MAPS_SERVER_API_KEY`, precise geocoding and bidirectional Google Routes
+`DRIVE` validation before insert-only repair. Existing owned documents,
+including edited demo records, are not overwritten; conflicting ownership
+fails closed. Inventory checks deterministic IDs and `fixtureNamespace`/
+`fixtureKey` ownership, not the contents of existing owned documents; edited
+or otherwise invalid payloads can pass inventory and remain unchanged.
+Concurrent upsert winners are checked for namespace/key ownership.
 
-Before enabling `run`, set `MONGODB_URI`, `DEMO_SEED_EXPECTED_DATABASE`, and a
-fixed `DEMO_SERVICE_DATE=YYYY-MM-DD` in Vercel Production. The expected-database
-variable is **our application-level safety guard**, not a Vercel-provided
-variable: its value must be the exact database name selected by the URI. Use
-`test` only if the Production URI has been independently confirmed to select
-that database; never infer it from a local default. `GOOGLE_MAPS_SERVER_API_KEY`
-is required when any fixture is missing. The base `admin` user must already
-exist; if it does not, the build fails rather than creating unrelated startup
-data. Build failures abort the deployment; no secret value is printed. A missing URI never
-falls back to localhost. Multiple builds use deterministic IDs and insert-only
-upserts; concurrent winners are checked for namespace/key ownership. Writes
-are sequential, not transactional: a failed build can leave partial demo data,
-which the next Production build with the **same** service date can complete.
-Do not rotate that date casually: a different month creates additional history.
+The startup service date is fixed in code at `2026-10-21`. This preserves the
+same six-month fixture IDs across cold starts without an environment variable.
+Tradeoff: the demo history becomes older over time; changing this constant
+creates additional monthly IDs and must be reviewed as a fixture migration.
+Inventory checks every deterministic ID with at most 16 simultaneous Mongo
+reads. Insert-only repair reuses that validated inventory: it skips existing
+owned records and attempts inserts only for missing keys. If another writer
+inserts a missing key first, its namespace/key must pass ownership validation;
+the repair never overwrites it. The manual upsert command remains unchanged.
+Writes use bounded concurrency (at most 8 inserts in flight), not transactions:
+a failed write can leave partial owned fixtures. After correcting the cause,
+the next startup retries the same anchor and inserts missing fixtures. No real
+Google route or Production startup has been verified by these offline tests.
+The first Production request also awaits hundreds of inventory reads (bounded
+concurrency) and, when fixtures are missing, provider calls and bounded
+inserts. Mock-only operation counts do not establish Google/network latency or
+Vercel request-duration safety; a timeout could still block initialization.
+Production runtime proof is pending.
 
 `seed:demo` remains a manually-run operator command. It upserts only documents owned by the
 `gzapi-demo-seed-v1` fixture namespace and never deletes unrelated data.
@@ -321,7 +328,7 @@ vercel env run -e production -- npm run seed:demo -- --confirm-remote
 
 Do not place MongoDB URIs, Google keys, or other credentials in scripts,
 arguments, logs, documentation, or commits. This command is a one-off
-operator action, separate from the Production build hook.
+operator action, separate from automatic Production API initialization.
 
 Fixture credentials:
 

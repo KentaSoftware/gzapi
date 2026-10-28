@@ -37,6 +37,7 @@ describe('Phase 0 — Vercel REST handler', () => {
   it('S-08: caches application initialization for concurrent warm requests', async () => {
     let connectCalls = 0
     let seedCalls = 0
+    let demoCalls = 0
     let appCalls = 0
     const app = ((_: Request, res: Response) => {
       res.status(200).json({ ok: true })
@@ -44,6 +45,7 @@ describe('Phase 0 — Vercel REST handler', () => {
     const handler = createVercelHandler({
       connect: async () => { connectCalls += 1 },
       seed: async () => { seedCalls += 1 },
+      seedDemo: async () => { demoCalls += 1 },
       createApp: async () => {
         appCalls += 1
         await Promise.resolve()
@@ -60,6 +62,7 @@ describe('Phase 0 — Vercel REST handler', () => {
 
     expect(connectCalls).to.equal(1)
     expect(seedCalls).to.equal(1)
+    expect(demoCalls).to.equal(1)
     expect(appCalls).to.equal(1)
     expect(first.statusCode).to.equal(200)
     expect(second.statusCode).to.equal(200)
@@ -78,6 +81,7 @@ describe('Phase 0 — Vercel REST handler', () => {
         if (connectCalls === 1) throw error
       },
       seed: async () => {},
+      seedDemo: async () => {},
       createApp: async () => app
     })
     const log = sinon.stub(console, 'error')
@@ -92,6 +96,37 @@ describe('Phase 0 — Vercel REST handler', () => {
     expect(retried.statusCode).to.equal(200)
     expect(connectCalls).to.equal(2)
     expect(log.calledWithMatch(secret)).to.equal(false)
+  })
+
+  it('does not serve login while demo preparation fails, and retries the full sequence', async () => {
+    const order: string[] = []
+    let attempts = 0
+    const app = ((_: Request, res: Response) => {
+      order.push('request')
+      res.status(200).json({ ok: true })
+    }) as Express
+    const handler = createVercelHandler({
+      connect: async () => { order.push('connect') },
+      seed: async () => { order.push('base') },
+      seedDemo: async () => {
+        order.push('demo')
+        attempts += 1
+        if (attempts === 1) throw new Error('Offline DRIVE failure')
+      },
+      createApp: async () => { order.push('app'); return app }
+    })
+    const log = sinon.stub(console, 'error')
+    const failed = response()
+    await handler(request, failed as unknown as Response)
+    expect(failed.statusCode).to.equal(500)
+    expect(failed.body).to.deep.equal({ error: 'Service initialization failed' })
+    expect(order).to.deep.equal(['connect', 'base', 'demo'])
+    expect(log.calledWithMatch('DRIVE')).to.equal(false)
+
+    const retried = response()
+    await handler(request, retried as unknown as Response)
+    expect(retried.statusCode).to.equal(200)
+    expect(order).to.deep.equal(['connect', 'base', 'demo', 'connect', 'base', 'demo', 'app', 'request'])
   })
 })
 
