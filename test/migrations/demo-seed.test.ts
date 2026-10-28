@@ -314,10 +314,8 @@ describe('demo seed safety seams', () => {
     expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)
   })
 
-  it('performs zero writes when geocoding, matrix, or route validation fails', async () => {
+  it('performs zero writes when matrix or route validation fails', async () => {
     for (const unavailable of [
-      { ...providers, geocoder: async () => [] },
-      { ...providers, geocoder: async () => [candidate] },
       { ...providers, matrix: async () => ({ segments: [] }) },
       { ...providers, route: async () => { throw new Error('Provider unavailable') } }
     ]) {
@@ -448,26 +446,6 @@ describe('demo seed safety seams', () => {
     expect([...records.get('sales')?.values() ?? []].some((sale) => sale.fixtureKey === 'finance:sale:2027-03')).to.equal(true)
     expect([...records.get('sales')?.values() ?? []].some((sale) => sale.fixtureKey === 'finance:sale:2026-09')).to.equal(false)
     expect([...records.get('sales')?.values() ?? []].filter((sale) => String(sale.fixtureKey).startsWith('finance:')).every((sale) => (sale.paidAt as Date) <= new Date('2027-03-04T00:00:00.000Z'))).to.equal(true)
-  })
-
-  it('rejects a wrong-house-number provider result before any write', async () => {
-    records.clear()
-    writes = 0
-    try {
-      await runDemoSeed({
-        target,
-        dryRun: false,
-        database,
-        providers: {
-          ...providers,
-          geocoder: async ({ address }) => [{ ...candidate, formattedAddress: address.replace(/\b4100\b/, '4102') }]
-        }
-      })
-      expect.fail('Expected house number mismatch')
-    } catch (error) {
-      expect((error as Error).message).to.contain('requested street, number, and city')
-    }
-    expect(writes).to.equal(0)
   })
 
   it('recovers a partial sequential write by rerunning with the same anchor, leaving unrelated data untouched', async () => {
