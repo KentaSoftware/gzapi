@@ -236,17 +236,20 @@ identity conflict, or a provider validation failure prevents **all** requests,
 including login, until initialization can retry successfully. Initialization
 errors return a generic response without logging credentials.
 
-Production uses the database selected by `MONGODB_URI`, including the driver
-default when the URI has no database name, the same database the base seed
-already writes to. The base seed ensures the admin before demo inspection. A complete owned fixture needs
-no Google key and makes no demo writes; missing fixtures require
-`GOOGLE_MAPS_SERVER_API_KEY`, precise geocoding and bidirectional Google Routes
-`DRIVE` validation before insert-only repair. Existing owned documents,
-including edited demo records, are not overwritten; conflicting ownership
-fails closed. Inventory checks deterministic IDs and `fixtureNamespace`/
-`fixtureKey` ownership, not the contents of existing owned documents; edited
-or otherwise invalid payloads can pass inventory and remain unchanged.
-Concurrent upsert winners are checked for namespace/key ownership.
+Production demo data is loaded during the Vercel build (`vercel-build`), not on
+the first request. `migrations/build-seed.ts` connects to the database selected by
+`MONGODB_URI`, ensures the base roles and `admin`, then inserts only missing owned
+demo fixtures. Outside Production it does nothing. A build fails if the base seed
+or a required demo write fails. Existing owned documents, including edited demo
+records, are not overwritten; conflicting ownership fails closed. Inventory checks
+deterministic IDs and `fixtureNamespace`/`fixtureKey` ownership, not the contents
+of existing owned documents. Concurrent upsert winners are checked for
+namespace/key ownership.
+
+Client coordinates come from a fixed table in `migrations/demo-001-seed-data.ts`
+(read from Google Maps pins). They are not geocoded at build time. Route
+distances, durations, and polylines are still computed by Google Routes during
+the build; if Routes is unavailable, the build fails.
 
 The startup service date is fixed in code at `2026-10-21`. This preserves the
 same six-month fixture IDs across cold starts without an environment variable.
@@ -261,21 +264,16 @@ Writes use bounded concurrency (at most 8 inserts in flight), not transactions:
 a failed write can leave partial owned fixtures. After correcting the cause,
 the next startup retries the same anchor and inserts missing fixtures. No real
 Google route or Production startup has been verified by these offline tests.
-The first Production request also awaits hundreds of inventory reads (bounded
-concurrency) and, when fixtures are missing, provider calls and bounded
-inserts. Mock-only operation counts do not establish Google/network latency or
-Vercel request-duration safety; a timeout could still block initialization.
-Production runtime proof is pending.
+The build runs inventory reads (bounded concurrency), provider route calls when
+fixtures are missing, and bounded inserts. Mock-only operation counts do not
+establish Google/network latency or Vercel build-time safety.
 
 `seed:demo` remains a manually-run operator command. It upserts only documents owned by the
 `gzapi-demo-seed-v1` fixture namespace and never deletes unrelated data.
 
-The seed resolves the depot and client addresses through Google Geocoding,
-accepts only `ROOFTOP` or `RANGE_INTERPOLATED` results matching the requested
-street, house number, and city (ignoring accents and common Spanish street
-abbreviations), and validates every
-depot/client pair in both directions with Google Routes `DRIVE` routing before
-any dependent document is written. Route snapshots use the provider's returned
+The seed uses the fixed coordinate table for the depot and clients and validates
+every depot/client pair in both directions with Google Routes `DRIVE` routing
+before any dependent document is written. Route snapshots use the provider's returned
 distance, duration, and encoded polyline; the seed fails closed if a provider
 result is missing or not routable.
 

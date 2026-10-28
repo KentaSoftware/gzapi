@@ -64,7 +64,7 @@ const DEMO_ADDRESS_SPECS = [
     zoneKey: 'oeste'
   },
   ...[
-    ['centro', 3, 'Chacabuco 98'],
+    ['centro', 3, 'Batalla de Chacabuco 85'],
     ['centro', 4, 'Santiago del Estero 455'],
     ['centro', 5, 'Córdoba 560'],
     ['centro', 6, '25 de Mayo 319'],
@@ -88,6 +88,32 @@ const DEMO_ADDRESS_SPECS = [
     zoneKey: zone
   }))
 ] as Array<{ key: string, name: string, address: string, zoneKey?: string }>
+
+// Coordinates read from the Google Maps place pin for each address (fixed, reviewed input).
+// They replace Geocoding at seed time; Google Routes still computes the route metrics.
+const MANUAL_DEMO_COORDINATES: Record<string, { lat: number, lng: number }> = {
+  depot: { lat: -26.8193761, lng: -65.2589428 },
+  'client:centro:1': { lat: -26.8300928, lng: -65.205013 },
+  'client:centro:2': { lat: -26.8510626, lng: -65.2822725 },
+  'client:oeste:1': { lat: -26.8177266, lng: -65.2039054 },
+  'client:centro:3': { lat: -26.831372, lng: -65.2081626 },
+  'client:centro:4': { lat: -26.8242071, lng: -65.2025614 },
+  'client:centro:5': { lat: -26.8270052, lng: -65.204575 },
+  'client:centro:6': { lat: -26.826721, lng: -65.2034004 },
+  'client:centro:7': { lat: -26.830523, lng: -65.201654 },
+  'client:centro:8': { lat: -26.8284282, lng: -65.2097925 },
+  'client:oeste:2': { lat: -26.8152191, lng: -65.2201069 },
+  'client:oeste:3': { lat: -26.8116916, lng: -65.2360334 },
+  'client:oeste:4': { lat: -26.8105456, lng: -65.2433294 },
+  'client:oeste:5': { lat: -26.834853, lng: -65.2479649 },
+  'client:oeste:6': { lat: -26.8349324, lng: -65.2525064 },
+  'client:oeste:7': { lat: -26.844133, lng: -65.2040087 },
+  'client:sur:1': { lat: -26.8338055, lng: -65.2004494 },
+  'client:sur:2': { lat: -26.8383777, lng: -65.2047655 },
+  'client:sur:3': { lat: -26.8359667, lng: -65.2071356 },
+  'client:sur:4': { lat: -26.8311755, lng: -65.2110757 },
+  'client:sur:5': { lat: -26.8325424, lng: -65.204391 }
+}
 
 type DemoAddressKey = (typeof DEMO_ADDRESS_SPECS)[number]['key']
 
@@ -469,21 +495,19 @@ export const assertDemoAdmin = async (database: DemoDatabase): Promise<void> => 
   await readAdminId(database)
 }
 
-const geocodeLocation = async (
-  spec: (typeof DEMO_ADDRESS_SPECS)[number],
-  geocoder: DemoProviders['geocoder']
-): Promise<GeocodedLocation> => {
-  const candidate = selectRoadSafeCandidate(await geocoder({ address: spec.address }), spec.address)
+const manualLocation = (spec: (typeof DEMO_ADDRESS_SPECS)[number]): GeocodedLocation => {
+  const coordinates = MANUAL_DEMO_COORDINATES[spec.key]
+  if (coordinates === undefined) throw new Error(`Missing manual demo coordinates for ${spec.key}`)
   return {
     id: spec.key,
     key: spec.key,
     name: spec.name,
-    latitude: candidate.lat,
-    longitude: candidate.lng,
+    latitude: coordinates.lat,
+    longitude: coordinates.lng,
     requestedAddress: spec.address,
-    formattedAddress: candidate.formattedAddress,
-    placeId: candidate.placeId,
-    precision: candidate.precision
+    formattedAddress: spec.address,
+    placeId: `manual:${spec.key}`,
+    precision: GEOCODING_PRECISION.APPROXIMATE
   }
 }
 
@@ -509,8 +533,8 @@ const routeSegmentsFor = (
 const prepareSeed = async (
   providers: DemoProviders
 ): Promise<{ depot: GeocodedLocation, clients: GeocodedLocation[], snapshots: PreparedSnapshot[] }> => {
-  const depot = await geocodeLocation(DEMO_ADDRESS_SPECS[0], providers.geocoder)
-  const clients = await Promise.all(DEMO_ADDRESS_SPECS.slice(1).map(async (spec) => await geocodeLocation(spec, providers.geocoder)))
+  const depot = manualLocation(DEMO_ADDRESS_SPECS[0])
+  const clients = DEMO_ADDRESS_SPECS.slice(1).map((spec) => manualLocation(spec))
   const places = [depot, ...clients]
   if (new Set(places.map((location) => location.placeId)).size !== places.length ||
       new Set(places.map((location) => `${location.latitude}:${location.longitude}`)).size !== places.length ||
@@ -538,7 +562,7 @@ const prepareSeed = async (
 
 const geocodingDocument = (location: GeocodedLocation, validatedAt: Date, validatedBy: Types.ObjectId): Record<string, unknown> => ({
   status: GEOCODING_STATUS.CONFIRMED,
-  source: GEOCODING_SOURCE.GEOCODED,
+  source: GEOCODING_SOURCE.MANUAL,
   formattedAddress: location.formattedAddress,
   placeId: location.placeId,
   precision: location.precision,
@@ -597,7 +621,7 @@ const buildSnapshot = (
       address: depot.formattedAddress,
       geocoding: {
         status: GEOCODING_STATUS.CONFIRMED,
-        source: GEOCODING_SOURCE.GEOCODED,
+        source: GEOCODING_SOURCE.MANUAL,
         formattedAddress: depot.formattedAddress,
         placeId: depot.placeId,
         precision: depot.precision
@@ -747,7 +771,7 @@ const seedPreparedData = async (
       address: depot.formattedAddress,
       geocoding: {
         status: GEOCODING_STATUS.CONFIRMED,
-        source: GEOCODING_SOURCE.GEOCODED,
+        source: GEOCODING_SOURCE.MANUAL,
         formattedAddress: depot.formattedAddress,
         placeId: depot.placeId,
         precision: depot.precision
