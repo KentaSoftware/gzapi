@@ -30,7 +30,6 @@ export const runProductionStartupSeed = async (
   const uri = environment.MONGODB_URI
   if (uri === undefined || uri.trim() === '') throw new Error('MONGODB_URI is required for Production demo seed')
   const target = resolveTarget(uri.trim(), true)
-  if (target.database === '(default)') throw new Error('Production demo seed requires an explicit database in MONGODB_URI')
   const serviceDate = resolveServiceDate(DEMO_STARTUP_SERVICE_DATE, new Date())
 
   const database = dependencies.database()

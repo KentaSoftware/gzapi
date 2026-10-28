@@ -236,8 +236,9 @@ identity conflict, or a provider validation failure prevents **all** requests,
 including login, until initialization can retry successfully. Initialization
 errors return a generic response without logging credentials.
 
-Production requires `MONGODB_URI` selecting an explicit database. The base
-seed ensures the admin before demo inspection. A complete owned fixture needs
+Production uses the database selected by `MONGODB_URI`, including the driver
+default when the URI has no database name, the same database the base seed
+already writes to. The base seed ensures the admin before demo inspection. A complete owned fixture needs
 no Google key and makes no demo writes; missing fixtures require
 `GOOGLE_MAPS_SERVER_API_KEY`, precise geocoding and bidirectional Google Routes
 `DRIVE` validation before insert-only repair. Existing owned documents,
