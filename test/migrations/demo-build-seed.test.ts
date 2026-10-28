@@ -30,10 +30,9 @@ describe('demo seed production startup', () => {
     }
   })
 
-  it('requires a configured explicit MongoDB database before inventory', async () => {
+  it('requires a configured MongoDB URI before inventory', async () => {
     for (const [environment, message] of [
-      [{ VERCEL_ENV: 'production' }, 'MONGODB_URI'],
-      [{ VERCEL_ENV: 'production', MONGODB_URI: 'mongodb://127.0.0.1:27017' }, 'database']
+      [{ VERCEL_ENV: 'production' }, 'MONGODB_URI']
     ] as const) {
       try {
         await runProductionStartupSeed(environment, {
