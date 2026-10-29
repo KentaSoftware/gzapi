@@ -258,6 +258,30 @@ describe('Stock contract — HTTP adapter', () => {
       code: 'INTERNAL_ERROR',
       message: 'Stock operation failed'
     })
+
+    unknownService.restore()
+    const sentinel = 'raw Mongo failure sentinel mongodb://user:secret@host/db query=private'
+    sinon.stub(StockService.prototype, 'getOverview').rejects(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, sentinel))
+    const log = sinon.stub(console, 'error')
+    const repositoryResponse = makeResponse()
+    await getOverview(makeRequest({
+      headers: { 'x-correlation-id': 'stock-correlation_1' },
+      query: { businessDate: '2026-10-15' }
+    }), repositoryResponse as unknown as Response)
+
+    expect(repositoryResponse.status.calledWith(503)).to.equal(true)
+    expect(bodyOf(repositoryResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      message: 'Stock persistence is currently unavailable',
+      correlationId: 'stock-correlation_1'
+    })
+    expect(log.calledOnce).to.equal(true)
+    expect(log.firstCall.args).to.deep.equal([{
+      event: 'stock_repository_failure',
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      correlationId: 'stock-correlation_1'
+    }])
+    expect(JSON.stringify(log.args)).not.to.include(sentinel)
     unknownService.restore()
   })
 

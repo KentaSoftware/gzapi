@@ -66,7 +66,7 @@ const openingCountWriter = createOpeningCountWriter()
 
 const correlationOf = (req: Request): string | undefined => {
   const header = req.headers?.['x-correlation-id']
-  return typeof header === 'string' && header.trim() !== '' ? header : undefined
+  return typeof header === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(header) ? header : undefined
 }
 
 const actorIdOf = (res: Response): string => {
@@ -117,6 +117,13 @@ const isOpeningCountError = (error: unknown): error is OpeningCountError => erro
 
 const handleError = (res: Response, correlationId: string | undefined, error: unknown): void => {
   if (isStockServiceError(error) || isOpeningCountError(error)) {
+    if (isStockServiceError(error) && error.code === STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR) {
+      console.error({
+        event: 'stock_repository_failure',
+        code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+        correlationId
+      })
+    }
     sendErrorEnvelope(res, statusFor(error.code), error.code, STOCK_ERROR_MESSAGES[error.code], correlationId)
     return
   }
