@@ -193,6 +193,20 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     expect(aggregateStub.called).to.equal(false)
   })
 
+  it('uses the neutral operation label for repository failures outside an overview stage', async () => {
+    const query = {
+      session: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().rejects(Object.assign(new Error('private connection detail'), { name: 'MongoNetworkError' }))
+    }
+    sinon.stub(ProductModel, 'findById').returns(query as unknown as ReturnType<typeof ProductModel.findById>)
+    const repository = new MongooseStockRepository()
+    const error = await repository.getProduct('507f1f77bcf86cd799439011').catch((caught: unknown) => caught)
+
+    expect(error).to.be.instanceOf(StockServiceError)
+    expect((error as StockServiceError).diagnostic).to.deep.equal({ operation: 'stock_repository_unknown', cause: 'connection' })
+  })
+
   it('preserves validated movement audit timestamps when mapping Mongo documents', () => {
     const createdAt = new Date('2026-10-15T10:00:00.000Z')
     const updatedAt = new Date('2026-10-15T11:00:00.000Z')

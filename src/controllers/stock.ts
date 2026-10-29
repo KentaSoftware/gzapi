@@ -115,12 +115,55 @@ const statusFor = (code: StockErrorCode): number => {
 const isStockServiceError = (error: unknown): error is StockServiceError => error instanceof StockServiceError
 const isOpeningCountError = (error: unknown): error is OpeningCountError => error instanceof OpeningCountError
 
+const STOCK_DIAGNOSTIC_OPERATIONS = {
+  REPOSITORY_UNKNOWN: 'stock_repository_unknown',
+  LIST_PRODUCTS: 'stock_overview_list_products',
+  SALES_HISTORY: 'stock_overview_sales_history',
+  AVAILABILITY: 'stock_overview_availability',
+  EXPIRY_BUCKETS: 'stock_overview_expiry_buckets'
+} as const
+
+const STOCK_DIAGNOSTIC_CAUSES = {
+  DUPLICATE_KEY: 'duplicate_key',
+  WRITE_CONFLICT: 'write_conflict',
+  CONNECTION: 'connection',
+  TIMEOUT: 'timeout',
+  UNKNOWN: 'unknown'
+} as const
+
+type StockDiagnosticOperation = (typeof STOCK_DIAGNOSTIC_OPERATIONS)[keyof typeof STOCK_DIAGNOSTIC_OPERATIONS]
+type StockDiagnosticCause = (typeof STOCK_DIAGNOSTIC_CAUSES)[keyof typeof STOCK_DIAGNOSTIC_CAUSES]
+
+interface StockDiagnosticRecord {
+  operation: StockDiagnosticOperation
+  cause: StockDiagnosticCause
+  databaseCode?: number
+}
+
+const stockDiagnosticOf = (error: StockServiceError): StockDiagnosticRecord => {
+  const diagnostic = error.diagnostic
+  const operations = Object.values(STOCK_DIAGNOSTIC_OPERATIONS) as string[]
+  const operation = diagnostic !== undefined && operations.includes(diagnostic.operation)
+    ? diagnostic.operation as StockDiagnosticOperation
+    : STOCK_DIAGNOSTIC_OPERATIONS.REPOSITORY_UNKNOWN
+  const causes = Object.values(STOCK_DIAGNOSTIC_CAUSES) as string[]
+  const cause = diagnostic !== undefined && causes.includes(diagnostic.cause)
+    ? diagnostic.cause as StockDiagnosticCause
+    : STOCK_DIAGNOSTIC_CAUSES.UNKNOWN
+  const allowedCodes = [11000, 11001, 112, 50, 89, 262]
+  const databaseCode = typeof diagnostic?.databaseCode === 'number' && Number.isSafeInteger(diagnostic.databaseCode) && allowedCodes.includes(diagnostic.databaseCode)
+    ? diagnostic.databaseCode
+    : undefined
+  return { operation, cause, ...(databaseCode === undefined ? {} : { databaseCode }) }
+}
+
 const handleError = (res: Response, correlationId: string | undefined, error: unknown): void => {
   if (isStockServiceError(error) || isOpeningCountError(error)) {
     if (isStockServiceError(error) && error.code === STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR) {
       console.error({
         event: 'stock_repository_failure',
         code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+        ...stockDiagnosticOf(error),
         correlationId
       })
     }

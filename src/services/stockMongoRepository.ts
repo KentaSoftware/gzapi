@@ -33,7 +33,7 @@ import {
   type StockRepositorySession,
   type StockTransactionContext
 } from '../interfaces/stock.interface'
-import { StockServiceError } from './stock'
+import { StockServiceError, stockFailureDiagnosticOf } from './stock'
 
 interface MongoProductDocument {
   _id: Types.ObjectId
@@ -135,7 +135,9 @@ interface MongoSalesHistoryAggregationRow {
 
 const repositoryError = (message: string, cause?: unknown): StockServiceError => {
   const detail = cause instanceof Error ? `: ${cause.message}` : ''
-  return new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, `${message}${detail}`)
+  const error = new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, `${message}${detail}`)
+  if (cause !== undefined) error.diagnostic = stockFailureDiagnosticOf('stock_repository_unknown', cause)
+  return error
 }
 
 /** MongoDB standalone (no replica set) rejects multi-document transactions. */

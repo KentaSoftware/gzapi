@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { Request, Response } from 'express'
 import sinon from 'sinon'
 
-import { StockService, StockServiceError } from '../src/services/stock'
+import { StockService, StockServiceError, stockFailureDiagnosticOf } from '../src/services/stock'
 import { STOCK_ERROR_CODES, type OpeningCountWriter, type StockOperationResult } from '../src/interfaces/stock.interface'
 import {
   getAvailability,
@@ -261,7 +261,9 @@ describe('Stock contract — HTTP adapter', () => {
 
     unknownService.restore()
     const sentinel = 'raw Mongo failure sentinel mongodb://user:secret@host/db query=private'
-    sinon.stub(StockService.prototype, 'getOverview').rejects(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, sentinel))
+    const repositoryCause = Object.assign(new Error(sentinel), { name: 'MongoServerError', code: 11000 })
+    const sanitizedDiagnostic = stockFailureDiagnosticOf('stock_overview_list_products', repositoryCause)
+    sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, sentinel), { diagnostic: sanitizedDiagnostic }))
     const log = sinon.stub(console, 'error')
     const repositoryResponse = makeResponse()
     await getOverview(makeRequest({
@@ -279,10 +281,111 @@ describe('Stock contract — HTTP adapter', () => {
     expect(log.firstCall.args).to.deep.equal([{
       event: 'stock_repository_failure',
       code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      operation: 'stock_overview_list_products',
+      cause: 'duplicate_key',
+      databaseCode: 11000,
       correlationId: 'stock-correlation_1'
     }])
     expect(JSON.stringify(log.args)).not.to.include(sentinel)
+    expect(log.firstCall.args[0]).not.to.include({ cause: repositoryCause })
+    expect(JSON.stringify(log.args)).not.to.include(repositoryCause.message)
     unknownService.restore()
+  })
+
+  it('keeps unknown repository diagnostics scalar and preserves the generic response', async () => {
+    const sentinel = 'private Mongo URL mongodb://user:secret@host/db'
+    const original = Object.assign(new Error(sentinel), { code: sentinel })
+    sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, sentinel), {
+      diagnostic: { operation: 'untrusted_operation', cause: original, databaseCode: Number.POSITIVE_INFINITY }
+    }))
+    const log = sinon.stub(console, 'error')
+    const response = makeResponse()
+
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), response as unknown as Response)
+
+    expect(response.status.calledWith(503)).to.equal(true)
+    expect(bodyOf(response)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      message: 'Stock persistence is currently unavailable'
+    })
+    expect(log.firstCall.args[0]).to.deep.equal({
+      event: 'stock_repository_failure',
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      operation: 'stock_repository_unknown',
+      cause: 'unknown',
+      correlationId: undefined
+    })
+    expect(JSON.stringify(log.args)).not.to.include(sentinel)
+    expect(Object.values(log.firstCall.args[0] as Record<string, unknown>)).not.to.include(original)
+  })
+
+  it('preserves allowlisted connection causes and uses a neutral operation for invalid repository metadata', async () => {
+    const connectionError = Object.assign(new Error('private connection detail'), { name: 'MongoServerSelectionError' })
+    const connectionDiagnostic = stockFailureDiagnosticOf('stock_overview_list_products', connectionError)
+    sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, 'private detail'), {
+      diagnostic: connectionDiagnostic
+    }))
+    const connectionLog = sinon.stub(console, 'error')
+    const connectionResponse = makeResponse()
+
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), connectionResponse as unknown as Response)
+
+    expect(connectionLog.firstCall.args[0]).to.include({
+      event: 'stock_repository_failure',
+      operation: 'stock_overview_list_products',
+      cause: 'connection'
+    })
+    expect(bodyOf(connectionResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      message: 'Stock persistence is currently unavailable'
+    })
+
+    sinon.restore()
+    const invalidDiagnostic = { cause: 'connection', databaseCode: 89 }
+    sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, 'private detail'), {
+      diagnostic: invalidDiagnostic
+    }))
+    const invalidLog = sinon.stub(console, 'error')
+    const invalidResponse = makeResponse()
+
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), invalidResponse as unknown as Response)
+
+    expect(invalidLog.firstCall.args[0]).to.include({
+      event: 'stock_repository_failure',
+      operation: 'stock_repository_unknown',
+      cause: 'connection',
+      databaseCode: 89
+    })
+    expect(bodyOf(invalidResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      message: 'Stock persistence is currently unavailable'
+    })
+
+    sinon.restore()
+    sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, 'private detail'), {
+      diagnostic: { cause: 'connection' }
+    }))
+    const absentOperationLog = sinon.stub(console, 'error')
+    const absentOperationResponse = makeResponse()
+
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), absentOperationResponse as unknown as Response)
+
+    expect(absentOperationLog.firstCall.args[0]).to.include({
+      event: 'stock_repository_failure',
+      operation: 'stock_repository_unknown',
+      cause: 'connection'
+    })
+    expect(bodyOf(absentOperationResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      message: 'Stock persistence is currently unavailable'
+    })
+  })
+
+  it('classifies only known Mongo connection errors and keeps arbitrary names unknown', () => {
+    const connectionError = Object.assign(new Error('private connection detail'), { name: 'MongoServerSelectionError' })
+    const arbitraryError = Object.assign(new Error('private arbitrary detail'), { name: 'SecretInternalError' })
+    expect(stockFailureDiagnosticOf('stock_overview_list_products', connectionError).cause).to.equal('connection')
+    expect(stockFailureDiagnosticOf('stock_overview_list_products', arbitraryError).cause).to.equal('unknown')
   })
 
   it('rejects malformed, duplicate, and incomplete opening-count payloads before preview execution', async () => {
