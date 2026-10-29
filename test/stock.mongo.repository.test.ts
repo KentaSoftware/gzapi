@@ -183,6 +183,26 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     expect(JSON.stringify(pipeline)).to.not.include('bulto')
   })
 
+  it('includes product identity in paged stock catalog records', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const productQuery = {
+      select: sinon.stub().returnsThis(),
+      sort: sinon.stub().returnsThis(),
+      skip: sinon.stub().returnsThis(),
+      limit: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([{ _id: productId, descripcion: 'Café molido', stock: 4, inventory: { expiryTracking: EXPIRY_TRACKING.TRACKED, baselineStatus: BASELINE_STATUS.RECONCILED } }])
+    }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    sinon.stub(StockExpiryBucketModel, 'find').returns({ sort: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof StockExpiryBucketModel.find>)
+
+    const page = await new MongooseStockRepository().listProducts(1, 10)
+
+    expect(page.items[0]).to.include({ productId: productId.toString(), productName: 'Café molido' })
+    expect(productQuery.select.calledWith('_id descripcion stock inventory')).to.equal(true)
+  })
+
   it('aggregates only each requested product latest active non-cancelled sale across all history', async () => {
     const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
     const occurredAt = new Date('2025-01-10T08:30:00.000Z')

@@ -25,6 +25,7 @@ import {
   type StockOverviewQuery,
   type StockOverviewResult,
   type StockOverviewGlobalSummary,
+  type StockGlobalAlert,
   type StockProductDetailQuery,
   type StockProductDetailResult,
   type StockMinimumResult,
@@ -334,7 +335,7 @@ export class StockService {
           : { status: STOCK_LATEST_SALE_STATUS.INCOMPLETE }
       }
     }))
-    const globalSummary = await this.getGlobalOverviewSummary(page.total, query.businessDate, timeZone)
+    const { summary: globalSummary, alerts: globalAlerts } = await this.getGlobalOverviewData(page.total, query.businessDate, timeZone)
     return {
       page: query.page,
       pageSize: query.pageSize,
@@ -348,11 +349,12 @@ export class StockService {
         availableToSell: items.reduce((total, item) => total + item.availableToSell, 0),
         alertCount: items.reduce((total, item) => total + item.alerts.length, 0)
       },
-      globalSummary
+      globalSummary,
+      globalAlerts
     }
   }
 
-  private async getGlobalOverviewSummary (totalProducts: number, businessDate: string, timeZone: string): Promise<StockOverviewGlobalSummary> {
+  private async getGlobalOverviewData (totalProducts: number, businessDate: string, timeZone: string): Promise<{ summary: StockOverviewGlobalSummary, alerts: StockGlobalAlert[] }> {
     const summary: StockOverviewGlobalSummary = {
       belowMinimumProductCount: 0,
       expiringProductCount: 0,
@@ -362,6 +364,7 @@ export class StockService {
     }
     const pageSize = 100
     const pageCount = Math.ceil(totalProducts / pageSize)
+    const globalAlerts: StockGlobalAlert[] = []
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
       const records = (await this.repository.listProducts(pageNumber, pageSize)).items
       const histories = await this.repository.getSalesHistory(records.map(({ productId }) => productId), businessDate, STOCK_ROTATION_DAYS, timeZone)
@@ -369,7 +372,7 @@ export class StockService {
       const batchAlerts = await Promise.all(records.map(async (record) => {
         const availability = await this.readAvailability(this.repository, record.productId, businessDate, timeZone)
         const buckets = await this.repository.getBuckets(record.productId)
-        return this.alertsFor(record.productId, availability, record.minimum, buckets, businessDate, timeZone, historiesByProduct.get(record.productId))
+        return this.alertsFor(record.productId, availability, record.minimum, buckets, businessDate, timeZone, historiesByProduct.get(record.productId)).map((alert) => ({ ...alert, productName: record.productName }))
       }))
       for (const alerts of batchAlerts) {
         const hasCompleteAlert = (type: StockAlert['type']): boolean => alerts.some((alert) => alert.type === type && alert.dataQuality === STOCK_DATA_QUALITY.COMPLETE)
@@ -378,9 +381,11 @@ export class StockService {
         if (hasCompleteAlert(STOCK_ALERT_TYPES.EXPIRED)) summary.expiredProductCount += 1
         if (hasCompleteAlert(STOCK_ALERT_TYPES.LOW_ROTATION)) summary.lowRotationProductCount += 1
         summary.activeAlertCount += alerts.length
+        globalAlerts.push(...alerts)
       }
     }
-    return summary
+    globalAlerts.sort((left, right) => left.productId.localeCompare(right.productId) || left.type.localeCompare(right.type) || left.explanation.localeCompare(right.explanation))
+    return { summary, alerts: globalAlerts }
   }
 
   async getProductDetail (query: StockProductDetailQuery): Promise<StockProductDetailResult> {

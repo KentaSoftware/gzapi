@@ -364,6 +364,7 @@ export interface StockProductSnapshot {
 
 export interface StockProductOverviewRecord {
   productId: string
+  productName: string
   minimum: number | null
   snapshot: StockProductSnapshot
 }
@@ -418,6 +419,11 @@ export interface StockOverviewResult {
   items: StockOverviewItem[]
   summary: StockOverviewSummary
   globalSummary: StockOverviewGlobalSummary
+  globalAlerts: StockGlobalAlert[]
+}
+
+export interface StockGlobalAlert extends StockAlert {
+  productName: string
 }
 
 export interface StockOverviewGlobalSummary {

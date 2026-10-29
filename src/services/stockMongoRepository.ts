@@ -39,6 +39,7 @@ import { StockServiceError } from './stock'
 interface MongoProductDocument {
   _id: Types.ObjectId
   stock: number
+  descripcion: string
   inventory?: {
     minimum?: number
     expiryTracking: ExpiryTracking
@@ -476,7 +477,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
     try {
       const mongoSession = this.mongoSessionOf(session)
       const productQuery = ProductModel.find({})
-        .select('_id stock inventory')
+        .select('_id descripcion stock inventory')
         .sort({ _id: 1 })
         .skip(skip)
         .limit(pageSize)
@@ -497,7 +498,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
         const minimum = product.inventory?.minimum === undefined
           ? null
           : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
-        items.push({ productId: snapshot.productId, minimum, snapshot })
+        items.push({ productId: snapshot.productId, productName: nonEmptyStringOf(product.descripcion, 'Product.descripcion'), minimum, snapshot })
       }
       return { total, items }
     } catch (error) {

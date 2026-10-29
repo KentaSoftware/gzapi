@@ -80,7 +80,8 @@ const overviewResult = {
     expiredProductCount: 0,
     lowRotationProductCount: 0,
     activeAlertCount: 0
-  }
+  },
+  globalAlerts: []
 }
 
 describe('Stock contract — HTTP adapter', () => {
@@ -123,7 +124,10 @@ describe('Stock contract — HTTP adapter', () => {
     const openingRouteLines = source.split('\n').filter((line) => line.includes("router.post('/opening-counts/"))
     expect(openingRouteLines).to.have.length(2)
     expect(openingRouteLines.every((line) => line.includes("checkPermission('manage_stock_config')"))).to.equal(true)
-    expect(source).to.include("checkPermission('read_stock')")
+    const readRoutes = source.split('\n').filter((line) => ["router.get('/availability'", "router.get('/overview'", "router.get('/products/:id'"].some((route) => line.includes(route)))
+    expect(readRoutes).to.have.length(3)
+    expect(readRoutes.every((line) => line.includes('checkJwt(req, res, next)'))).to.equal(true)
+    expect(readRoutes.every((line) => line.includes('checkPermission') === false)).to.equal(true)
     expect(source).to.include("checkPermission('receive_stock')")
     expect(source).to.include("checkPermission('manage_stock')")
     expect(source).to.include("checkPermission('manage_stock_config')")
@@ -331,7 +335,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.calledOnce).to.equal(true)
     expect(serviceCall.firstCall.args[0]).to.deep.include({ page: 1, pageSize: 50, businessDate: '2026-10-15' })
     expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
-    expect(bodyOf(response)).to.deep.include({ summary: overviewResult.summary, globalSummary: overviewResult.globalSummary })
+    expect(bodyOf(response)).to.deep.include({ summary: overviewResult.summary, globalSummary: overviewResult.globalSummary, globalAlerts: [] })
   })
 
   it('S-05: validates strict product detail queries and maps missing products to a stable 404 envelope', async () => {

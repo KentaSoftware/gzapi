@@ -32,6 +32,7 @@ const DATE = '2026-10-15'
 
 interface TestProductRecord {
   productId: string
+  productName: string
   minimum: number | null
   snapshot: StockProductSnapshot
 }
@@ -118,6 +119,7 @@ class MemoryRepository implements StockRepository {
   async listProducts (page: number, pageSize: number): Promise<{ total: number, items: TestProductRecord[] }> {
     const items = [...this.products.values()].map((snapshot) => ({
       productId: snapshot.productId,
+      productName: `Product ${snapshot.productId}`,
       minimum: this.minimums.get(snapshot.productId) ?? null,
       snapshot
     }))
@@ -346,6 +348,31 @@ describe('Stock service', () => {
       lowRotationProductCount: 0,
       activeAlertCount: 0
     })
+    expect(overview.globalAlerts).to.deep.equal([])
+  })
+
+  it('returns named alerts for products outside the current page without changing page summary', async () => {
+    const repository = newRepository()
+    repository.products.set('off-page', { ...untrackedProduct(), productId: 'off-page', physicalQuantity: 0, availableQuantity: 0 })
+    repository.minimums.set('off-page', 1)
+    const overview = await new StockService(repository).getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+
+    expect(overview.summary).to.deep.equal({
+      productCount: 1,
+      physicalQuantity: 10,
+      committedQuantity: 0,
+      availableToSell: 10,
+      alertCount: 1
+    })
+    expect(overview.globalAlerts).to.deep.include({
+      productId: 'off-page',
+      productName: 'Product off-page',
+      type: 'CRITICAL_STOCK',
+      severity: 'CRITICAL',
+      explanation: 'Product off-page has no units available to sell',
+      dataQuality: STOCK_DATA_QUALITY.COMPLETE
+    })
+    expect(overview.globalAlerts.every(({ productId }) => !['bucket-first', 'bucket-later'].includes(productId))).to.equal(true)
   })
 
   it('counts informational low-rotation alerts globally while keeping page alert totals page-scoped', async () => {
@@ -437,6 +464,9 @@ describe('Stock service', () => {
     expect(unreconciled.dataQuality).to.equal(STOCK_DATA_QUALITY.INCOMPLETE)
     expect(unreconciled.availableToSell).to.equal(0)
     expect(unreconciled.alerts.find(({ type }) => type === 'LOW_STOCK')).to.deep.include({ dataQuality: STOCK_DATA_QUALITY.INCOMPLETE })
+    expect(overview.globalAlerts.find(({ productId }) => productId === 'unreconciled')).to.deep.include({
+      productName: 'Product unreconciled', type: 'LOW_STOCK', dataQuality: STOCK_DATA_QUALITY.INCOMPLETE
+    })
   })
 
   it('S-05: returns deterministic detail buckets and movement limits without changing product projections', async () => {
