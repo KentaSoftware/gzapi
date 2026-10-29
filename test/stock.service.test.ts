@@ -354,6 +354,28 @@ describe('Stock service', () => {
     expect(overview.globalSummary).to.deep.equal({ belowMinimumProductCount: 0, expiringProductCount: 1, expiredProductCount: 0, lowRotationProductCount: 0, activeAlertCount: 2 })
   })
 
+  it('keeps latest-sale reads best-effort and classifies a propagating overview bucket failure', async () => {
+    const latestSaleFailureRepository = newRepository()
+    latestSaleFailureRepository.getLatestSales = async () => { throw new Error('optional latest-sale read failed') }
+    const overview = await new StockService(latestSaleFailureRepository).getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+    expect(overview.items[0].latestSale).to.deep.equal({ status: 'INCOMPLETE' })
+
+    const bucketFailureRepository = newRepository()
+    let bucketReadCount = 0
+    bucketFailureRepository.getBuckets = async () => {
+      bucketReadCount += 1
+      if (bucketReadCount === 1) return [...bucketFailureRepository.buckets.values()]
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, 'private repository detail')
+    }
+    try {
+      await new StockService(bucketFailureRepository).getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+      expect.fail('Expected the bucket read to reject')
+    } catch (error) {
+      expect(error).to.be.instanceOf(StockServiceError)
+      expect((error as StockServiceError).diagnostic).to.deep.equal({ operation: 'stock_overview_expiry_buckets', cause: 'unknown' })
+    }
+  })
+
   it('adds page-invariant global alert counters, counting products distinctly and excluding expired stock from expiring', async () => {
     const repository = newRepository()
     repository.products.set('third', { ...untrackedProduct(), productId: 'third' })

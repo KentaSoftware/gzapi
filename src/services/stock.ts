@@ -90,11 +90,76 @@ export interface StockServiceOptions {
 
 export class StockServiceError extends Error {
   readonly code: (typeof STOCK_ERROR_CODES)[keyof typeof STOCK_ERROR_CODES]
+  diagnostic?: StockFailureDiagnostic
 
   constructor (code: (typeof STOCK_ERROR_CODES)[keyof typeof STOCK_ERROR_CODES], message: string) {
     super(message)
     this.name = 'StockServiceError'
     this.code = code
+  }
+}
+
+const STOCK_FAILURE_OPERATIONS = {
+  REPOSITORY_UNKNOWN: 'stock_repository_unknown',
+  LIST_PRODUCTS: 'stock_overview_list_products',
+  SALES_HISTORY: 'stock_overview_sales_history',
+  AVAILABILITY: 'stock_overview_availability',
+  EXPIRY_BUCKETS: 'stock_overview_expiry_buckets'
+} as const
+
+type StockFailureOperation = (typeof STOCK_FAILURE_OPERATIONS)[keyof typeof STOCK_FAILURE_OPERATIONS]
+
+const STOCK_FAILURE_CAUSES = {
+  DUPLICATE_KEY: 'duplicate_key',
+  WRITE_CONFLICT: 'write_conflict',
+  CONNECTION: 'connection',
+  TIMEOUT: 'timeout',
+  UNKNOWN: 'unknown'
+} as const
+
+type StockFailureCause = (typeof STOCK_FAILURE_CAUSES)[keyof typeof STOCK_FAILURE_CAUSES]
+
+interface StockFailureDiagnostic {
+  operation: StockFailureOperation
+  cause: StockFailureCause
+  databaseCode?: number
+}
+
+export const stockFailureDiagnosticOf = (operation: StockFailureOperation, error: unknown): StockFailureDiagnostic => {
+  const name = error instanceof Error ? error.name : ''
+  const allowedNames = ['MongoServerError', 'MongoNetworkError', 'MongoServerSelectionError', 'MongoNetworkTimeoutError', 'MongoTimeoutError']
+  const allowedError = allowedNames.includes(name)
+  let code: unknown
+  if (allowedError && typeof error === 'object' && error !== null) {
+    try {
+      code = Object.getOwnPropertyDescriptor(error, 'code')?.value
+    } catch {
+      code = undefined
+    }
+  }
+  const databaseCode = typeof code === 'number' && Number.isSafeInteger(code) ? code : undefined
+  const cause = databaseCode === 11000 || databaseCode === 11001
+    ? STOCK_FAILURE_CAUSES.DUPLICATE_KEY
+    : databaseCode === 112
+      ? STOCK_FAILURE_CAUSES.WRITE_CONFLICT
+      : name === 'MongoServerSelectionError' || name === 'MongoNetworkError'
+        ? STOCK_FAILURE_CAUSES.CONNECTION
+        : databaseCode === 50 || databaseCode === 89 || databaseCode === 262 || name === 'MongoNetworkTimeoutError' || name === 'MongoTimeoutError'
+          ? STOCK_FAILURE_CAUSES.TIMEOUT
+          : STOCK_FAILURE_CAUSES.UNKNOWN
+  return { operation, cause, ...(databaseCode === undefined ? {} : { databaseCode }) }
+}
+
+const withOverviewDiagnostic = async <T>(operation: StockFailureOperation, work: () => Promise<T>): Promise<T> => {
+  try {
+    return await work()
+  } catch (error) {
+    if (error instanceof StockServiceError && error.code === STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR) {
+      const cause = error.diagnostic?.cause ?? STOCK_FAILURE_CAUSES.UNKNOWN
+      const databaseCode = error.diagnostic?.databaseCode
+      error.diagnostic = { operation, cause, ...(databaseCode === undefined ? {} : { databaseCode }) }
+    } else if (error instanceof Error) Object.assign(error, { diagnostic: stockFailureDiagnosticOf(operation, error) })
+    throw error
   }
 }
 
@@ -334,8 +399,8 @@ export class StockService {
       ...(query.category === undefined ? {} : { category: query.category })
     }
     const hasFilters = Object.keys(filters).length > 0
-    const page = await this.repository.listProducts(query.page, query.pageSize, undefined, hasFilters ? filters : undefined)
-    const histories = await this.repository.getSalesHistory(page.items.map(({ productId }) => productId), query.businessDate, STOCK_ROTATION_DAYS, timeZone)
+    const page = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.LIST_PRODUCTS, async () => await this.repository.listProducts(query.page, query.pageSize, undefined, hasFilters ? filters : undefined))
+    const histories = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.SALES_HISTORY, async () => await this.repository.getSalesHistory(page.items.map(({ productId }) => productId), query.businessDate, STOCK_ROTATION_DAYS, timeZone))
     const historiesByProduct = new Map(histories.map((history) => [history.productId, history]))
     let latestSales = [] as Awaited<ReturnType<StockRepository['getLatestSales']>>
     try {
@@ -347,8 +412,8 @@ export class StockService {
       Number.isNaN(occurredAt.getTime()) ? [] : [[productId, occurredAt] as const]
     ))
     const items = await Promise.all(page.items.map(async (record): Promise<StockOverviewItem> => {
-      const availability = await this.readAvailability(this.repository, record.productId, query.businessDate, timeZone)
-      const buckets = await this.repository.getBuckets(record.productId)
+      const availability = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.AVAILABILITY, async () => await this.readAvailability(this.repository, record.productId, query.businessDate, timeZone))
+      const buckets = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.EXPIRY_BUCKETS, async () => await this.repository.getBuckets(record.productId))
       const expiryAlertDays = record.expiryAlertDays ?? STOCK_EXPIRY_ALERT_DAYS
       const alerts = this.alertsFor(record.productId, availability, record.minimum, buckets, query.businessDate, timeZone, historiesByProduct.get(record.productId), expiryAlertDays)
       return {
@@ -369,7 +434,9 @@ export class StockService {
           : { status: STOCK_LATEST_SALE_STATUS.INCOMPLETE }
       }
     }))
-    const catalogTotal = hasFilters ? (await this.repository.listProducts(1, 1)).total : page.total
+    const catalogTotal = hasFilters
+      ? (await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.LIST_PRODUCTS, async () => await this.repository.listProducts(1, 1))).total
+      : page.total
     const { summary: globalSummary, alerts: globalAlerts } = await this.getGlobalOverviewData(catalogTotal, query.businessDate, timeZone)
     return {
       page: query.page,
@@ -401,12 +468,12 @@ export class StockService {
     const pageCount = Math.ceil(totalProducts / pageSize)
     const globalAlerts: StockGlobalAlert[] = []
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-      const records = (await this.repository.listProducts(pageNumber, pageSize)).items
-      const histories = await this.repository.getSalesHistory(records.map(({ productId }) => productId), businessDate, STOCK_ROTATION_DAYS, timeZone)
+      const records = (await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.LIST_PRODUCTS, async () => await this.repository.listProducts(pageNumber, pageSize))).items
+      const histories = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.SALES_HISTORY, async () => await this.repository.getSalesHistory(records.map(({ productId }) => productId), businessDate, STOCK_ROTATION_DAYS, timeZone))
       const historiesByProduct = new Map(histories.map((history) => [history.productId, history]))
       const batchAlerts = await Promise.all(records.map(async (record) => {
-        const availability = await this.readAvailability(this.repository, record.productId, businessDate, timeZone)
-        const buckets = await this.repository.getBuckets(record.productId)
+        const availability = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.AVAILABILITY, async () => await this.readAvailability(this.repository, record.productId, businessDate, timeZone))
+        const buckets = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.EXPIRY_BUCKETS, async () => await this.repository.getBuckets(record.productId))
         return this.alertsFor(record.productId, availability, record.minimum, buckets, businessDate, timeZone, historiesByProduct.get(record.productId), record.expiryAlertDays ?? STOCK_EXPIRY_ALERT_DAYS).map((alert) => ({ ...alert, productName: record.productName }))
       }))
       for (const alerts of batchAlerts) {
@@ -419,7 +486,12 @@ export class StockService {
         globalAlerts.push(...alerts)
       }
     }
-    globalAlerts.sort((left, right) => left.productId.localeCompare(right.productId) || left.type.localeCompare(right.type) || left.explanation.localeCompare(right.explanation))
+    globalAlerts.sort((left, right) => {
+      const productComparison = left.productId.localeCompare(right.productId)
+      if (productComparison !== 0) return productComparison
+      const typeComparison = left.type.localeCompare(right.type)
+      return typeComparison !== 0 ? typeComparison : left.explanation.localeCompare(right.explanation)
+    })
     return { summary, alerts: globalAlerts }
   }
 
@@ -502,7 +574,8 @@ export class StockService {
 
   async writeOff (input: StockWriteOffInput): Promise<StockOperationResult> {
     const occurredAt = validateStockWriteOff(input)
-    const note = input.note?.trim() || undefined
+    const trimmedNote = input.note?.trim()
+    const note = trimmedNote === undefined || trimmedNote === '' ? undefined : trimmedNote
     return await this.runTransaction(input.operationId, async (transaction) => {
       const product = await transaction.getProduct(input.productId, transaction.session)
       if (product === undefined) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND, `Product ${input.productId} was not found`)
@@ -537,7 +610,10 @@ export class StockService {
       }
 
       const orderedBuckets = product.expiryTracking === EXPIRY_TRACKING.TRACKED
-        ? [...buckets].sort((left, right) => left.expiryDate.localeCompare(right.expiryDate) || left.bucketId.localeCompare(right.bucketId))
+        ? [...buckets].sort((left, right) => {
+            const expiryComparison = left.expiryDate.localeCompare(right.expiryDate)
+            return expiryComparison !== 0 ? expiryComparison : left.bucketId.localeCompare(right.bucketId)
+          })
         : []
       if (input.quantity > product.availableQuantity) throw new StockServiceError(STOCK_ERROR_CODES.STOCK_INSUFFICIENT, `Insufficient uncommitted stock for ${input.productId}`)
       const allocations: Array<{ bucketId?: string, quantity: number }> = []
