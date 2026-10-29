@@ -13,6 +13,15 @@ const ProductInventoryConfigSchema = new Schema<ProductInventoryConfig>(
         message: 'minimum must be a non-negative integer'
       }
     },
+    expiryAlertDays: {
+      type: Number,
+      min: 0,
+      max: 3650,
+      validate: {
+        validator: Number.isSafeInteger,
+        message: 'expiryAlertDays must be a safe integer between 0 and 3650'
+      }
+    },
     expiryTracking: {
       type: String,
       required: true,

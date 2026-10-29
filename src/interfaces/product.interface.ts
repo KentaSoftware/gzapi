@@ -27,6 +27,7 @@ export interface Product {
 
 export interface ProductInventoryConfig {
   minimum: number
+  expiryAlertDays?: number
   expiryTracking: ExpiryTracking
   baselineStatus: BaselineStatus
   lastReconciledAt?: Date

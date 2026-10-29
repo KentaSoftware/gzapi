@@ -9,7 +9,8 @@ const INVENTORY_MOVEMENT_STRING_LIMITS = {
   OPERATION_ID: 128,
   IDEMPOTENCY_KEY: 256,
   RULES_VERSION: 64,
-  REASON: 500
+  REASON: 500,
+  NOTE: 250
 } as const
 
 const isPositiveInteger = (value: number): boolean => Number.isInteger(value) && value > 0
@@ -86,6 +87,11 @@ const InventoryMovementSchema = new Schema<InventoryMovement>(
       type: String,
       trim: true,
       maxlength: INVENTORY_MOVEMENT_STRING_LIMITS.REASON
+    },
+    note: {
+      type: String,
+      trim: true,
+      maxlength: INVENTORY_MOVEMENT_STRING_LIMITS.NOTE
     },
     reversesMovementId: {
       type: Schema.Types.ObjectId,
