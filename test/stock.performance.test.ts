@@ -84,6 +84,7 @@ class PerformanceStockRepository implements StockRepository {
   async listProducts (page: number, pageSize: number, _session?: StockRepositorySession): Promise<StockProductOverviewPage> {
     const records = [...this.products.values()].map((snapshot) => ({
       productId: snapshot.productId,
+      productName: `Product ${snapshot.productId}`,
       minimum: 20,
       snapshot
     }))
@@ -100,6 +101,10 @@ class PerformanceStockRepository implements StockRepository {
       timeZone,
       sales: [{ occurredAt: `${businessDate}T00:00:00.000Z`, quantity: 1 }]
     }))
+  }
+
+  async getLatestSales (_productIds: string[]): Promise<Array<{ productId: string, occurredAt: Date }>> {
+    return []
   }
 
   async updateProductMinimum (_productId: string, _minimum: number, _session?: StockRepositorySession): Promise<StockMinimumResult | undefined> {

@@ -1,4 +1,4 @@
-import mongoose, { Types, type ClientSession } from 'mongoose'
+import mongoose, { Types, type ClientSession, type PipelineStage } from 'mongoose'
 import { fromZonedTime } from 'date-fns-tz'
 
 import ProductModel from '../models/product'
@@ -24,9 +24,11 @@ import {
   type StockMovementQuery,
   type StockMovementRecord,
   type StockProductOverviewPage,
+  type StockProductFilters,
   type StockProductMinimum,
   type StockProductProjectionDelta,
   type StockProductSnapshot,
+  type StockLatestSaleRecord,
   type StockRepository,
   type StockOpeningRepository,
   type StockRotationInput,
@@ -38,8 +40,11 @@ import { StockServiceError, stockFailureDiagnosticOf } from './stock'
 interface MongoProductDocument {
   _id: Types.ObjectId
   stock: number
+  descripcion: string
+  path?: string
   inventory?: {
     minimum?: number
+    expiryAlertDays?: number
     expiryTracking: ExpiryTracking
     baselineStatus: BaselineStatus
   }
@@ -69,6 +74,7 @@ interface MongoMovementDocument {
   rulesVersion: string
   sourceLineId?: Types.ObjectId
   reason?: string
+  note?: string
   reversesMovementId?: Types.ObjectId
   createdBy: Types.ObjectId
   createdAt: Date
@@ -89,6 +95,7 @@ interface MongoMovementWrite {
   rulesVersion: string
   sourceLineId?: Types.ObjectId
   reason?: string
+  note?: string
   reversesMovementId?: Types.ObjectId
   createdBy: Types.ObjectId
   createdAt?: Date
@@ -131,6 +138,11 @@ interface MongoSalesHistoryAggregationRow {
   _id: Types.ObjectId
   createdAt?: Date
   sales?: MongoSalesHistoryLine[]
+}
+
+interface MongoLatestSaleRow {
+  _id: Types.ObjectId
+  occurredAt: Date
 }
 
 const repositoryError = (message: string, cause?: unknown): StockServiceError => {
@@ -362,6 +374,7 @@ export const mapMovementDocumentToStockRecord = (document: unknown): StockMoveme
     rulesVersion: nonEmptyStringOf(movement.rulesVersion, 'rulesVersion'),
     sourceLineId,
     reason: movement.reason === undefined ? undefined : nonEmptyStringOf(movement.reason, 'reason'),
+    note: movement.note === undefined ? undefined : boundedOptionalStringOf(movement.note, 'note', 250),
     reversesMovementId,
     createdBy: identifierOf(movement.createdBy, 'createdBy'),
     createdAt,
@@ -383,6 +396,7 @@ const toMovementWrite = (movement: StockMovementRecord): MongoMovementWrite => (
   rulesVersion: movement.rulesVersion,
   ...(movement.sourceLineId === undefined ? {} : { sourceLineId: objectIdOf(movement.sourceLineId, 'sourceLineId') }),
   ...(movement.reason === undefined ? {} : { reason: movement.reason }),
+  ...(movement.note === undefined ? {} : { note: boundedOptionalStringOf(movement.note, 'note', 250) }),
   ...(movement.reversesMovementId === undefined ? {} : { reversesMovementId: objectIdOf(movement.reversesMovementId, 'reversesMovementId') }),
   createdBy: objectIdOf(movement.createdBy, 'createdBy'),
   ...(movement.createdAt === undefined ? {} : { createdAt: dateOf(movement.createdAt, 'createdAt') }),
@@ -464,15 +478,64 @@ export class MongooseStockRepository implements StockOpeningRepository {
     }
   }
 
-  async listProducts (page: number, pageSize: number, session?: StockRepositorySession): Promise<StockProductOverviewPage> {
+  async listProducts (page: number, pageSize: number, session?: StockRepositorySession, filters?: StockProductFilters): Promise<StockProductOverviewPage> {
     positiveIntegerOf(page, 'page')
     positiveIntegerOf(pageSize, 'pageSize')
     const skip = (page - 1) * pageSize
     if (!Number.isSafeInteger(skip)) throw repositoryError('Product page offset exceeds safe integer bounds')
     try {
       const mongoSession = this.mongoSessionOf(session)
+      if (filters !== undefined && (filters.search !== undefined || filters.category !== undefined)) {
+        const match: Record<string, unknown> = {}
+        if (filters.search !== undefined) match.descripcion = new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+        const pipeline: PipelineStage[] = [{ $match: match }]
+        if (filters.category !== undefined) {
+          const categoryPattern = new RegExp(`^${filters.category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
+          pipeline.push(
+            { $lookup: { from: 'categories', let: { categoryId: '$categoria' }, pipeline: [{ $match: { $expr: { $eq: ['$_id', '$$categoryId'] } } }, { $project: { _id: 0, descripcion: 1 } }], as: 'categoryMetadata' } },
+            { $match: { 'categoryMetadata.descripcion': categoryPattern } }
+          )
+        }
+        pipeline.push(
+          {
+            $facet: {
+              metadata: [{ $count: 'total' }],
+              items: [
+                { $sort: { _id: 1 } },
+                { $skip: skip },
+                { $limit: pageSize },
+                ...(filters.category === undefined
+                  ? [{ $lookup: { from: 'categories', localField: 'categoria', foreignField: '_id', as: 'categoryMetadata' } }]
+                  : []),
+                { $project: { _id: 1, descripcion: 1, path: 1, stock: 1, inventory: 1, categoria: 1, categoryName: { $arrayElemAt: ['$categoryMetadata.descripcion', 0] } } }
+              ]
+            }
+          }
+        )
+        const filteredQuery = ProductModel.aggregate<{ metadata: Array<{ total: number }>, items: Array<MongoProductDocument & { categoryName?: string }> }>(pipeline)
+        if (mongoSession !== undefined) void filteredQuery.session(mongoSession)
+        const [result] = await filteredQuery.exec()
+        const filteredDocs = result?.items ?? []
+        const filteredItems = []
+        for (const product of filteredDocs) {
+          const productObjectId = objectIdOf(product._id, 'Product._id')
+          const snapshot = await this.snapshotOf(product, productObjectId, mongoSession)
+          const minimum = product.inventory?.minimum === undefined ? null : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
+          const imagePath = typeof product.path === 'string' && product.path.trim() !== '' ? product.path : undefined
+          filteredItems.push({
+            productId: snapshot.productId,
+            productName: nonEmptyStringOf(product.descripcion, 'Product.descripcion'),
+            ...(typeof product.categoryName === 'string' && product.categoryName.trim() !== '' ? { categoryName: product.categoryName } : {}),
+            ...(imagePath === undefined ? {} : { imagePath }),
+            minimum,
+            ...(product.inventory?.expiryAlertDays === undefined ? {} : { expiryAlertDays: nonNegativeIntegerOf(product.inventory.expiryAlertDays, 'Product.inventory.expiryAlertDays') }),
+            snapshot
+          })
+        }
+        return { total: result?.metadata[0]?.total ?? 0, items: filteredItems }
+      }
       const productQuery = ProductModel.find({})
-        .select('_id stock inventory')
+        .select('_id descripcion path stock inventory categoria')
         .sort({ _id: 1 })
         .skip(skip)
         .limit(pageSize)
@@ -485,6 +548,15 @@ export class MongooseStockRepository implements StockOpeningRepository {
         productQuery.lean<MongoProductDocument[]>().exec(),
         countQuery.exec()
       ])
+      const productObjectIds = documents.map((document) => objectIdOf(document._id, 'Product._id'))
+      const metadataQuery = ProductModel.aggregate<{ _id: Types.ObjectId, categoryName?: string }>([
+        { $match: { _id: { $in: productObjectIds } } },
+        { $lookup: { from: 'categories', localField: 'categoria', foreignField: '_id', as: 'categoria' } },
+        { $project: { _id: 1, categoryName: { $arrayElemAt: ['$categoria.descripcion', 0] } } }
+      ])
+      if (mongoSession !== undefined) void metadataQuery.session(mongoSession)
+      const categoryRows = await metadataQuery.exec()
+      const categoryNames = new Map(categoryRows.map(({ _id, categoryName }) => [identifierOf(_id, 'Product._id'), categoryName]))
       const items = []
       for (const document of documents) {
         const product = document as unknown as MongoProductDocument
@@ -493,7 +565,17 @@ export class MongooseStockRepository implements StockOpeningRepository {
         const minimum = product.inventory?.minimum === undefined
           ? null
           : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
-        items.push({ productId: snapshot.productId, minimum, snapshot })
+        const categoryName = categoryNames.get(snapshot.productId)
+        const imagePath = typeof product.path === 'string' && product.path.trim() !== '' ? product.path : undefined
+        items.push({
+          productId: snapshot.productId,
+          productName: nonEmptyStringOf(product.descripcion, 'Product.descripcion'),
+          ...(typeof categoryName === 'string' && categoryName.trim() !== '' ? { categoryName } : {}),
+          ...(imagePath === undefined ? {} : { imagePath }),
+          minimum,
+          ...(product.inventory?.expiryAlertDays === undefined ? {} : { expiryAlertDays: nonNegativeIntegerOf(product.inventory.expiryAlertDays, 'Product.inventory.expiryAlertDays') }),
+          snapshot
+        })
       }
       return { total, items }
     } catch (error) {
@@ -510,7 +592,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
     const businessDateInstant = fromZonedTime(`${businessDate}T00:00:00`, timeZone)
     try {
       const mongoSession = this.mongoSessionOf(session)
-      const pipeline = [
+      const pipeline: PipelineStage[] = [
         { $match: { _id: { $in: productObjectIds } } },
         { $project: { _id: 1, createdAt: 1 } },
         {
@@ -538,11 +620,50 @@ export class MongooseStockRepository implements StockOpeningRepository {
     }
   }
 
+  async getLatestSales (productIds: string[], session?: StockRepositorySession): Promise<StockLatestSaleRecord[]> {
+    if (productIds.length === 0 || productIds.length > 100) return []
+    const productObjectIds = productIds.map((productId) => objectIdOf(productId, 'productId'))
+    try {
+      const mongoSession = this.mongoSessionOf(session)
+      const pipeline: PipelineStage[] = [
+        { $match: { _id: { $in: productObjectIds } } },
+        {
+          $lookup: {
+            from: 'itemsales',
+            let: { productId: '$_id' },
+            pipeline: [
+              { $match: { $expr: { $and: [{ $eq: ['$idProducto', '$$productId'] }, { $ne: ['$estado', false] }] } } },
+              { $lookup: { from: 'sales', localField: 'idVenta', foreignField: '_id', as: 'sale' } },
+              { $unwind: '$sale' },
+              { $match: { 'sale.estado': { $not: /^(cancelado|cancelled|canceled)$/i }, 'sale.createdAt': { $type: 'date' } } },
+              { $sort: { 'sale.createdAt': -1, 'sale._id': -1 } },
+              { $limit: 1 },
+              { $project: { _id: 0, occurredAt: '$sale.createdAt' } }
+            ],
+            as: 'latestSale'
+          }
+        },
+        { $unwind: '$latestSale' },
+        { $project: { _id: 1, occurredAt: '$latestSale.occurredAt' } }
+      ]
+      const aggregateQuery = ProductModel.aggregate<MongoLatestSaleRow>(pipeline)
+      if (mongoSession !== undefined) void aggregateQuery.session(mongoSession)
+      const rows = await aggregateQuery.exec()
+      return rows.flatMap((row) => {
+        const occurredAt = row.occurredAt instanceof Date ? new Date(row.occurredAt.getTime()) : new Date(String(row.occurredAt))
+        return Number.isNaN(occurredAt.getTime()) ? [] : [{ productId: identifierOf(row._id, 'Product._id'), occurredAt }]
+      })
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError('Could not aggregate latest product sales', error)
+    }
+  }
+
   async getProductMinimum (productId: string, session?: StockRepositorySession): Promise<StockProductMinimum | undefined> {
     try {
       const productObjectId = objectIdOf(productId, 'productId')
       const mongoSession = this.mongoSessionOf(session)
-      const query = ProductModel.findById(productObjectId).select('_id inventory.minimum')
+      const query = ProductModel.findById(productObjectId).select('_id inventory.minimum inventory.expiryAlertDays')
       if (mongoSession !== undefined) void query.session(mongoSession)
       const document = await query.lean<MongoProductDocument>().exec()
       if (document === null) return undefined
@@ -550,30 +671,36 @@ export class MongooseStockRepository implements StockOpeningRepository {
       const minimum = product.inventory?.minimum === undefined
         ? null
         : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
-      return { productId: identifierOf(product._id, 'Product._id'), minimum }
+      const expiryAlertDays = product.inventory?.expiryAlertDays === undefined ? undefined : nonNegativeIntegerOf(product.inventory.expiryAlertDays, 'Product.inventory.expiryAlertDays')
+      return { productId: identifierOf(product._id, 'Product._id'), minimum, ...(expiryAlertDays === undefined ? {} : { expiryAlertDays }) }
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw repositoryError(`Could not read minimum for product ${productId}`, error)
     }
   }
 
-  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession): Promise<StockMinimumResult | undefined> {
+  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession, expiryAlertDays?: number): Promise<StockMinimumResult | undefined> {
     const productObjectId = objectIdOf(productId, 'productId')
     nonNegativeIntegerOf(minimum, 'minimum')
+    if (expiryAlertDays !== undefined) nonNegativeIntegerOf(expiryAlertDays, 'expiryAlertDays')
     try {
       const mongoSession = this.mongoSessionOf(session)
       const query = ProductModel.findOneAndUpdate(
         { _id: productObjectId },
-        { $set: { 'inventory.minimum': minimum } },
+        { $set: { 'inventory.minimum': minimum, ...(expiryAlertDays === undefined ? {} : { 'inventory.expiryAlertDays': expiryAlertDays }) } },
         { new: true, runValidators: true }
       )
       if (mongoSession !== undefined) void query.session(mongoSession)
-      const document = await query.select('_id inventory.minimum').lean<MongoProductDocument>().exec()
+      const document = await query.select('_id inventory.minimum inventory.expiryAlertDays').lean<MongoProductDocument>().exec()
       if (document === null) return undefined
       const product = document as unknown as MongoProductDocument
       const storedMinimum = product.inventory?.minimum
       if (storedMinimum === undefined) throw repositoryError(`Product ${productId} minimum was not returned`)
-      return { productId: identifierOf(product._id, 'Product._id'), minimum: nonNegativeIntegerOf(storedMinimum, 'Product.inventory.minimum') }
+      return {
+        productId: identifierOf(product._id, 'Product._id'),
+        minimum: nonNegativeIntegerOf(storedMinimum, 'Product.inventory.minimum'),
+        ...(product.inventory?.expiryAlertDays === undefined ? {} : { expiryAlertDays: nonNegativeIntegerOf(product.inventory.expiryAlertDays, 'Product.inventory.expiryAlertDays') })
+      }
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw repositoryError(`Could not update minimum for product ${productId}`, error)
@@ -893,7 +1020,8 @@ export class MongooseStockRepository implements StockOpeningRepository {
       getProductMinimum: async (productId, session) => await this.getProductMinimum(productId, session),
       listProducts: async (page, pageSize, session) => await this.listProducts(page, pageSize, session),
       getSalesHistory: async (productIds, businessDate, rotationDays, timeZone, session) => await this.getSalesHistory(productIds, businessDate, rotationDays, timeZone, session),
-      updateProductMinimum: async (productId, minimum, session) => await this.updateProductMinimum(productId, minimum, session),
+      getLatestSales: async (productIds, session) => await this.getLatestSales(productIds, session),
+       updateProductMinimum: async (productId, minimum, session, expiryAlertDays) => await this.updateProductMinimum(productId, minimum, session, expiryAlertDays),
       insertMinimumAudit: async (audit, session) => await this.insertMinimumAudit(audit, session),
       getBuckets: async (productId, session) => await this.getBuckets(productId, session),
       getBucket: async (bucketId, session) => await this.getBucket(bucketId, session),

@@ -32,6 +32,7 @@ const DATE = '2026-10-15'
 
 interface TestProductRecord {
   productId: string
+  productName: string
   minimum: number | null
   snapshot: StockProductSnapshot
 }
@@ -51,12 +52,17 @@ class MemoryRepository implements StockRepository {
   buckets = new Map<string, StockBucketSnapshot>()
   movements: StockMovementRecord[] = []
   minimums = new Map<string, number>()
+  expiryAlertDays = new Map<string, number>()
   minimumAudits: TestMinimumAuditRecord[] = []
   transactionCalls = 0
   minimumUpdateSessions: Array<StockRepositorySession | undefined> = []
   minimumReadSessions: Array<StockRepositorySession | undefined> = []
   minimumAuditSessions: Array<StockRepositorySession | undefined> = []
   rotationHistories = new Map<string, StockRotationInput>()
+  latestSales = new Map<string, Date>()
+  displayMetadata = new Map<string, { categoryName?: string, imagePath?: string }>()
+  listProductCalls: Array<{ page: number, pageSize: number, filters?: { search?: string, category?: string } }> = []
+  latestSaleCalls: string[][] = []
   failMinimumAudit = false
   projectionSessions: Array<{ method: string, session: StockRepositorySession | undefined }> = []
   receiptSessions: StockRepositorySession[] = []
@@ -66,12 +72,14 @@ class MemoryRepository implements StockRepository {
     this.transactionCalls += 1
     const session: StockRepositorySession = { transactionId: `tx-${this.transactionCalls}` }
     const minimumsBefore = new Map(this.minimums)
+    const expiryAlertDaysBefore = new Map(this.expiryAlertDays)
     const productsBefore = new Map(this.products)
     const auditsBefore = [...this.minimumAudits]
     try {
       return await work(Object.assign(this, { session }))
     } catch (error) {
       this.minimums = minimumsBefore
+      this.expiryAlertDays = expiryAlertDaysBefore
       this.products = productsBefore
       this.minimumAudits = auditsBefore
       throw error
@@ -82,10 +90,10 @@ class MemoryRepository implements StockRepository {
     return this.products.get(productId)
   }
 
-  async getProductMinimum (productId: string, session?: StockRepositorySession): Promise<{ productId: string, minimum: number | null } | undefined> {
+  async getProductMinimum (productId: string, session?: StockRepositorySession): Promise<{ productId: string, minimum: number | null, expiryAlertDays?: number } | undefined> {
     this.minimumReadSessions.push(session)
     if (!this.products.has(productId)) return undefined
-    return { productId, minimum: this.minimums.get(productId) ?? null }
+    return { productId, minimum: this.minimums.get(productId) ?? null, expiryAlertDays: this.expiryAlertDays.get(productId) }
   }
 
   async getBuckets (productId: string): Promise<StockBucketSnapshot[]> {
@@ -113,13 +121,19 @@ class MemoryRepository implements StockRepository {
     return query.limit === undefined ? ordered : ordered.slice(0, query.limit)
   }
 
-  async listProducts (page: number, pageSize: number): Promise<{ total: number, items: TestProductRecord[] }> {
+  async listProducts (page: number, pageSize: number, _session?: StockRepositorySession, filters?: { search?: string, category?: string }): Promise<{ total: number, items: TestProductRecord[] }> {
+    this.listProductCalls.push({ page, pageSize, filters })
     const items = [...this.products.values()].map((snapshot) => ({
       productId: snapshot.productId,
+      productName: `Product ${snapshot.productId}`,
+      ...this.displayMetadata.get(snapshot.productId),
       minimum: this.minimums.get(snapshot.productId) ?? null,
       snapshot
     }))
-    return { total: items.length, items: items.slice((page - 1) * pageSize, page * pageSize) }
+    const matching = items.filter((item) =>
+      (filters?.search === undefined || item.productName.toLowerCase().includes(filters.search.toLowerCase())) &&
+      (filters?.category === undefined || item.categoryName?.toLowerCase() === filters.category.toLowerCase()))
+    return { total: matching.length, items: matching.slice((page - 1) * pageSize, page * pageSize) }
   }
 
   async getSalesHistory (productIds: string[], businessDate: string, rotationDays: number, timeZone: string): Promise<StockRotationInput[]> {
@@ -133,11 +147,20 @@ class MemoryRepository implements StockRepository {
     })
   }
 
-  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession): Promise<{ productId: string, minimum: number } | undefined> {
+  async getLatestSales (productIds: string[]): Promise<Array<{ productId: string, occurredAt: Date }>> {
+    this.latestSaleCalls.push([...productIds])
+    return productIds.flatMap((productId) => {
+      const occurredAt = this.latestSales.get(productId)
+      return occurredAt === undefined ? [] : [{ productId, occurredAt }]
+    })
+  }
+
+  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession, expiryAlertDays?: number): Promise<{ productId: string, minimum: number, expiryAlertDays?: number } | undefined> {
     this.minimumUpdateSessions.push(session)
     if (!this.products.has(productId)) return undefined
     this.minimums.set(productId, minimum)
-    return { productId, minimum }
+    if (expiryAlertDays !== undefined) this.expiryAlertDays.set(productId, expiryAlertDays)
+    return { productId, minimum, ...(this.expiryAlertDays.has(productId) ? { expiryAlertDays: this.expiryAlertDays.get(productId) } : {}) }
   }
 
   async insertMinimumAudit (audit: TestMinimumAuditRecord, session?: StockRepositorySession): Promise<TestMinimumAuditRecord> {
@@ -249,6 +272,43 @@ const expectRejected = async (action: () => Promise<unknown>, code?: string): Pr
 }
 
 describe('Stock service', () => {
+  it('S-03/S-09: applies catalog-wide intersecting filters before pagination and preserves global data', async () => {
+    const repository = newRepository()
+    repository.products.set('product-3', { ...untrackedProduct(), productId: 'product-3' })
+    repository.products.set('product-4', { ...untrackedProduct(), productId: 'product-4' })
+    repository.displayMetadata.set(PRODUCT_ID, { categoryName: 'Beverages' })
+    repository.displayMetadata.set(UNTRACKED_PRODUCT_ID, { categoryName: 'Food' })
+    repository.displayMetadata.set('product-3', { categoryName: 'Beverages' })
+    repository.displayMetadata.set('product-4', { categoryName: 'Food' })
+    const service = new StockService(repository)
+    const baseline = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+    const filtered = await service.getOverview({ businessDate: DATE, page: 2, pageSize: 1, search: 'product', category: 'Beverages', auth: ACTOR })
+    expect(filtered.total).to.equal(2)
+    expect(filtered.items).to.have.length(1)
+    expect(filtered.items[0].categoryName).to.equal('Beverages')
+    expect(repository.listProductCalls.find(({ filters }) => filters !== undefined)).to.deep.include({ page: 2, pageSize: 1, filters: { search: 'product', category: 'Beverages' } })
+    expect(filtered.globalSummary).to.deep.equal(baseline.globalSummary)
+    expect(filtered.globalAlerts).to.deep.equal(baseline.globalAlerts)
+  })
+
+  it('S-09: allows either product filter to be cleared independently and keeps the unfiltered default', async () => {
+    const repository = newRepository()
+    repository.products.set('product-3', { ...untrackedProduct(), productId: 'product-3' })
+    repository.displayMetadata.set(PRODUCT_ID, { categoryName: 'Beverages' })
+    repository.displayMetadata.set(UNTRACKED_PRODUCT_ID, { categoryName: 'Food' })
+    repository.displayMetadata.set('product-3', { categoryName: 'Beverages' })
+    const service = new StockService(repository)
+    const searchOnly = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 10, search: 'product-1', auth: ACTOR })
+    const categoryOnly = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 10, category: 'Beverages', auth: ACTOR })
+    const unfiltered = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 10, auth: ACTOR })
+    expect(searchOnly.total).to.equal(1)
+    expect(categoryOnly.total).to.equal(2)
+    expect(unfiltered.total).to.equal(3)
+    expect(repository.listProductCalls.find(({ filters }) => filters?.search !== undefined)?.filters).to.deep.equal({ search: 'product-1' })
+    expect(repository.listProductCalls.find(({ filters }) => filters?.category !== undefined)?.filters).to.deep.equal({ category: 'Beverages' })
+    expect(repository.listProductCalls.some(({ filters }) => filters === undefined)).to.equal(true)
+  })
+
   it('S-05/TC-015: builds a page-scoped overview through pure availability, expiry, and low-stock rules', async () => {
     const repository = newRepository()
     repository.buckets.clear()
@@ -256,6 +316,7 @@ describe('Stock service', () => {
     repository.buckets.set('bucket-near', bucket('bucket-near', '2026-10-20', 2))
     repository.buckets.set('bucket-later', bucket('bucket-later', '2026-12-20', 6))
     repository.minimums.set(PRODUCT_ID, 8)
+    repository.displayMetadata.set(PRODUCT_ID, { categoryName: 'Beverages', imagePath: 'coffee.jpg' })
     const service = new StockService(repository)
 
     const overview: StockOverviewResult = await service.getOverview({
@@ -266,6 +327,8 @@ describe('Stock service', () => {
     })
 
     expect(overview.total).to.equal(2)
+    expect(overview.items[0]).to.include({ productName: `Product ${PRODUCT_ID}` })
+    expect(overview.items[0]).to.include({ categoryName: 'Beverages', imagePath: 'coffee.jpg' })
     expect(overview.summary).to.deep.equal({
       productCount: 2,
       physicalQuantity: 20,
@@ -276,6 +339,134 @@ describe('Stock service', () => {
     expect(overview.items[0]).to.include({ productId: PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, minimum: 8 })
     expect(overview.items[0].alerts.map(({ type }) => type)).to.deep.equal(['LOW_STOCK', 'EXPIRED', 'EXPIRING_SOON'])
     expect(overview.items[1]).to.include({ productId: UNTRACKED_PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, expiredQuantity: 0 })
+    expect(overview.items[0].latestSale).to.deep.equal({ status: 'INCOMPLETE' })
+  })
+
+  it('returns the authoritative old latest-sale timestamp for page products only, while preserving global counters', async () => {
+    const repository = newRepository()
+    const oldSale = new Date('2026-01-10T08:30:00.000Z')
+    repository.latestSales.set(PRODUCT_ID, oldSale)
+    repository.products.set('outside-page', { ...untrackedProduct(), productId: 'outside-page' })
+    const overview = await new StockService(repository).getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+
+    expect(overview.items[0].latestSale).to.deep.equal({ status: 'RECORDED', occurredAt: oldSale.toISOString() })
+    expect(repository.latestSaleCalls).to.deep.equal([[PRODUCT_ID]])
+    expect(overview.globalSummary).to.deep.equal({ belowMinimumProductCount: 0, expiringProductCount: 1, expiredProductCount: 0, lowRotationProductCount: 0, activeAlertCount: 2 })
+  })
+
+  it('keeps latest-sale reads best-effort and classifies a propagating overview bucket failure', async () => {
+    const latestSaleFailureRepository = newRepository()
+    latestSaleFailureRepository.getLatestSales = async () => { throw new Error('optional latest-sale read failed') }
+    const overview = await new StockService(latestSaleFailureRepository).getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+    expect(overview.items[0].latestSale).to.deep.equal({ status: 'INCOMPLETE' })
+
+    const bucketFailureRepository = newRepository()
+    let bucketReadCount = 0
+    bucketFailureRepository.getBuckets = async () => {
+      bucketReadCount += 1
+      if (bucketReadCount === 1) return [...bucketFailureRepository.buckets.values()]
+      throw new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, 'private repository detail')
+    }
+    try {
+      await new StockService(bucketFailureRepository).getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+      expect.fail('Expected the bucket read to reject')
+    } catch (error) {
+      expect(error).to.be.instanceOf(StockServiceError)
+      expect((error as StockServiceError).diagnostic).to.deep.equal({ operation: 'stock_overview_expiry_buckets', cause: 'unknown' })
+    }
+  })
+
+  it('adds page-invariant global alert counters, counting products distinctly and excluding expired stock from expiring', async () => {
+    const repository = newRepository()
+    repository.products.set('third', { ...untrackedProduct(), productId: 'third' })
+    repository.minimums.set('third', 0)
+    repository.buckets.clear()
+    repository.buckets.set('bucket-expired-2', { ...bucket('bucket-expired-2', '2026-10-10', 2), productId: PRODUCT_ID })
+    repository.buckets.set('bucket-expiring', { ...bucket('bucket-expiring', '2026-10-20', 2), productId: PRODUCT_ID })
+    repository.buckets.set('bucket-safe', { ...bucket('bucket-safe', '2026-12-20', 6), productId: PRODUCT_ID })
+    repository.minimums.set(PRODUCT_ID, 10)
+    repository.rotationHistories.set(PRODUCT_ID, {
+      productId: PRODUCT_ID,
+      productCreatedAt: '2026-07-17T03:00:00.000Z',
+      businessDate: DATE,
+      timeZone: 'America/Argentina/Buenos_Aires',
+      rotationDays: 90,
+      sales: []
+    })
+    const service = new StockService(repository)
+
+    const firstPage = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+    const lastPage = await service.getOverview({ businessDate: DATE, page: 3, pageSize: 1, auth: ACTOR })
+
+    expect(firstPage.summary.productCount).to.equal(1)
+    expect(lastPage.summary.productCount).to.equal(1)
+    expect(firstPage.globalSummary).to.deep.equal(lastPage.globalSummary)
+    expect(firstPage.globalSummary).to.deep.equal({
+      belowMinimumProductCount: 1,
+      expiringProductCount: 1,
+      expiredProductCount: 1,
+      lowRotationProductCount: 1,
+      activeAlertCount: 4
+    })
+  })
+
+  it('returns zero global alert counters for an empty catalog', async () => {
+    const repository = new MemoryRepository()
+    const overview = await new StockService(repository).getOverview({ businessDate: DATE, page: 1, pageSize: 10, auth: ACTOR })
+
+    expect(overview.globalSummary).to.deep.equal({
+      belowMinimumProductCount: 0,
+      expiringProductCount: 0,
+      expiredProductCount: 0,
+      lowRotationProductCount: 0,
+      activeAlertCount: 0
+    })
+    expect(overview.globalAlerts).to.deep.equal([])
+  })
+
+  it('returns named alerts for products outside the current page without changing page summary', async () => {
+    const repository = newRepository()
+    repository.products.set('off-page', { ...untrackedProduct(), productId: 'off-page', physicalQuantity: 0, availableQuantity: 0 })
+    repository.minimums.set('off-page', 1)
+    const overview = await new StockService(repository).getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+
+    expect(overview.summary).to.deep.equal({
+      productCount: 1,
+      physicalQuantity: 10,
+      committedQuantity: 0,
+      availableToSell: 10,
+      alertCount: 1
+    })
+    expect(overview.globalAlerts).to.deep.include({
+      productId: 'off-page',
+      productName: 'Product off-page',
+      type: 'CRITICAL_STOCK',
+      severity: 'CRITICAL',
+      explanation: 'Product off-page has no units available to sell',
+      dataQuality: STOCK_DATA_QUALITY.COMPLETE
+    })
+    expect(overview.globalAlerts.every(({ productId }) => !['bucket-first', 'bucket-later'].includes(productId))).to.equal(true)
+  })
+
+  it('counts informational low-rotation alerts globally while keeping page alert totals page-scoped', async () => {
+    const repository = newRepository()
+    repository.rotationHistories.set(PRODUCT_ID, {
+      productId: PRODUCT_ID,
+      productCreatedAt: '2026-10-01T03:00:00.000Z',
+      businessDate: DATE,
+      timeZone: 'America/Argentina/Buenos_Aires',
+      rotationDays: 90,
+      sales: []
+    })
+    const service = new StockService(repository)
+
+    const singleProductPage = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+    const fullPage = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 2, auth: ACTOR })
+
+    expect(singleProductPage.items[0].alerts.find(({ type }) => type === 'LOW_ROTATION')).to.deep.include({ dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY })
+    expect(singleProductPage.summary.alertCount).to.equal(singleProductPage.items[0].alerts.length)
+    expect(singleProductPage.globalSummary.activeAlertCount).to.equal(fullPage.summary.alertCount)
+    expect(singleProductPage.globalSummary.activeAlertCount).to.be.greaterThan(0)
   })
 
   it('adds persistence-backed low rotation while preserving existing overview alerts', async () => {
@@ -346,6 +537,9 @@ describe('Stock service', () => {
     expect(unreconciled.dataQuality).to.equal(STOCK_DATA_QUALITY.INCOMPLETE)
     expect(unreconciled.availableToSell).to.equal(0)
     expect(unreconciled.alerts.find(({ type }) => type === 'LOW_STOCK')).to.deep.include({ dataQuality: STOCK_DATA_QUALITY.INCOMPLETE })
+    expect(overview.globalAlerts.find(({ productId }) => productId === 'unreconciled')).to.deep.include({
+      productName: 'Product unreconciled', type: 'LOW_STOCK', dataQuality: STOCK_DATA_QUALITY.INCOMPLETE
+    })
   })
 
   it('S-05: returns deterministic detail buckets and movement limits without changing product projections', async () => {
@@ -379,6 +573,82 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 1.5, ACTOR), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
     await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 1, { ...ACTOR, actorId: '' }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
     await expectRejected(async () => await service.updateMinimum('missing', 1, ACTOR), STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND)
+  })
+
+  it('SS04-RED S-04/FR-021–024: persists minimum and product expiry alert days with the existing default when unconfigured', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    expect(await service.updateMinimum(PRODUCT_ID, 7, ACTOR, { expiryAlertDays: 2 })).to.deep.equal({ productId: PRODUCT_ID, minimum: 7, expiryAlertDays: 2 })
+    expect(repository.expiryAlertDays.get(PRODUCT_ID)).to.equal(2)
+    const detail = await service.getProductDetail({ productId: PRODUCT_ID, businessDate: DATE, movementLimit: 10, auth: ACTOR })
+    expect(detail).to.include({ expiryAlertDays: 2 })
+    expect(detail.alerts.some(({ type }) => type === 'EXPIRING_SOON')).to.equal(false)
+    expect(await service.getProductDetail({ productId: UNTRACKED_PRODUCT_ID, businessDate: DATE, movementLimit: 10, auth: ACTOR })).to.include({ expiryAlertDays: 14 })
+  })
+
+  it('SS04-RED S-05/S-18/FR-026–029: records a quantity-based write-off without a bucket and retries idempotently', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const input = { productId: PRODUCT_ID, operationId: 'writeoff-1', quantity: 3, businessDate: DATE, reason: 'vencimiento', note: 'Damaged stock', auth: ACTOR }
+    const first = await service.writeOff(input)
+    const retry = await service.writeOff(input)
+    expect(first).to.include({ appliedMovementCount: 1 })
+    expect(retry).to.include({ alreadyAppliedCount: 1, appliedMovementCount: 0 })
+    expect(repository.movements).to.have.length(1)
+    expect(repository.movements[0]).to.include({ productId: PRODUCT_ID, quantity: 3, reason: 'vencimiento', note: 'Damaged stock', sourceType: 'STOCK', sourceId: PRODUCT_ID, expiryBucketId: 'bucket-first' })
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 7, availableQuantity: 7, committedQuantity: 0 })
+    await expectRejected(async () => await service.writeOff({ ...input, quantity: 4 }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+    await expectRejected(async () => await service.writeOff({ ...input, note: 'Different note' }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+  })
+
+  it('SS04-RED S-08/S-24/S-25/FR-030/043/044: removes all eligible uncommitted expired stock by product, preserving committed and same-day stock', async () => {
+    const repository = newRepository()
+    repository.buckets.clear()
+    repository.products.set(PRODUCT_ID, { ...trackedProduct(), physicalQuantity: 12, availableQuantity: 8, committedQuantity: 4 })
+    repository.buckets.set('expired-free', bucket('expired-free', '2026-10-14', 3))
+    repository.buckets.set('expired-committed', bucket('expired-committed', '2026-10-14', 1, 4))
+    repository.buckets.set('expires-today', bucket('expires-today', DATE, 4))
+    const service = new StockService(repository)
+    const result = await service.removeExpiredProduct({ productId: PRODUCT_ID, operationId: 'expiry-product-1', businessDate: DATE, auth: ACTOR })
+    expect(result).to.include({ outcome: 'PARTIAL', removedQuantity: 4 })
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 8, availableQuantity: 4, committedQuantity: 4 })
+    expect(repository.buckets.get('expired-committed')).to.deep.include({ availableQuantity: 0, committedQuantity: 4 })
+    expect(repository.buckets.get('expires-today')).to.deep.include({ availableQuantity: 4 })
+    expect(await service.removeExpiredProduct({ productId: PRODUCT_ID, operationId: 'expiry-product-1', businessDate: DATE, auth: ACTOR })).to.include({ outcome: 'PARTIAL', removedQuantity: 4, movementCount: 2 })
+    expect(repository.movements).to.have.length(2)
+    await expectRejected(async () => await service.removeExpiredProduct({ productId: PRODUCT_ID, operationId: 'expiry-product-1', businessDate: '2026-10-16', auth: ACTOR }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+  })
+
+  it('SS04-RED S-06/FR-031–033: continues bulk expiry removal independently after a product failure', async () => {
+    const repository = newRepository()
+    repository.buckets.clear()
+    repository.buckets.set('expired-bulk', bucket('expired-bulk', '2026-10-14', 2))
+    repository.buckets.set('valid-bulk', bucket('valid-bulk', '2026-11-01', 8))
+    const service = new StockService(repository)
+    const result = await service.removeExpiredProducts({ productIds: [PRODUCT_ID, 'missing', UNTRACKED_PRODUCT_ID], operationId: 'expiry-bulk-1', businessDate: DATE, auth: ACTOR })
+    expect(result.results.map(({ productId, status }) => ({ productId, status }))).to.deep.equal([
+      { productId: PRODUCT_ID, status: 'REMOVED' },
+      { productId: 'missing', status: 'FAILED' },
+      { productId: UNTRACKED_PRODUCT_ID, status: 'NO_ELIGIBLE' }
+    ])
+    await service.removeExpiredProducts({ productIds: [PRODUCT_ID, 'missing', UNTRACKED_PRODUCT_ID], operationId: 'expiry-bulk-1', businessDate: DATE, auth: ACTOR })
+    expect(repository.movements).to.have.length(1)
+  })
+
+  it('SS04-RED S-08/S-24: reports no eligible stock without claiming a removal', async () => {
+    const repository = newRepository()
+    repository.buckets.clear()
+    repository.products.set(PRODUCT_ID, { ...trackedProduct(), physicalQuantity: 4, availableQuantity: 0, committedQuantity: 4 })
+    repository.buckets.set('expired-all-committed', bucket('expired-all-committed', '2026-10-14', 0, 4))
+    const result = await new StockService(repository).removeExpiredProduct({ productId: PRODUCT_ID, operationId: 'expiry-none', businessDate: DATE, auth: ACTOR })
+    expect(result).to.include({ outcome: 'NO_ELIGIBLE', removedQuantity: 0 })
+    expect(repository.movements).to.have.length(0)
+  })
+
+  it('SS04-RED TC-015: validates bounded threshold settings and write-off note length', async () => {
+    const service = new StockService(newRepository())
+    await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 2, ACTOR, { expiryAlertDays: -1 }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    await expectRejected(async () => await service.writeOff({ productId: PRODUCT_ID, operationId: 'bad-note', quantity: 1, businessDate: DATE, reason: 'vencimiento', note: 'x'.repeat(251), auth: ACTOR }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
   })
 
   it('records an append-only minimum audit in the same transaction with actor, correlation, and reason', async () => {

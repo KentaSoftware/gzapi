@@ -4,6 +4,9 @@ import {
   STOCK_ERROR_CODES,
   STOCK_OPERATION_STATUSES,
   type ExpiredRemovalInput,
+  type StockWriteOffInput,
+  type ExpiredProductRemovalInput,
+  type ExpiredBulkRemovalInput,
   type OpeningCountConfirmationInput,
   type OpeningCountInput,
   type OpeningCountWriter,
@@ -18,12 +21,15 @@ import {
 import {
   availabilityQuerySchema,
   expiredRemovalInputSchema,
+  expiredBulkRemovalSchema,
+  expiredProductRemovalSchema,
   objectIdSchema,
   purchaseReceiptInputSchema,
   stockMinimumUpdateSchema,
   stockOverviewQuerySchema,
   stockProductDetailQuerySchema,
-  stockReturnInputSchema
+  stockReturnInputSchema,
+  stockWriteOffSchema
 } from '../schemas/stock.schema'
 import { StockService, StockServiceError } from '../services/stock'
 import { confirmOpeningCount, OpeningCountError, previewOpeningCount } from '../services/stockOpening'
@@ -32,7 +38,12 @@ import { createOpeningCountWriter } from '../services/stockOpeningWriter'
 import { STOCK_TIME_ZONE } from '../config/stock'
 import { sendErrorEnvelope } from '../utils/error.handle'
 
+interface AuthenticatedUser {
+  id?: string
+}
+
 interface RequestExt extends Request {
+  user?: AuthenticatedUser
 }
 
 const HTTP_STATUS = {
@@ -69,7 +80,9 @@ const correlationOf = (req: Request): string | undefined => {
   return typeof header === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(header) ? header : undefined
 }
 
-const actorIdOf = (res: Response): string => {
+const actorIdOf = (res: Response, req?: RequestExt): string => {
+  const authenticatedActorId = req?.user?.id
+  if (typeof authenticatedActorId === 'string' && authenticatedActorId.trim() !== '') return authenticatedActorId.trim()
   const actorId = res.locals.userId
   return typeof actorId === 'string' ? actorId.trim() : ''
 }
@@ -83,8 +96,8 @@ const invalidPayload = (res: Response, correlationId: string | undefined): void 
   sendErrorEnvelope(res, HTTP_STATUS.BAD_REQUEST, STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, STOCK_ERROR_MESSAGES.STOCK_DATA_INCOMPLETE, correlationId)
 }
 
-const requireActor = (res: Response, correlationId: string | undefined): string | undefined => {
-  const actorId = actorIdOf(res)
+const requireActor = (res: Response, correlationId: string | undefined, req?: RequestExt): string | undefined => {
+  const actorId = actorIdOf(res, req)
   if (actorId === '') {
     sendErrorEnvelope(res, HTTP_STATUS.FORBIDDEN, STOCK_ERROR_CODES.STOCK_FORBIDDEN, STOCK_ERROR_MESSAGES.STOCK_FORBIDDEN, correlationId)
     return undefined
@@ -192,7 +205,7 @@ const availabilityQueryOf = (query: Record<string, unknown>): Record<string, unk
 
 const getAvailability = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined) return
 
   const normalizedQuery = availabilityQueryOf(req.query as unknown as Record<string, unknown>)
@@ -220,7 +233,7 @@ const getAvailability = async (req: RequestExt, res: Response): Promise<void> =>
 
 const getOverview = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined) return
   const parsed = stockOverviewQuerySchema.safeParse(req.query as unknown as Record<string, unknown>)
   if (!parsed.success) {
@@ -237,7 +250,7 @@ const getOverview = async (req: RequestExt, res: Response): Promise<void> => {
 
 const getProductDetail = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined) return
   const productId = objectIdSchema.safeParse(req.params.id)
   const parsed = stockProductDetailQuerySchema.safeParse(req.query as unknown as Record<string, unknown>)
@@ -255,7 +268,7 @@ const getProductDetail = async (req: RequestExt, res: Response): Promise<void> =
 
 const updateMinimum = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -269,6 +282,7 @@ const updateMinimum = async (req: RequestExt, res: Response): Promise<void> => {
   try {
     res.status(HTTP_STATUS.OK).send(await service.updateMinimum(productId.data, parsed.data.minimum, authOf(actorId), {
       correlationId,
+      ...(parsed.data.expiryAlertDays === undefined ? {} : { expiryAlertDays: parsed.data.expiryAlertDays }),
       ...(parsed.data.reason === undefined ? {} : { reason: parsed.data.reason })
     }))
   } catch (error) {
@@ -278,7 +292,7 @@ const updateMinimum = async (req: RequestExt, res: Response): Promise<void> => {
 
 const receivePurchase = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -304,7 +318,7 @@ const receivePurchase = async (req: RequestExt, res: Response): Promise<void> =>
 
 const returnSale = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -332,7 +346,7 @@ const returnSale = async (req: RequestExt, res: Response): Promise<void> => {
 
 const removeExpiredBucket = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -360,9 +374,82 @@ const removeExpiredBucket = async (req: RequestExt, res: Response): Promise<void
   }
 }
 
+const writeOffProduct = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId, req)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+  const productId = objectIdSchema.safeParse(req.params.id)
+  const parsed = stockWriteOffSchema.safeParse(req.body)
+  if (!productId.success || !parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  const input: StockWriteOffInput = {
+    ...parsed.data,
+    productId: productId.data,
+    occurredAt: parsed.data.occurredAt === undefined ? undefined : new Date(parsed.data.occurredAt),
+    auth: authOf(actorId)
+  }
+  try {
+    respond(res, await service.writeOff(input))
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const removeExpiredProduct = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId, req)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+  const productId = objectIdSchema.safeParse(req.params.id)
+  const parsed = expiredProductRemovalSchema.safeParse(req.body)
+  if (!productId.success || !parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  const input: ExpiredProductRemovalInput = {
+    ...parsed.data,
+    productId: productId.data,
+    occurredAt: parsed.data.occurredAt === undefined ? undefined : new Date(parsed.data.occurredAt),
+    auth: authOf(actorId)
+  }
+  try {
+    const result = await service.removeExpiredProduct(input)
+    res.status(result.movementCount === 0 ? HTTP_STATUS.OK : HTTP_STATUS.CREATED).send(result)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const removeExpiredProducts = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId, req)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+  const parsed = expiredBulkRemovalSchema.safeParse(req.body)
+  if (!parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  const input: ExpiredBulkRemovalInput = { ...parsed.data, auth: authOf(actorId) }
+  try {
+    res.status(HTTP_STATUS.OK).send(await service.removeExpiredProducts(input))
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
 const previewOpeningCountController = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined) return
 
   try {
@@ -379,7 +466,7 @@ const previewOpeningCountController = async (req: RequestExt, res: Response): Pr
 
 const confirmOpeningCountController = async (req: RequestExt, res: Response, writer: OpeningCountWriter = openingCountWriter): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -418,6 +505,9 @@ export {
   receivePurchase,
   returnSale,
   removeExpiredBucket,
+  writeOffProduct,
+  removeExpiredProduct,
+  removeExpiredProducts,
   previewOpeningCountController as previewOpeningCount,
   confirmOpeningCountController as confirmOpeningCount
 }

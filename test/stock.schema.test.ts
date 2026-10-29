@@ -17,6 +17,7 @@ import {
   availabilityQuerySchema,
   productInventoryConfigSchema,
   purchaseReceiptInputSchema,
+  stockOverviewQuerySchema,
   stockErrorEnvelopeSchema
 } from '../src/schemas/stock.schema'
 
@@ -93,6 +94,14 @@ describe('Stock contract — purchase receipt schema', () => {
 })
 
 describe('Stock contract — query, inventory config, and error envelope schemas', () => {
+  it('normalizes bounded overview text filters and rejects oversize or non-string values', () => {
+    const parsed = stockOverviewQuerySchema.safeParse({ businessDate: '2026-10-15', search: '  Coffee  ', category: ' Beverages ' })
+    expect(parsed.success).to.equal(true)
+    if (parsed.success) expect(parsed.data).to.deep.include({ search: 'Coffee', category: 'Beverages' })
+    expect(stockOverviewQuerySchema.safeParse({ businessDate: '2026-10-15', search: 'x'.repeat(101) }).success).to.equal(false)
+    expect(stockOverviewQuerySchema.safeParse({ businessDate: '2026-10-15', category: ['Beverages'] }).success).to.equal(false)
+  })
+
   it('validates availability product IDs and rejects unknown query keys', () => {
     expect(availabilityQuerySchema.safeParse({ productIds: [PRODUCT_ID] }).success).to.equal(true)
     expect(availabilityQuerySchema.safeParse({ productIds: ['not-an-object-id'] }).success).to.equal(false)

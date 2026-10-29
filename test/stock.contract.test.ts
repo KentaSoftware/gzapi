@@ -12,6 +12,9 @@ import {
   updateMinimum,
   receivePurchase,
   removeExpiredBucket,
+  writeOffProduct,
+  removeExpiredProduct,
+  removeExpiredProducts,
   returnSale,
   previewOpeningCount,
   confirmOpeningCount
@@ -26,6 +29,7 @@ const ACTOR_ID = '507f1f77bcf86cd799439016'
 const ATTACKER_ID = '507f1f77bcf86cd799439017'
 
 interface TestRequest {
+  user?: { id: string }
   body?: unknown
   params?: Record<string, string>
   query?: Record<string, unknown>
@@ -66,14 +70,35 @@ const overviewResult = {
   page: 1,
   pageSize: 50,
   total: 0,
-  items: [],
+  items: [{
+    productId: PRODUCT_ID,
+    productName: 'Coffee',
+    categoryName: 'Beverages',
+    imagePath: 'coffee.jpg',
+    physicalQuantity: 4,
+    committedQuantity: 1,
+    availableToSell: 3,
+    expiredQuantity: 0,
+    dataQuality: 'COMPLETE',
+    minimum: 2,
+    alerts: [],
+    latestSale: { status: 'INCOMPLETE' }
+  }],
   summary: {
     productCount: 0,
     physicalQuantity: 0,
     committedQuantity: 0,
     availableToSell: 0,
     alertCount: 0
-  }
+  },
+  globalSummary: {
+    belowMinimumProductCount: 0,
+    expiringProductCount: 0,
+    expiredProductCount: 0,
+    lowRotationProductCount: 0,
+    activeAlertCount: 0
+  },
+  globalAlerts: []
 }
 
 describe('Stock contract — HTTP adapter', () => {
@@ -107,7 +132,10 @@ describe('Stock contract — HTTP adapter', () => {
       '/opening-counts/confirm',
       '/purchases/:buyId/receive',
       '/returns',
-      '/expired-buckets/:id/remove'
+      '/expired-buckets/:id/remove',
+      '/products/:id/write-offs',
+      '/products/:id/expired-removal',
+      '/expired-removals'
     ])
     expect(routeMethods.filter(({ path }) => path.includes('/opening-counts/'))).to.deep.equal([
       { path: '/opening-counts/preview', methods: { post: true } },
@@ -116,11 +144,17 @@ describe('Stock contract — HTTP adapter', () => {
     const openingRouteLines = source.split('\n').filter((line) => line.includes("router.post('/opening-counts/"))
     expect(openingRouteLines).to.have.length(2)
     expect(openingRouteLines.every((line) => line.includes("checkPermission('manage_stock_config')"))).to.equal(true)
-    expect(source).to.include("checkPermission('read_stock')")
+    const readRoutes = source.split('\n').filter((line) => ["router.get('/availability'", "router.get('/overview'", "router.get('/products/:id'"].some((route) => line.includes(route)))
+    expect(readRoutes).to.have.length(3)
+    expect(readRoutes.every((line) => line.includes('checkJwt(req, res, next)'))).to.equal(true)
+    expect(readRoutes.every((line) => line.includes('checkPermission') === false)).to.equal(true)
     expect(source).to.include("checkPermission('receive_stock')")
     expect(source).to.include("checkPermission('manage_stock')")
     expect(source).to.include("checkPermission('manage_stock_config')")
     expect(source).to.include("router.post('/opening-counts/preview'")
+    const ss04Routes = source.split('\n').filter((line) => line.includes("router.post('/products/:id/write-offs'") || line.includes("router.post('/products/:id/expired-removal'") || line.includes("router.post('/expired-removals'"))
+    expect(ss04Routes).to.have.length(3)
+    expect(ss04Routes.every((line) => line.includes('checkJwt(req, res, next)') && !line.includes('checkPermission'))).to.equal(true)
     expect(source).to.include('checkJwt(req, res, next)')
   })
 
@@ -436,6 +470,8 @@ describe('Stock contract — HTTP adapter', () => {
       { unexpected: 'nope' },
       { businessDate: '2026-10-15', page: '0' },
       { businessDate: '2026-10-15', pageSize: '101' },
+      { businessDate: '2026-10-15', search: 'x'.repeat(101) },
+      { businessDate: '2026-10-15', category: 'x'.repeat(101) },
       { businessDate: '2026-02-30' }
     ]) {
       const response = makeResponse()
@@ -451,6 +487,36 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.calledOnce).to.equal(true)
     expect(serviceCall.firstCall.args[0]).to.deep.include({ page: 1, pageSize: 50, businessDate: '2026-10-15' })
     expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
+    expect(bodyOf(response)).to.deep.include({ summary: overviewResult.summary, globalSummary: overviewResult.globalSummary, globalAlerts: [] })
+    expect((bodyOf(response) as typeof overviewResult).items[0]).to.deep.include({ productName: 'Coffee', categoryName: 'Beverages', imagePath: 'coffee.jpg' })
+  })
+
+  it('uses the authenticated JWT actor for overview reads and rejects requests without an actor', async () => {
+    const serviceCall = sinon.stub(StockService.prototype, 'getOverview').resolves(overviewResult)
+    const response = makeResponse(ATTACKER_ID)
+
+    await getOverview(makeRequest({ user: { id: ACTOR_ID }, query: { businessDate: '2026-10-15' } }), response as unknown as Response)
+
+    expect(response.status.calledWith(200)).to.equal(true)
+    expect(serviceCall.calledOnce).to.equal(true)
+    expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
+
+    serviceCall.resetHistory()
+    const missingActorResponse = makeResponse('')
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), missingActorResponse as unknown as Response)
+
+    expect(missingActorResponse.status.calledWith(403)).to.equal(true)
+    expect(bodyOf(missingActorResponse)).to.deep.include({ code: STOCK_ERROR_CODES.STOCK_FORBIDDEN })
+    expect(serviceCall.called).to.equal(false)
+  })
+
+  it('S-03/S-09: passes normalized search and category filters to overview without changing global response contracts', async () => {
+    const serviceCall = sinon.stub(StockService.prototype, 'getOverview').resolves(overviewResult)
+    const response = makeResponse()
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15', search: ' Coffee ', category: ' Beverages ' } }), response as unknown as Response)
+    expect(response.status.calledWith(200)).to.equal(true)
+    expect(serviceCall.firstCall.args[0]).to.deep.include({ search: 'Coffee', category: 'Beverages' })
+    expect(bodyOf(response)).to.deep.include({ globalSummary: overviewResult.globalSummary, globalAlerts: overviewResult.globalAlerts })
   })
 
   it('S-05: validates strict product detail queries and maps missing products to a stable 404 envelope', async () => {
@@ -525,6 +591,33 @@ describe('Stock contract — HTTP adapter', () => {
     const missingResponse = makeResponse()
     await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body: { minimum: 4 } }), missingResponse as unknown as Response)
     expect(missingResponse.status.calledWith(404)).to.equal(true)
+  })
+
+  it('SS04-RED S-04/S-05/S-08/S-06: adapts thresholds and product stock operations without bucket inputs or role gates', async () => {
+    const minimumCall = sinon.stub(StockService.prototype, 'updateMinimum').resolves({ productId: PRODUCT_ID, minimum: 4, expiryAlertDays: 21 })
+    const settingsResponse = makeResponse()
+    await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body: { minimum: 4, expiryAlertDays: 21 } }), settingsResponse as unknown as Response)
+    expect(settingsResponse.status.calledWith(200)).to.equal(true)
+    expect(minimumCall.firstCall.args[3]).to.deep.include({ expiryAlertDays: 21 })
+
+    const writeOffCall = sinon.stub(StockService.prototype, 'writeOff').resolves(result(1, 0))
+    const writeOffResponse = makeResponse()
+    await writeOffProduct(makeRequest({ params: { id: PRODUCT_ID }, body: { operationId: 'writeoff-contract', businessDate: '2026-10-15', quantity: 2, reason: 'vencimiento', note: 'Observed damage' } }), writeOffResponse as unknown as Response)
+    expect(writeOffResponse.status.calledWith(201)).to.equal(true)
+    expect(writeOffCall.firstCall.args[0]).to.deep.include({ productId: PRODUCT_ID, quantity: 2, reason: 'vencimiento', note: 'Observed damage', auth: { actorId: ACTOR_ID, canManageStock: true } })
+
+    const expiredCall = sinon.stub(StockService.prototype, 'removeExpiredProduct').resolves({ productId: PRODUCT_ID, operationId: 'expiry-contract', outcome: 'PARTIAL', removedQuantity: 2, movementCount: 1 })
+    const expiredResponse = makeResponse()
+    await removeExpiredProduct(makeRequest({ params: { id: PRODUCT_ID }, body: { operationId: 'expiry-contract', businessDate: '2026-10-15' } }), expiredResponse as unknown as Response)
+    expect(expiredResponse.status.calledWith(201)).to.equal(true)
+    expect(expiredCall.firstCall.args[0]).to.deep.include({ productId: PRODUCT_ID, auth: { actorId: ACTOR_ID, canManageStock: true } })
+    expect(expiredCall.firstCall.args[0]).not.to.have.property('bucketId')
+
+    const bulkCall = sinon.stub(StockService.prototype, 'removeExpiredProducts').resolves({ operationId: 'bulk-contract', results: [{ productId: PRODUCT_ID, status: 'REMOVED', removedQuantity: 2 }] })
+    const bulkResponse = makeResponse()
+    await removeExpiredProducts(makeRequest({ body: { operationId: 'bulk-contract', businessDate: '2026-10-15', productIds: [PRODUCT_ID] } }), bulkResponse as unknown as Response)
+    expect(bulkResponse.status.calledWith(200)).to.equal(true)
+    expect(bulkCall.firstCall.args[0]).to.deep.include({ productIds: [PRODUCT_ID], auth: { actorId: ACTOR_ID, canManageStock: true } })
   })
 
   it('S-01: requires strict availability queries to provide businessDate before invoking StockService', async () => {

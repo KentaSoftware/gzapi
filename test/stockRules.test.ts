@@ -134,6 +134,23 @@ describe('Stock rules — availability and FEFO', () => {
 })
 
 describe('Stock rules — expiry, thresholds, and rotation', () => {
+  it('SS04-RED S-25/FR-044: treats the printed expiry date as valid through that Buenos Aires business date', () => {
+    const input: StockExpiryEvaluationInput = {
+      ...completeContext,
+      alertDays: 14,
+      buckets: [{ bucketId: 'expiry-boundary', expiryDate: '2026-10-15', availableQuantity: 2, committedQuantity: 0 }]
+    }
+
+    expect(evaluateExpiry(input)).to.deep.equal([{
+      type: 'EXPIRING_SOON',
+      severity: 'WARNING',
+      productId: PRODUCT_ID,
+      explanation: `Product ${PRODUCT_ID} has 2 units expiring on 2026-10-15`,
+      dataQuality: STOCK_DATA_QUALITY.COMPLETE
+    }])
+    expect(evaluateExpiry({ ...input, businessDate: '2026-10-16' })[0]).to.deep.include({ type: 'EXPIRED' })
+  })
+
   it('evaluates expiry boundaries in Buenos Aires without using machine timezone', () => {
     const input: StockExpiryEvaluationInput = {
       ...completeContext,
