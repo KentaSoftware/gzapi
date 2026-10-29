@@ -365,6 +365,8 @@ export interface StockProductSnapshot {
 export interface StockProductOverviewRecord {
   productId: string
   productName: string
+  categoryName?: string
+  imagePath?: string
   minimum: number | null
   snapshot: StockProductSnapshot
 }
@@ -393,6 +395,9 @@ export interface StockLatestSaleRecord {
 
 export interface StockOverviewItem {
   productId: string
+  productName: string
+  categoryName?: string
+  imagePath?: string
   physicalQuantity: number
   committedQuantity: number
   availableToSell: number

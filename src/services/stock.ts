@@ -323,6 +323,9 @@ export class StockService {
       const alerts = this.alertsFor(record.productId, availability, record.minimum, buckets, query.businessDate, timeZone, historiesByProduct.get(record.productId))
       return {
         productId: record.productId,
+        productName: record.productName,
+        ...(record.categoryName === undefined ? {} : { categoryName: record.categoryName }),
+        ...(record.imagePath === undefined ? {} : { imagePath: record.imagePath }),
         physicalQuantity: availability.physicalQuantity,
         committedQuantity: availability.committedQuantity,
         availableToSell: availability.availableToSell,

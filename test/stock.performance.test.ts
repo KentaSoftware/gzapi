@@ -84,6 +84,7 @@ class PerformanceStockRepository implements StockRepository {
   async listProducts (page: number, pageSize: number, _session?: StockRepositorySession): Promise<StockProductOverviewPage> {
     const records = [...this.products.values()].map((snapshot) => ({
       productId: snapshot.productId,
+      productName: `Product ${snapshot.productId}`,
       minimum: 20,
       snapshot
     }))

@@ -196,11 +196,38 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
     sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
     sinon.stub(StockExpiryBucketModel, 'find').returns({ sort: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof StockExpiryBucketModel.find>)
+    sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
 
     const page = await new MongooseStockRepository().listProducts(1, 10)
 
     expect(page.items[0]).to.include({ productId: productId.toString(), productName: 'Café molido' })
-    expect(productQuery.select.calledWith('_id descripcion stock inventory')).to.equal(true)
+    expect(productQuery.select.calledWith('_id descripcion path stock inventory categoria')).to.equal(true)
+    expect(page.items[0]).to.not.have.property('imagePath')
+  })
+
+  it('loads category and image display metadata only for the selected product page', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const categoryId = new Types.ObjectId('507f1f77bcf86cd799439012')
+    const productQuery = {
+      select: sinon.stub().returnsThis(), sort: sinon.stub().returnsThis(), skip: sinon.stub().returnsThis(),
+      limit: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([{ _id: productId, descripcion: 'Coffee', path: 'coffee.jpg', stock: 4, categoria: categoryId, inventory: { expiryTracking: EXPIRY_TRACKING.TRACKED, baselineStatus: BASELINE_STATUS.RECONCILED } }])
+    }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(2) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    sinon.stub(StockExpiryBucketModel, 'find').returns({ sort: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof StockExpiryBucketModel.find>)
+    const aggregateStub = sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([{ _id: productId, categoryName: 'Beverages' }]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+
+    const page = await new MongooseStockRepository().listProducts(2, 1)
+
+    expect(page.items[0]).to.include({ productName: 'Coffee', categoryName: 'Beverages', imagePath: 'coffee.jpg' })
+    expect(productQuery.select.calledWith('_id descripcion path stock inventory categoria')).to.equal(true)
+    const pipeline = JSON.stringify(aggregateStub.firstCall.args[0])
+    expect(pipeline).to.include('categories')
+    expect(pipeline).to.include('categoryName')
+    expect(pipeline).to.include(productId.toString())
+    expect(pipeline).to.not.include('precio')
+    expect(pipeline).to.not.include('stock')
   })
 
   it('aggregates only each requested product latest active non-cancelled sale across all history', async () => {

@@ -59,6 +59,7 @@ class MemoryRepository implements StockRepository {
   minimumAuditSessions: Array<StockRepositorySession | undefined> = []
   rotationHistories = new Map<string, StockRotationInput>()
   latestSales = new Map<string, Date>()
+  displayMetadata = new Map<string, { categoryName?: string, imagePath?: string }>()
   latestSaleCalls: string[][] = []
   failMinimumAudit = false
   projectionSessions: Array<{ method: string, session: StockRepositorySession | undefined }> = []
@@ -120,6 +121,7 @@ class MemoryRepository implements StockRepository {
     const items = [...this.products.values()].map((snapshot) => ({
       productId: snapshot.productId,
       productName: `Product ${snapshot.productId}`,
+      ...this.displayMetadata.get(snapshot.productId),
       minimum: this.minimums.get(snapshot.productId) ?? null,
       snapshot
     }))
@@ -268,6 +270,7 @@ describe('Stock service', () => {
     repository.buckets.set('bucket-near', bucket('bucket-near', '2026-10-20', 2))
     repository.buckets.set('bucket-later', bucket('bucket-later', '2026-12-20', 6))
     repository.minimums.set(PRODUCT_ID, 8)
+    repository.displayMetadata.set(PRODUCT_ID, { categoryName: 'Beverages', imagePath: 'coffee.jpg' })
     const service = new StockService(repository)
 
     const overview: StockOverviewResult = await service.getOverview({
@@ -278,6 +281,8 @@ describe('Stock service', () => {
     })
 
     expect(overview.total).to.equal(2)
+    expect(overview.items[0]).to.include({ productName: `Product ${PRODUCT_ID}` })
+    expect(overview.items[0]).to.include({ categoryName: 'Beverages', imagePath: 'coffee.jpg' })
     expect(overview.summary).to.deep.equal({
       productCount: 2,
       physicalQuantity: 20,

@@ -66,7 +66,20 @@ const overviewResult = {
   page: 1,
   pageSize: 50,
   total: 0,
-  items: [],
+  items: [{
+    productId: PRODUCT_ID,
+    productName: 'Coffee',
+    categoryName: 'Beverages',
+    imagePath: 'coffee.jpg',
+    physicalQuantity: 4,
+    committedQuantity: 1,
+    availableToSell: 3,
+    expiredQuantity: 0,
+    dataQuality: 'COMPLETE',
+    minimum: 2,
+    alerts: [],
+    latestSale: { status: 'INCOMPLETE' }
+  }],
   summary: {
     productCount: 0,
     physicalQuantity: 0,
@@ -336,6 +349,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.firstCall.args[0]).to.deep.include({ page: 1, pageSize: 50, businessDate: '2026-10-15' })
     expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
     expect(bodyOf(response)).to.deep.include({ summary: overviewResult.summary, globalSummary: overviewResult.globalSummary, globalAlerts: [] })
+    expect((bodyOf(response) as typeof overviewResult).items[0]).to.deep.include({ productName: 'Coffee', categoryName: 'Beverages', imagePath: 'coffee.jpg' })
   })
 
   it('S-05: validates strict product detail queries and maps missing products to a stable 404 envelope', async () => {

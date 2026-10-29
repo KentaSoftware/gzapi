@@ -40,6 +40,7 @@ interface MongoProductDocument {
   _id: Types.ObjectId
   stock: number
   descripcion: string
+  path?: string
   inventory?: {
     minimum?: number
     expiryTracking: ExpiryTracking
@@ -477,7 +478,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
     try {
       const mongoSession = this.mongoSessionOf(session)
       const productQuery = ProductModel.find({})
-        .select('_id descripcion stock inventory')
+        .select('_id descripcion path stock inventory categoria')
         .sort({ _id: 1 })
         .skip(skip)
         .limit(pageSize)
@@ -490,6 +491,15 @@ export class MongooseStockRepository implements StockOpeningRepository {
         productQuery.lean<MongoProductDocument[]>().exec(),
         countQuery.exec()
       ])
+      const productObjectIds = documents.map((document) => objectIdOf(document._id, 'Product._id'))
+      const metadataQuery = ProductModel.aggregate<Array<{ _id: Types.ObjectId, categoryName?: string }>>([
+        { $match: { _id: { $in: productObjectIds } } },
+        { $lookup: { from: 'categories', localField: 'categoria', foreignField: '_id', as: 'categoria' } },
+        { $project: { _id: 1, categoryName: { $arrayElemAt: ['$categoria.descripcion', 0] } } }
+      ])
+      if (mongoSession !== undefined) void metadataQuery.session(mongoSession)
+      const categoryRows = await metadataQuery.exec()
+      const categoryNames = new Map(categoryRows.map(({ _id, categoryName }) => [identifierOf(_id, 'Product._id'), categoryName]))
       const items = []
       for (const document of documents) {
         const product = document as unknown as MongoProductDocument
@@ -498,7 +508,16 @@ export class MongooseStockRepository implements StockOpeningRepository {
         const minimum = product.inventory?.minimum === undefined
           ? null
           : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
-        items.push({ productId: snapshot.productId, productName: nonEmptyStringOf(product.descripcion, 'Product.descripcion'), minimum, snapshot })
+        const categoryName = categoryNames.get(snapshot.productId)
+        const imagePath = typeof product.path === 'string' && product.path.trim() !== '' ? product.path : undefined
+        items.push({
+          productId: snapshot.productId,
+          productName: nonEmptyStringOf(product.descripcion, 'Product.descripcion'),
+          ...(typeof categoryName === 'string' && categoryName.trim() !== '' ? { categoryName } : {}),
+          ...(imagePath === undefined ? {} : { imagePath }),
+          minimum,
+          snapshot
+        })
       }
       return { total, items }
     } catch (error) {
