@@ -44,6 +44,7 @@ describe('Phase 0 — Vercel REST handler', () => {
     const handler = createVercelHandler({
       connect: async () => { connectCalls += 1 },
       seed: async () => { seedCalls += 1 },
+      startupSeed: async () => {},
       createApp: async () => {
         appCalls += 1
         await Promise.resolve()
@@ -78,6 +79,7 @@ describe('Phase 0 — Vercel REST handler', () => {
         if (connectCalls === 1) throw error
       },
       seed: async () => {},
+      startupSeed: async () => {},
       createApp: async () => app
     })
     const log = sinon.stub(console, 'error')
@@ -103,12 +105,13 @@ describe('Phase 0 — Vercel REST handler', () => {
     const handler = createVercelHandler({
       connect: async () => { order.push('connect') },
       seed: async () => { order.push('base') },
+      startupSeed: async () => { order.push('demo') },
       createApp: async () => { order.push('app'); return app }
     })
     const served = response()
     await handler(request, served as unknown as Response)
     expect(served.statusCode).to.equal(200)
-    expect(order).to.deep.equal(['connect', 'base', 'app', 'request'])
+    expect(order).to.deep.equal(['connect', 'base', 'demo', 'app', 'request'])
   })
 })
 

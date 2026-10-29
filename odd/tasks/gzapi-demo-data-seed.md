@@ -3,7 +3,7 @@
 ## Objective
 The original objective was to provide a manually-run, idempotent `seed:demo` command that populates the MongoDB used by Vercel with realistic route-optimization and finance fixtures without mutating application startup behavior.
 
-The accepted DMS-10 extension requested a Production-only Vercel build hook. The subsequent DMS-16/17 authorization supersedes that activation point: Production API initialization now awaits base roles/admin and insert-only missing demo fixtures before serving requests. The original manual seed remains available.
+The accepted DMS-10 extension requested a Production-only Vercel build hook. DMS-16/17 later moved the full demo seed to awaited Production API initialization. Merged PR #24 moved it back into the Production Vercel build; DMS-19 restores the API-startup activation point and removes database writes from the build. DMS-20 adds owned, deterministic Smart Stock fixtures to the existing multi-collection demo data.
 
 Client coordinates must come from real geocoded addresses and must be validated as drivable before any client or dependent fixture is written. The seed must fail closed when geocoding or route validation is unavailable.
 
@@ -55,6 +55,8 @@ The deployed database currently contains only bootstrap roles and the `admin` us
 - [x] DMS-16 Move automatic demo preparation into the awaited Production API initialization sequence after base roles/admin; keep build compile-only and manual CLI intact. Skip local, Preview, and test. Use a fixed service-date anchor so cold starts do not drift; avoid opt-in mode, expected database, and service-date environment requirements.
 - [x] DMS-17 Prove offline that complete owned fixtures skip Google but still ensure admin, and missing/unsafe fixtures fail initialization before login. Update operator documentation and run only isolated mock-only tests, build, lint, and diff checks.
 - [x] DMS-18 Reduce first-request Mongo round trips in the existing insert-only startup demo seed without changing fixture IDs, ownership protection, provider preflight, or the awaited startup gate. Prove bounded behavior with deterministic mock-only operation counts; real provider/runtime latency remains unverified.
+- [x] DMS-19 Restore awaited Production API-startup seeding after base roles/admin, remove seed execution from `vercel-build`, and test ordering, Production-only gating, and build purity.
+- [x] DMS-20 Add fixture-owned Smart Stock minimums, reconciled baseline, deterministic expiry buckets and opening movements for the 85 demo products; repair missing stock fixtures on existing catalog installs without overwriting non-fixture data; prove overview-quality inputs and repeat-run idempotency.
 
 ## Authorized Scope
 - `migrations/demo-001-seed-data.ts`
@@ -72,6 +74,8 @@ DMS-16/17 authorized surfaces: `src/services/seed.ts`, `api/index.ts`, `migratio
 
 DMS-18 authorized surfaces: `migrations/demo-001-seed-data.ts`, `test/migrations/demo-seed.test.ts`, `README.md`, and this task document only. Preserve the existing Production first-request gate and insert-only semantics; no real MongoDB/Google request, local test database, Production environment, remote operation, or commit by this writer.
 
+DMS-19/20 authorized surfaces: `api/index.ts`, `package.json`, `migrations/build-seed.ts` (removal of the obsolete build-time seed entrypoint), `migrations/demo-001-seed-data.ts`, `migrations/demo-002-build-seed.ts`, `test/migrations/demo-seed.test.ts`, `test/migrations/demo-build-seed.test.ts`, `test/phase0/vercel.handler.test.ts`, `README.md`, and this task document. Synthetic stock values are authorized only for fixture-owned demo products in the existing configured seed target. No database connection/write, credential inspection, provider call outside mocked tests, deployment, deletion, or unrelated-worktree change is authorized.
+
 ## Route
 - DMS-01: delegated direct writer; multi-file implementation with external-provider and persistence safety.
 - DMS-02: delegated direct writer; same bounded writer owns the coherent seed implementation.
@@ -81,6 +85,7 @@ DMS-18 authorized surfaces: `migrations/demo-001-seed-data.ts`, `test/migrations
 - DMS-15: bounded writer; one explicit Production opt-in plus audit-only verification, independently reviewed before the work-unit commit.
 - DMS-16/17: delegated direct bounded writer; multi-file preparation and one coherent startup behavior work unit with tests and docs. Parent owns commit after review.
 - DMS-18: one bounded writer for Mongo round-trip reduction, offline regression tests, and evidence; parent owns the work-unit commit and review boundary.
+- DMS-19/20: one delegated direct TypeScript writer for the multi-file lifecycle restoration and owned Smart Stock fixture flow, with RED/GREEN tests and docs; parent owns verification, review assessment, commit, and tracker/mirror reconciliation.
 - Current delivery boundary: `feat/gzapi-production-build-seed` starts from the merged `master` state after PR #17. Commits `59f660a` and `8bb31f1` are published in draft PR #19 against `master`, linked to approved issue #18. No merge, Production deployment, or live seed was authorized.
 
 ## Forecast
@@ -91,8 +96,11 @@ DMS-18 authorized surfaces: `migrations/demo-001-seed-data.ts`, `test/migrations
 - DMS-15 follow-up forecast (historical): about 60–100 additional authored lines including docs and tests; included in the current `single-pr` work-unit.
 - DMS-16/17 forecast: approximately 250–400 authored lines across startup wiring, offline tests, and docs; choose `single-pr` for this bounded work unit on `feat/gzapi-startup-demo-seed` from previously merged PR #19 source head `aac5407`. The 400-line guideline is advisory; retain readable tests and documentation. Parent will evaluate review boundary and commit.
 - DMS-18 forecast: approximately 150–350 authored lines across bounded implementation, focused tests, and docs; keep the startup optimization in one reviewable unit without compressing safety tests to satisfy the advisory line budget.
+- DMS-19/20 forecast: approximately 250–400 authored changed lines across startup wiring, fixture-owned stock/bucket/movement records, focused mocks, and operator docs; keep one coherent work unit on `feat/api-startup-stock-seed`.
 
 ## Verification
+- DMS-19/20: run only mock-only demo seed, startup-seed, and Vercel handler tests via repo-compatible ts-node/Mocha flags; run `npm run build`, scoped lint, and `git diff --check`. Never run full `npm test`, `vercel-build`, real DB seed, Google provider calls, or deployment. Prove startup order, build purity, owned product baseline/minimum, bucket totals matching physical stock, upcoming/expired and low-stock fixtures, non-fixture isolation, and repeat-run idempotency.
+- DMS-19/20 observed: RED was 34 passing / 4 failing, then GREEN 39 passing across the three isolated mock-only files. Parent spot-check repeated the exact focused command and observed 39 passing. Writer reports `npm run build`, scoped TypeScript lint, and `git diff --check` passed (diff check emitted line-ending warnings). Review assessment excluding the pre-existing untracked index classified the candidate medium, 270 changed lines, `review_due=false` / `under_budget`; clone RDD is OFF. No live DB, Google provider, Vercel build/startup, Production, or deployment validation occurred. The existing six Finance lint baseline errors remain out-of-scope if full lint is run.
 - `npm test -- --grep "demo seed"` (first observe RED on new focused tests, then GREEN)
 - `npm test` (pending: do not run in the current environment; the unrelated fixture test connects to and drops its test database, and the user explicitly prohibited touching the local test DB).
 - `npm run build`
@@ -132,3 +140,10 @@ DMS-18 authorized surfaces: `migrations/demo-001-seed-data.ts`, `test/migrations
 
 ## Next Step
 Work-unit commits `ac62c08` and `aec36d6` are published in PR #20 against `master`; the branch was rebased onto the merged `origin/master` (`fb54b06`) so the PR contains only this feature's changes. Production API initialization still runs on the first request; `vercel-build` only compiles and there is no `DEMO_SEED_MODE` activation. Assess the remaining duplicate startup inventory, bounded-insert and external-provider latency against the actual Vercel first-request limit before separately authorizing any deployment or live validation. The first real run may fail closed if Google rejects an address or DRIVE route. Do not infer payload validation or Production readiness from offline mocks/build; lint retains six pre-existing Finance errors, full-suite verification remains forbidden by the local test-database constraint, and no live provider or Production execution has occurred.
+
+## Current DMS-19/20 State
+This section supersedes the historical Next Step above. PR #24 (`0c5bfee`) currently runs fixture seeding during Production `vercel-build`; DMS-19/20 restore awaited Production API-startup seeding and add Smart Stock data. Worktree `feat/api-startup-stock-seed` preserves pre-existing `.gitignore` and untracked `.codegraph/`; do not stage them. The user authorized synthetic stock fixtures for the same configured seed target, but this task does not authorize a live database write or deployment. The first API startup after a future deployment may invoke Google Routes if route fixtures are missing; do not trigger it from this session.
+
+DMS-19/20 implementation evidence: `api/index.ts` awaits base seed, then the Production-gated demo runner, before app creation. `vercel-build` now invokes only `npm run build`, and the obsolete `migrations/build-seed.ts` entrypoint was removed. Stock minimum/baseline metadata lives on fixture-owned products; deterministic, separately owned expiry buckets and OPENING movements sum to `Product.stock`. Stock ownership inventory is independent of catalog fixture completeness, permitting insert-only repair without touching unrelated product inventory. Focused verification is recorded in the delegated handoff; no live DB, Google provider, Vercel, or Production operation was performed.
+
+RED/GREEN evidence: the new mock-only tests first returned 34 passing and four failing, identifying missing stock records, build-hook purity, and startup ordering. Final focused command `$env:TS_NODE_TRANSPILE_ONLY='1'; $env:NODE_OPTIONS='--no-strip-types'; npx mocha -r ts-node/register test/migrations/demo-seed.test.ts test/migrations/demo-build-seed.test.ts test/phase0/vercel.handler.test.ts --timeout 10000` passed all 39 tests. `npm run build`, scoped `npx ts-standard` on the six changed TypeScript paths, and `git diff --check` passed. No full test suite, database, provider, build hook, or Production validation was run.

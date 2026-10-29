@@ -171,7 +171,7 @@ export interface FixtureCollection {
   updateOne: (
     filter: Record<string, unknown>,
     update: FixtureUpdate,
-    options: { upsert: true }
+    options: { upsert: boolean }
   ) => Promise<WriteResult>
 }
 
@@ -265,6 +265,15 @@ const ownedFixtureKeys = (serviceDate: Date): Array<{ collection: string, key: s
     for (let index = 1; index <= 10; index += 1) add('expenses', `finance:expense:${period.key}:${index}`)
   }
   add('cashflowconfigs', 'finance:cashflow-config')
+  for (let product = 0; product < 85; product += 1) {
+    const productKey = product === 0 ? 'catalog:product' : `catalog:product:${Math.floor((product - 1) / DEMO_VARIANTS.length) + 1}:${((product - 1) % DEMO_VARIANTS.length) + 1}`
+    add('products', `stock:${productKey}`)
+    for (let bucket = 1; bucket <= 2; bucket += 1) {
+      const key = `stock:bucket:${productKey}:${bucket}`
+      add('stockexpirybuckets', key)
+      add('inventorymovements', `stock:opening:${productKey}:${bucket}`)
+    }
+  }
   return keys
 }
 
@@ -287,12 +296,22 @@ export const inspectDemoFixtures = async (
     while (next < keys.length && !failed) {
       const { collection, key } = keys[next++]
       try {
-        const existing = await database.collection(collection).findOne({ _id: fixtureObjectId(key) })
+        const stockProductKey = collection === 'products' && key.startsWith('stock:')
+        const productFixtureKey = stockProductKey ? key.slice('stock:'.length) : key
+        const existing = await database.collection(collection).findOne({ _id: fixtureObjectId(productFixtureKey) })
         if (existing === null) {
           missing += 1
           missingKeys?.add(key)
         } else {
-          assertOwned(existing, key)
+          if (stockProductKey) {
+            const product = asRecord(existing)
+            const inventory = asRecord(product?.inventory)
+            if (inventory?.fixtureNamespace !== FIXTURE_NAMESPACE || inventory.fixtureKey !== key) {
+              if (product?.inventory !== undefined && product.inventory !== null) throw new Error(`Demo stock fixture identity conflict for ${productFixtureKey}`)
+              missing += 1
+              missingKeys?.add(key)
+            }
+          } else assertOwned(existing, key)
         }
       } catch (error) {
         failed = true
@@ -950,22 +969,67 @@ const seedPreparedData = async (
     idleCapitalRecommendMin: 25000
   })
 
-  let next = 0
-  let failed = false
-  let failure: unknown
-  const worker = async (): Promise<void> => {
-    while (next < pending.length && !failed) {
-      const task = pending[next++]
-      try {
-        await task()
-      } catch (error) {
-        failed = true
-        failure = error
+  const flush = async (): Promise<void> => {
+    let next = 0
+    let failed = false
+    let failure: unknown
+    const worker = async (): Promise<void> => {
+      while (next < pending.length && !failed) {
+        const task = pending[next++]
+        try { await task() } catch (error) { failed = true; failure = error }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(SEED_WRITE_CONCURRENCY, pending.length) }, worker))
+    if (failed) throw failure instanceof Error ? failure : new Error('Demo fixture write failed')
+    pending.length = 0
+  }
+
+  await flush()
+  for (let productIndex = 0; productIndex < 85; productIndex += 1) {
+    const productKey = productIndex === 0 ? 'catalog:product' : `catalog:product:${Math.floor((productIndex - 1) / DEMO_VARIANTS.length) + 1}:${((productIndex - 1) % DEMO_VARIANTS.length) + 1}`
+    const stockKey = `stock:${productKey}`
+    const productId = fixtureObjectId(productKey)
+    const physicalQuantity = productIndex === 0 ? 500 : 120 + ((productIndex - 1) % DEMO_VARIANTS.length) * 10
+    const firstQuantity = Math.floor(physicalQuantity * (productIndex % 2 === 0 ? 0.7 : 0.35))
+    const quantities = [firstQuantity, physicalQuantity - firstQuantity]
+    const minimum = productIndex % 5 === 0 ? physicalQuantity + 5 : Math.max(10, physicalQuantity - 10)
+    const productCollection = database.collection('products')
+    if (!insertOnly || missingKeys === undefined || missingKeys.has(stockKey)) {
+      const productResult = await productCollection.updateOne(
+        { _id: productId, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: productKey, inventory: { $exists: false } },
+        { $set: { inventory: { minimum, expiryTracking: 'tracked', baselineStatus: 'reconciled', lastReconciledAt: serviceDate, lastReconciledBy: adminId, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: stockKey } }, $setOnInsert: {} },
+        { upsert: false }
+      )
+      if (productResult.upsertedCount > 0 || productResult.modifiedCount === 0) {
+        const existing = await productCollection.findOne({ _id: productId })
+        const existingProduct = asRecord(existing)
+        const inventory = asRecord(existingProduct?.inventory)
+        if (inventory?.fixtureNamespace !== FIXTURE_NAMESPACE || inventory.fixtureKey !== stockKey) {
+          throw new Error(`Demo stock fixture identity conflict for ${productKey}`)
+        }
+      } else recordOutcome(summary, 'products', FIXTURE_OUTCOME.UPDATED)
+    }
+    for (let bucketIndex = 0; bucketIndex < 2; bucketIndex += 1) {
+      const bucketKey = `stock:bucket:${productKey}:${bucketIndex + 1}`
+      const movementKey = `stock:opening:${productKey}:${bucketIndex + 1}`
+      const bucketId = fixtureObjectId(bucketKey)
+      const expiryDate = new Date(`${bucketIndex === 0 ? '2026-10-15' : '2026-11-30'}T00:00:00.000Z`)
+      const quantity = quantities[bucketIndex]
+      const bucketPayload = { _id: bucketId, productId, expiryDate, receivedQuantity: quantity, availableQuantity: quantity, committedQuantity: 0, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: bucketKey, createdAt: now, updatedAt: now }
+      if (quantity > 0) {
+        if (!insertOnly || missingKeys === undefined || missingKeys.has(bucketKey)) {
+          const outcome = insertOnly ? await insertMissingFixture(database.collection('stockexpirybuckets'), bucketKey, bucketId, bucketPayload, now) : await upsertFixture(database.collection('stockexpirybuckets'), bucketKey, bucketId, bucketPayload, now)
+          recordOutcome(summary, 'stockexpirybuckets', outcome)
+        }
+        const movementId = fixtureObjectId(movementKey)
+        const movementPayload = { _id: movementId, productId, expiryBucketId: bucketId, type: 'OPENING', quantity, occurredAt: serviceDate, sourceType: 'opening-count', sourceId: 'gzapi-demo-stock-v1', sourceEvent: 'opening-count', operationId: 'gzapi-demo-stock-opening-v1', idempotencyKey: movementKey, rulesVersion: 'stock-rules-v1', reason: 'Fictional demo opening balance', createdBy: adminId, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: movementKey, createdAt: now, updatedAt: now }
+        if (!insertOnly || missingKeys === undefined || missingKeys.has(movementKey)) {
+          const movement = insertOnly ? await insertMissingFixture(database.collection('inventorymovements'), movementKey, movementId, movementPayload, now) : await upsertFixture(database.collection('inventorymovements'), movementKey, movementId, movementPayload, now)
+          recordOutcome(summary, 'inventorymovements', movement)
+        }
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(SEED_WRITE_CONCURRENCY, pending.length) }, worker))
-  if (failed) throw failure instanceof Error ? failure : new Error('Demo fixture write failed')
   return summary
 }
 

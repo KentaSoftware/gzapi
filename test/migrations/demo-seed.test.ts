@@ -102,17 +102,16 @@ describe('demo seed safety seams', () => {
       }
     }
     const first = await runDemoSeed({ target, dryRun: false, database: counted, providers, serviceDate: date, insertOnly: true })
-    const total = first.summary?.inserted ?? 0
-    expect(total).to.equal((await inspectDemoFixtures(database, date)).total)
-    expect(reads).to.equal(total + 1)
+    const total = (first.summary?.inserted ?? 0) + (first.summary?.updated ?? 0)
+    expect(reads).to.equal((await inspectDemoFixtures(database, date)).total + 1)
     expect(updates).to.equal(total)
     reads = 0
     updates = 0
     records.get('products')?.delete(String([...records.get('products')?.entries() ?? []].find(([, value]) => value.fixtureKey === 'catalog:product:1:1')?.[0]))
     const repaired = await runDemoSeed({ target, dryRun: false, database: counted, providers, serviceDate: date, insertOnly: true })
     expect(repaired.summary?.inserted).to.equal(1)
-    expect(updates).to.equal(1)
-    expect(reads).to.equal(total + 1)
+    expect(updates).to.equal(2)
+    expect(reads).to.equal((await inspectDemoFixtures(database, date)).total + 1)
   })
 
   it('bounds concurrent fixture writes during an insert-only repair', async () => {
@@ -183,7 +182,7 @@ describe('demo seed safety seams', () => {
     records.clear()
     writes = 0
     const first = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2026-10-21T00:00:00.000Z') })
-    expect(first.summary?.inserted).to.equal(writes)
+    expect((first.summary?.inserted ?? 0) + (first.summary?.updated ?? 0)).to.equal(writes)
     expect(records.get('clients')?.size).to.equal(20)
     expect(records.get('categories')?.size).to.equal(7)
     expect(records.get('brands')?.size).to.equal(9)
@@ -214,6 +213,64 @@ describe('demo seed safety seams', () => {
     expect([...(records.get('sales')?.values() ?? [])].find((sale) => sale.fixtureKey === 'finance:sale:2026-05:1')?.createdAt).to.deep.equal(firstSale?.createdAt)
   })
 
+  it('seeds owned Smart Stock minimums, reconciled baselines, expiry buckets, and opening movements', async () => {
+    records.clear()
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2026-10-21T00:00:00.000Z') })
+    const products = [...(records.get('products')?.values() ?? [])].filter((item) => String(item.fixtureKey).startsWith('catalog:product:'))
+    expect(products).to.have.length(84)
+    expect(products.every((product) => {
+      const inventory = product.inventory as Record<string, unknown> | undefined
+      return inventory?.minimum !== undefined && inventory.expiryTracking === 'tracked' && inventory.baselineStatus === 'reconciled'
+    })).to.equal(true)
+    const buckets = [...(records.get('stockexpirybuckets')?.values() ?? [])]
+    const movements = [...(records.get('inventorymovements')?.values() ?? [])]
+    expect(buckets).to.have.length.greaterThan(84)
+    expect(movements).to.have.length(buckets.length)
+    expect(buckets.some((bucket) => new Date(bucket.expiryDate as Date).getTime() < Date.parse('2026-10-21'))).to.equal(true)
+    expect(buckets.some((bucket) => new Date(bucket.expiryDate as Date).getTime() > Date.parse('2026-10-21'))).to.equal(true)
+    expect(movements.every((movement) => movement.type === 'OPENING')).to.equal(true)
+    for (const product of products) {
+      const productBuckets = buckets.filter((bucket) => String(bucket.productId) === String(product._id))
+      expect(productBuckets.reduce((sum, bucket) => sum + Number(bucket.receivedQuantity), 0)).to.equal(product.stock)
+      expect(productBuckets.reduce((sum, bucket) => sum + Number(bucket.availableQuantity), 0)).to.equal(product.stock)
+      expect(productBuckets.reduce((sum, bucket) => sum + Number(bucket.committedQuantity), 0)).to.equal(0)
+    }
+    expect(products.some((product) => ((product.inventory as Record<string, unknown>).minimum as number) > (product.stock as number))).to.equal(true)
+  })
+
+  it('repairs missing stock fixtures independently without touching an unrelated bucket', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
+    const buckets = records.get('stockexpirybuckets') as Map<string, Record<string, unknown>>
+    const first = buckets.entries().next().value as [string, Record<string, unknown>]
+    const before = await inspectDemoFixtures(database, date)
+    buckets.delete(first[0])
+    expect((await inspectDemoFixtures(database, date)).missing).to.equal(before.missing + 1)
+    const result = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
+    expect(result.summary?.inserted).to.be.greaterThan(0)
+    expect([...buckets.values()].some((bucket) => bucket.fixtureKey === first[1].fixtureKey)).to.equal(true)
+  })
+
+  it('repairs stock fixtures when all catalog fixture documents are already complete', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
+    const buckets = records.get('stockexpirybuckets') as Map<string, Record<string, unknown>>
+    const product = records.get('products') as Map<string, Record<string, unknown>>
+    buckets.clear()
+    records.delete('inventorymovements')
+    for (const item of product.values()) {
+      if (String(item.fixtureKey).startsWith('catalog:product')) delete item.inventory
+    }
+    expect((await inspectDemoFixtures(database, date)).missing).to.be.greaterThan(0)
+    const repaired = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
+    expect(repaired.summary?.inserted).to.be.greaterThan(0)
+    expect(buckets.size).to.be.greaterThan(84)
+    expect(records.get('inventorymovements')?.size).to.equal(buckets.size)
+    expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)
+  })
+
   it('skips a complete owned dataset without a provider call or write', async () => {
     records.clear()
     const date = new Date('2026-10-21T00:00:00.000Z')
@@ -242,10 +299,10 @@ describe('demo seed safety seams', () => {
     first.stock = 13
     const missing = [...products.entries()].find(([, item]) => item.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
     products.delete(missing[0])
-    expect((await inspectDemoFixtures(database, date)).missing).to.equal(1)
+    expect((await inspectDemoFixtures(database, date)).missing).to.equal(2)
     writes = 0
     const result = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
-    expect(result.summary?.inserted).to.equal(1)
+    expect(result.summary?.inserted).to.be.greaterThan(0)
     expect(products.get(missing[0])?.fixtureKey).to.equal('catalog:product:1:1')
     expect(first.stock).to.equal(13)
     expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)

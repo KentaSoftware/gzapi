@@ -2,9 +2,11 @@ import type { Express, Request, Response } from 'express'
 import { createApp } from '../src/app'
 import dbConnect from '../src/config/mongo'
 import { seedDatabase } from '../src/services/seed'
+import { runProductionStartupSeed } from '../migrations/demo-002-build-seed'
 export interface InitializationDependencies {
   connect: () => Promise<void>
   seed: () => Promise<void>
+  startupSeed: () => Promise<unknown>
   createApp: () => Promise<Express>
 }
 
@@ -24,6 +26,7 @@ export function createVercelHandler (dependencies: InitializationDependencies): 
   const initialize = async (): Promise<Express> => {
     await dependencies.connect()
     await dependencies.seed()
+    await dependencies.startupSeed()
     return await dependencies.createApp()
   }
 
@@ -44,6 +47,7 @@ export function createVercelHandler (dependencies: InitializationDependencies): 
 const handler = createVercelHandler({
   connect: dbConnect,
   seed: seedDatabase,
+  startupSeed: async () => await runProductionStartupSeed(process.env),
   createApp
 })
 

@@ -2,6 +2,8 @@ import { expect } from 'chai'
 import { Types } from 'mongoose'
 import { runProductionStartupSeed } from '../../migrations/demo-002-build-seed'
 import type { DemoDatabase } from '../../migrations/demo-001-seed-data'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 
 const production = {
   VERCEL_ENV: 'production',
@@ -17,6 +19,12 @@ const databaseWithAdmin = (present: boolean): DemoDatabase => ({
 })
 
 describe('demo seed production startup', () => {
+  it('keeps vercel-build compile-only and removes its obsolete seed entrypoint', () => {
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as { scripts: Record<string, string> }
+    expect(packageJson.scripts['vercel-build']).to.equal('npm run build')
+    expect(() => readFileSync(join(process.cwd(), 'migrations/build-seed.ts'), 'utf8')).to.throw()
+  })
+
   it('skips outside Production before inspecting fixtures or credentials', async () => {
     for (const environment of [
       { VERCEL_ENV: undefined }, { VERCEL_ENV: 'preview' },
