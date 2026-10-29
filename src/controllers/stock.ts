@@ -69,7 +69,9 @@ const correlationOf = (req: Request): string | undefined => {
   return typeof header === 'string' && header.trim() !== '' ? header : undefined
 }
 
-const actorIdOf = (res: Response): string => {
+const actorIdOf = (res: Response, req?: RequestExt): string => {
+  const authenticatedActorId = req?.user?.id
+  if (typeof authenticatedActorId === 'string' && authenticatedActorId.trim() !== '') return authenticatedActorId.trim()
   const actorId = res.locals.userId
   return typeof actorId === 'string' ? actorId.trim() : ''
 }
@@ -83,8 +85,8 @@ const invalidPayload = (res: Response, correlationId: string | undefined): void 
   sendErrorEnvelope(res, HTTP_STATUS.BAD_REQUEST, STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, STOCK_ERROR_MESSAGES.STOCK_DATA_INCOMPLETE, correlationId)
 }
 
-const requireActor = (res: Response, correlationId: string | undefined): string | undefined => {
-  const actorId = actorIdOf(res)
+const requireActor = (res: Response, correlationId: string | undefined, req?: RequestExt): string | undefined => {
+  const actorId = actorIdOf(res, req)
   if (actorId === '') {
     sendErrorEnvelope(res, HTTP_STATUS.FORBIDDEN, STOCK_ERROR_CODES.STOCK_FORBIDDEN, STOCK_ERROR_MESSAGES.STOCK_FORBIDDEN, correlationId)
     return undefined
@@ -142,7 +144,7 @@ const availabilityQueryOf = (query: Record<string, unknown>): Record<string, unk
 
 const getAvailability = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined) return
 
   const normalizedQuery = availabilityQueryOf(req.query as unknown as Record<string, unknown>)
@@ -170,7 +172,7 @@ const getAvailability = async (req: RequestExt, res: Response): Promise<void> =>
 
 const getOverview = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined) return
   const parsed = stockOverviewQuerySchema.safeParse(req.query as unknown as Record<string, unknown>)
   if (!parsed.success) {
@@ -187,7 +189,7 @@ const getOverview = async (req: RequestExt, res: Response): Promise<void> => {
 
 const getProductDetail = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined) return
   const productId = objectIdSchema.safeParse(req.params.id)
   const parsed = stockProductDetailQuerySchema.safeParse(req.query as unknown as Record<string, unknown>)
@@ -205,7 +207,7 @@ const getProductDetail = async (req: RequestExt, res: Response): Promise<void> =
 
 const updateMinimum = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -228,7 +230,7 @@ const updateMinimum = async (req: RequestExt, res: Response): Promise<void> => {
 
 const receivePurchase = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -254,7 +256,7 @@ const receivePurchase = async (req: RequestExt, res: Response): Promise<void> =>
 
 const returnSale = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -282,7 +284,7 @@ const returnSale = async (req: RequestExt, res: Response): Promise<void> => {
 
 const removeExpiredBucket = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return
@@ -312,7 +314,7 @@ const removeExpiredBucket = async (req: RequestExt, res: Response): Promise<void
 
 const previewOpeningCountController = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined) return
 
   try {
@@ -329,7 +331,7 @@ const previewOpeningCountController = async (req: RequestExt, res: Response): Pr
 
 const confirmOpeningCountController = async (req: RequestExt, res: Response, writer: OpeningCountWriter = openingCountWriter): Promise<void> => {
   const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId)
+  const actorId = requireActor(res, correlationId, req)
   if (actorId === undefined || !isRecord(req.body)) {
     if (actorId !== undefined) invalidPayload(res, correlationId)
     return

@@ -26,6 +26,7 @@ const ACTOR_ID = '507f1f77bcf86cd799439016'
 const ATTACKER_ID = '507f1f77bcf86cd799439017'
 
 interface TestRequest {
+  user?: { id: string }
   body?: unknown
   params?: Record<string, string>
   query?: Record<string, unknown>
@@ -352,6 +353,25 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
     expect(bodyOf(response)).to.deep.include({ summary: overviewResult.summary, globalSummary: overviewResult.globalSummary, globalAlerts: [] })
     expect((bodyOf(response) as typeof overviewResult).items[0]).to.deep.include({ productName: 'Coffee', categoryName: 'Beverages', imagePath: 'coffee.jpg' })
+  })
+
+  it('uses the authenticated JWT actor for overview reads and rejects requests without an actor', async () => {
+    const serviceCall = sinon.stub(StockService.prototype, 'getOverview').resolves(overviewResult)
+    const response = makeResponse(ATTACKER_ID)
+
+    await getOverview(makeRequest({ user: { id: ACTOR_ID }, query: { businessDate: '2026-10-15' } }), response as unknown as Response)
+
+    expect(response.status.calledWith(200)).to.equal(true)
+    expect(serviceCall.calledOnce).to.equal(true)
+    expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
+
+    serviceCall.resetHistory()
+    const missingActorResponse = makeResponse('')
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), missingActorResponse as unknown as Response)
+
+    expect(missingActorResponse.status.calledWith(403)).to.equal(true)
+    expect(bodyOf(missingActorResponse)).to.deep.include({ code: STOCK_ERROR_CODES.STOCK_FORBIDDEN })
+    expect(serviceCall.called).to.equal(false)
   })
 
   it('S-03/S-09: passes normalized search and category filters to overview without changing global response contracts', async () => {
