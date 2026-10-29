@@ -52,6 +52,7 @@ class MemoryRepository implements StockRepository {
   buckets = new Map<string, StockBucketSnapshot>()
   movements: StockMovementRecord[] = []
   minimums = new Map<string, number>()
+  expiryAlertDays = new Map<string, number>()
   minimumAudits: TestMinimumAuditRecord[] = []
   transactionCalls = 0
   minimumUpdateSessions: Array<StockRepositorySession | undefined> = []
@@ -71,12 +72,14 @@ class MemoryRepository implements StockRepository {
     this.transactionCalls += 1
     const session: StockRepositorySession = { transactionId: `tx-${this.transactionCalls}` }
     const minimumsBefore = new Map(this.minimums)
+    const expiryAlertDaysBefore = new Map(this.expiryAlertDays)
     const productsBefore = new Map(this.products)
     const auditsBefore = [...this.minimumAudits]
     try {
       return await work(Object.assign(this, { session }))
     } catch (error) {
       this.minimums = minimumsBefore
+      this.expiryAlertDays = expiryAlertDaysBefore
       this.products = productsBefore
       this.minimumAudits = auditsBefore
       throw error
@@ -87,10 +90,10 @@ class MemoryRepository implements StockRepository {
     return this.products.get(productId)
   }
 
-  async getProductMinimum (productId: string, session?: StockRepositorySession): Promise<{ productId: string, minimum: number | null } | undefined> {
+  async getProductMinimum (productId: string, session?: StockRepositorySession): Promise<{ productId: string, minimum: number | null, expiryAlertDays?: number } | undefined> {
     this.minimumReadSessions.push(session)
     if (!this.products.has(productId)) return undefined
-    return { productId, minimum: this.minimums.get(productId) ?? null }
+    return { productId, minimum: this.minimums.get(productId) ?? null, expiryAlertDays: this.expiryAlertDays.get(productId) }
   }
 
   async getBuckets (productId: string): Promise<StockBucketSnapshot[]> {
@@ -152,11 +155,12 @@ class MemoryRepository implements StockRepository {
     })
   }
 
-  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession): Promise<{ productId: string, minimum: number } | undefined> {
+  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession, expiryAlertDays?: number): Promise<{ productId: string, minimum: number, expiryAlertDays?: number } | undefined> {
     this.minimumUpdateSessions.push(session)
     if (!this.products.has(productId)) return undefined
     this.minimums.set(productId, minimum)
-    return { productId, minimum }
+    if (expiryAlertDays !== undefined) this.expiryAlertDays.set(productId, expiryAlertDays)
+    return { productId, minimum, ...(this.expiryAlertDays.has(productId) ? { expiryAlertDays: this.expiryAlertDays.get(productId) } : {}) }
   }
 
   async insertMinimumAudit (audit: TestMinimumAuditRecord, session?: StockRepositorySession): Promise<TestMinimumAuditRecord> {
@@ -547,6 +551,82 @@ describe('Stock service', () => {
     await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 1.5, ACTOR), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
     await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 1, { ...ACTOR, actorId: '' }), STOCK_ERROR_CODES.STOCK_FORBIDDEN)
     await expectRejected(async () => await service.updateMinimum('missing', 1, ACTOR), STOCK_ERROR_CODES.STOCK_PRODUCT_NOT_FOUND)
+  })
+
+  it('SS04-RED S-04/FR-021–024: persists minimum and product expiry alert days with the existing default when unconfigured', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    expect(await service.updateMinimum(PRODUCT_ID, 7, ACTOR, { expiryAlertDays: 2 })).to.deep.equal({ productId: PRODUCT_ID, minimum: 7, expiryAlertDays: 2 })
+    expect(repository.expiryAlertDays.get(PRODUCT_ID)).to.equal(2)
+    const detail = await service.getProductDetail({ productId: PRODUCT_ID, businessDate: DATE, movementLimit: 10, auth: ACTOR })
+    expect(detail).to.include({ expiryAlertDays: 2 })
+    expect(detail.alerts.some(({ type }) => type === 'EXPIRING_SOON')).to.equal(false)
+    expect(await service.getProductDetail({ productId: UNTRACKED_PRODUCT_ID, businessDate: DATE, movementLimit: 10, auth: ACTOR })).to.include({ expiryAlertDays: 14 })
+  })
+
+  it('SS04-RED S-05/S-18/FR-026–029: records a quantity-based write-off without a bucket and retries idempotently', async () => {
+    const repository = newRepository()
+    const service = new StockService(repository)
+    const input = { productId: PRODUCT_ID, operationId: 'writeoff-1', quantity: 3, businessDate: DATE, reason: 'vencimiento', note: 'Damaged stock', auth: ACTOR }
+    const first = await service.writeOff(input)
+    const retry = await service.writeOff(input)
+    expect(first).to.include({ appliedMovementCount: 1 })
+    expect(retry).to.include({ alreadyAppliedCount: 1, appliedMovementCount: 0 })
+    expect(repository.movements).to.have.length(1)
+    expect(repository.movements[0]).to.include({ productId: PRODUCT_ID, quantity: 3, reason: 'vencimiento', note: 'Damaged stock', sourceType: 'STOCK', sourceId: PRODUCT_ID, expiryBucketId: 'bucket-first' })
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 7, availableQuantity: 7, committedQuantity: 0 })
+    await expectRejected(async () => await service.writeOff({ ...input, quantity: 4 }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+    await expectRejected(async () => await service.writeOff({ ...input, note: 'Different note' }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+  })
+
+  it('SS04-RED S-08/S-24/S-25/FR-030/043/044: removes all eligible uncommitted expired stock by product, preserving committed and same-day stock', async () => {
+    const repository = newRepository()
+    repository.buckets.clear()
+    repository.products.set(PRODUCT_ID, { ...trackedProduct(), physicalQuantity: 12, availableQuantity: 8, committedQuantity: 4 })
+    repository.buckets.set('expired-free', bucket('expired-free', '2026-10-14', 3))
+    repository.buckets.set('expired-committed', bucket('expired-committed', '2026-10-14', 1, 4))
+    repository.buckets.set('expires-today', bucket('expires-today', DATE, 4))
+    const service = new StockService(repository)
+    const result = await service.removeExpiredProduct({ productId: PRODUCT_ID, operationId: 'expiry-product-1', businessDate: DATE, auth: ACTOR })
+    expect(result).to.include({ outcome: 'PARTIAL', removedQuantity: 4 })
+    expect(repository.products.get(PRODUCT_ID)).to.deep.include({ physicalQuantity: 8, availableQuantity: 4, committedQuantity: 4 })
+    expect(repository.buckets.get('expired-committed')).to.deep.include({ availableQuantity: 0, committedQuantity: 4 })
+    expect(repository.buckets.get('expires-today')).to.deep.include({ availableQuantity: 4 })
+    expect(await service.removeExpiredProduct({ productId: PRODUCT_ID, operationId: 'expiry-product-1', businessDate: DATE, auth: ACTOR })).to.include({ outcome: 'PARTIAL', removedQuantity: 4, movementCount: 2 })
+    expect(repository.movements).to.have.length(2)
+    await expectRejected(async () => await service.removeExpiredProduct({ productId: PRODUCT_ID, operationId: 'expiry-product-1', businessDate: '2026-10-16', auth: ACTOR }), STOCK_ERROR_CODES.STOCK_IDEMPOTENCY_CONFLICT)
+  })
+
+  it('SS04-RED S-06/FR-031–033: continues bulk expiry removal independently after a product failure', async () => {
+    const repository = newRepository()
+    repository.buckets.clear()
+    repository.buckets.set('expired-bulk', bucket('expired-bulk', '2026-10-14', 2))
+    repository.buckets.set('valid-bulk', bucket('valid-bulk', '2026-11-01', 8))
+    const service = new StockService(repository)
+    const result = await service.removeExpiredProducts({ productIds: [PRODUCT_ID, 'missing', UNTRACKED_PRODUCT_ID], operationId: 'expiry-bulk-1', businessDate: DATE, auth: ACTOR })
+    expect(result.results.map(({ productId, status }) => ({ productId, status }))).to.deep.equal([
+      { productId: PRODUCT_ID, status: 'REMOVED' },
+      { productId: 'missing', status: 'FAILED' },
+      { productId: UNTRACKED_PRODUCT_ID, status: 'NO_ELIGIBLE' }
+    ])
+    await service.removeExpiredProducts({ productIds: [PRODUCT_ID, 'missing', UNTRACKED_PRODUCT_ID], operationId: 'expiry-bulk-1', businessDate: DATE, auth: ACTOR })
+    expect(repository.movements).to.have.length(1)
+  })
+
+  it('SS04-RED S-08/S-24: reports no eligible stock without claiming a removal', async () => {
+    const repository = newRepository()
+    repository.buckets.clear()
+    repository.products.set(PRODUCT_ID, { ...trackedProduct(), physicalQuantity: 4, availableQuantity: 0, committedQuantity: 4 })
+    repository.buckets.set('expired-all-committed', bucket('expired-all-committed', '2026-10-14', 0, 4))
+    const result = await new StockService(repository).removeExpiredProduct({ productId: PRODUCT_ID, operationId: 'expiry-none', businessDate: DATE, auth: ACTOR })
+    expect(result).to.include({ outcome: 'NO_ELIGIBLE', removedQuantity: 0 })
+    expect(repository.movements).to.have.length(0)
+  })
+
+  it('SS04-RED TC-015: validates bounded threshold settings and write-off note length', async () => {
+    const service = new StockService(newRepository())
+    await expectRejected(async () => await service.updateMinimum(PRODUCT_ID, 2, ACTOR, { expiryAlertDays: -1 }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
+    await expectRejected(async () => await service.writeOff({ productId: PRODUCT_ID, operationId: 'bad-note', quantity: 1, businessDate: DATE, reason: 'vencimiento', note: 'x'.repeat(251), auth: ACTOR }), STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE)
   })
 
   it('records an append-only minimum audit in the same transaction with actor, correlation, and reason', async () => {

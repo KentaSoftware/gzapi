@@ -12,6 +12,9 @@ import {
   updateMinimum,
   receivePurchase,
   removeExpiredBucket,
+  writeOffProduct,
+  removeExpiredProduct,
+  removeExpiredProducts,
   returnSale,
   previewOpeningCount,
   confirmOpeningCount
@@ -129,7 +132,10 @@ describe('Stock contract — HTTP adapter', () => {
       '/opening-counts/confirm',
       '/purchases/:buyId/receive',
       '/returns',
-      '/expired-buckets/:id/remove'
+      '/expired-buckets/:id/remove',
+      '/products/:id/write-offs',
+      '/products/:id/expired-removal',
+      '/expired-removals'
     ])
     expect(routeMethods.filter(({ path }) => path.includes('/opening-counts/'))).to.deep.equal([
       { path: '/opening-counts/preview', methods: { post: true } },
@@ -146,6 +152,9 @@ describe('Stock contract — HTTP adapter', () => {
     expect(source).to.include("checkPermission('manage_stock')")
     expect(source).to.include("checkPermission('manage_stock_config')")
     expect(source).to.include("router.post('/opening-counts/preview'")
+    const ss04Routes = source.split('\n').filter((line) => line.includes("router.post('/products/:id/write-offs'") || line.includes("router.post('/products/:id/expired-removal'") || line.includes("router.post('/expired-removals'"))
+    expect(ss04Routes).to.have.length(3)
+    expect(ss04Routes.every((line) => line.includes('checkJwt(req, res, next)') && !line.includes('checkPermission'))).to.equal(true)
     expect(source).to.include('checkJwt(req, res, next)')
   })
 
@@ -455,6 +464,33 @@ describe('Stock contract — HTTP adapter', () => {
     const missingResponse = makeResponse()
     await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body: { minimum: 4 } }), missingResponse as unknown as Response)
     expect(missingResponse.status.calledWith(404)).to.equal(true)
+  })
+
+  it('SS04-RED S-04/S-05/S-08/S-06: adapts thresholds and product stock operations without bucket inputs or role gates', async () => {
+    const minimumCall = sinon.stub(StockService.prototype, 'updateMinimum').resolves({ productId: PRODUCT_ID, minimum: 4, expiryAlertDays: 21 })
+    const settingsResponse = makeResponse()
+    await updateMinimum(makeRequest({ params: { id: PRODUCT_ID }, body: { minimum: 4, expiryAlertDays: 21 } }), settingsResponse as unknown as Response)
+    expect(settingsResponse.status.calledWith(200)).to.equal(true)
+    expect(minimumCall.firstCall.args[3]).to.deep.include({ expiryAlertDays: 21 })
+
+    const writeOffCall = sinon.stub(StockService.prototype, 'writeOff').resolves(result(1, 0))
+    const writeOffResponse = makeResponse()
+    await writeOffProduct(makeRequest({ params: { id: PRODUCT_ID }, body: { operationId: 'writeoff-contract', businessDate: '2026-10-15', quantity: 2, reason: 'vencimiento', note: 'Observed damage' } }), writeOffResponse as unknown as Response)
+    expect(writeOffResponse.status.calledWith(201)).to.equal(true)
+    expect(writeOffCall.firstCall.args[0]).to.deep.include({ productId: PRODUCT_ID, quantity: 2, reason: 'vencimiento', note: 'Observed damage', auth: { actorId: ACTOR_ID, canManageStock: true } })
+
+    const expiredCall = sinon.stub(StockService.prototype, 'removeExpiredProduct').resolves({ productId: PRODUCT_ID, operationId: 'expiry-contract', outcome: 'PARTIAL', removedQuantity: 2, movementCount: 1 })
+    const expiredResponse = makeResponse()
+    await removeExpiredProduct(makeRequest({ params: { id: PRODUCT_ID }, body: { operationId: 'expiry-contract', businessDate: '2026-10-15' } }), expiredResponse as unknown as Response)
+    expect(expiredResponse.status.calledWith(201)).to.equal(true)
+    expect(expiredCall.firstCall.args[0]).to.deep.include({ productId: PRODUCT_ID, auth: { actorId: ACTOR_ID, canManageStock: true } })
+    expect(expiredCall.firstCall.args[0]).not.to.have.property('bucketId')
+
+    const bulkCall = sinon.stub(StockService.prototype, 'removeExpiredProducts').resolves({ operationId: 'bulk-contract', results: [{ productId: PRODUCT_ID, status: 'REMOVED', removedQuantity: 2 }] })
+    const bulkResponse = makeResponse()
+    await removeExpiredProducts(makeRequest({ body: { operationId: 'bulk-contract', businessDate: '2026-10-15', productIds: [PRODUCT_ID] } }), bulkResponse as unknown as Response)
+    expect(bulkResponse.status.calledWith(200)).to.equal(true)
+    expect(bulkCall.firstCall.args[0]).to.deep.include({ productIds: [PRODUCT_ID], auth: { actorId: ACTOR_ID, canManageStock: true } })
   })
 
   it('S-01: requires strict availability queries to provide businessDate before invoking StockService', async () => {

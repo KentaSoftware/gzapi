@@ -78,7 +78,29 @@ const stockProductDetailQuerySchema = z.object({
 
 const stockMinimumUpdateSchema = z.object({
   minimum: safeNonNegativeIntegerSchema,
+  expiryAlertDays: safeNonNegativeIntegerSchema.max(3650).optional(),
   reason: z.string().trim().min(1).max(200).optional()
+}).strict()
+
+const stockWriteOffSchema = z.object({
+  operationId: operationIdSchema,
+  businessDate: civilDateSchema,
+  quantity: safeNonNegativeIntegerSchema.refine((value) => value > 0),
+  reason: z.literal('vencimiento'),
+  note: z.string().trim().max(250).optional(),
+  occurredAt: isoDateTimeSchema.optional()
+}).strict()
+
+const expiredProductRemovalSchema = z.object({
+  operationId: operationIdSchema,
+  businessDate: civilDateSchema,
+  occurredAt: isoDateTimeSchema.optional()
+}).strict()
+
+const expiredBulkRemovalSchema = z.object({
+  operationId: operationIdSchema,
+  businessDate: civilDateSchema,
+  productIds: z.array(objectIdSchema).min(1).max(100).refine((ids) => new Set(ids).size === ids.length)
 }).strict()
 
 const purchaseReceiptLineInputSchema = z.object({
@@ -120,6 +142,7 @@ const expiredRemovalInputSchema = z.object({
 
 const productInventoryConfigSchema = z.object({
   minimum: nonNegativeIntegerSchema,
+  expiryAlertDays: safeNonNegativeIntegerSchema.max(3650).optional(),
   expiryTracking: z.enum(Object.values(EXPIRY_TRACKING) as [string, ...string[]]),
   baselineStatus: z.enum(Object.values(BASELINE_STATUS) as [string, ...string[]]),
   lastReconciledAt: isoDateTimeSchema.optional(),
@@ -162,6 +185,9 @@ export {
   stockOverviewQuerySchema,
   stockProductDetailQuerySchema,
   stockMinimumUpdateSchema,
+  stockWriteOffSchema,
+  expiredProductRemovalSchema,
+  expiredBulkRemovalSchema,
   purchaseReceiptLineInputSchema,
   purchaseReceiptInputSchema,
   stockReturnInputSchema,

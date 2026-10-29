@@ -4,6 +4,9 @@ import {
   STOCK_ERROR_CODES,
   STOCK_OPERATION_STATUSES,
   type ExpiredRemovalInput,
+  type StockWriteOffInput,
+  type ExpiredProductRemovalInput,
+  type ExpiredBulkRemovalInput,
   type OpeningCountConfirmationInput,
   type OpeningCountInput,
   type OpeningCountWriter,
@@ -18,12 +21,15 @@ import {
 import {
   availabilityQuerySchema,
   expiredRemovalInputSchema,
+  expiredBulkRemovalSchema,
+  expiredProductRemovalSchema,
   objectIdSchema,
   purchaseReceiptInputSchema,
   stockMinimumUpdateSchema,
   stockOverviewQuerySchema,
   stockProductDetailQuerySchema,
-  stockReturnInputSchema
+  stockReturnInputSchema,
+  stockWriteOffSchema
 } from '../schemas/stock.schema'
 import { StockService, StockServiceError } from '../services/stock'
 import { confirmOpeningCount, OpeningCountError, previewOpeningCount } from '../services/stockOpening'
@@ -221,6 +227,7 @@ const updateMinimum = async (req: RequestExt, res: Response): Promise<void> => {
   try {
     res.status(HTTP_STATUS.OK).send(await service.updateMinimum(productId.data, parsed.data.minimum, authOf(actorId), {
       correlationId,
+      ...(parsed.data.expiryAlertDays === undefined ? {} : { expiryAlertDays: parsed.data.expiryAlertDays }),
       ...(parsed.data.reason === undefined ? {} : { reason: parsed.data.reason })
     }))
   } catch (error) {
@@ -312,6 +319,79 @@ const removeExpiredBucket = async (req: RequestExt, res: Response): Promise<void
   }
 }
 
+const writeOffProduct = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId, req)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+  const productId = objectIdSchema.safeParse(req.params.id)
+  const parsed = stockWriteOffSchema.safeParse(req.body)
+  if (!productId.success || !parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  const input: StockWriteOffInput = {
+    ...parsed.data,
+    productId: productId.data,
+    occurredAt: parsed.data.occurredAt === undefined ? undefined : new Date(parsed.data.occurredAt),
+    auth: authOf(actorId)
+  }
+  try {
+    respond(res, await service.writeOff(input))
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const removeExpiredProduct = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId, req)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+  const productId = objectIdSchema.safeParse(req.params.id)
+  const parsed = expiredProductRemovalSchema.safeParse(req.body)
+  if (!productId.success || !parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  const input: ExpiredProductRemovalInput = {
+    ...parsed.data,
+    productId: productId.data,
+    occurredAt: parsed.data.occurredAt === undefined ? undefined : new Date(parsed.data.occurredAt),
+    auth: authOf(actorId)
+  }
+  try {
+    const result = await service.removeExpiredProduct(input)
+    res.status(result.movementCount === 0 ? HTTP_STATUS.OK : HTTP_STATUS.CREATED).send(result)
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
+const removeExpiredProducts = async (req: RequestExt, res: Response): Promise<void> => {
+  const correlationId = correlationOf(req)
+  const actorId = requireActor(res, correlationId, req)
+  if (actorId === undefined || !isRecord(req.body)) {
+    if (actorId !== undefined) invalidPayload(res, correlationId)
+    return
+  }
+  const parsed = expiredBulkRemovalSchema.safeParse(req.body)
+  if (!parsed.success) {
+    invalidPayload(res, correlationId)
+    return
+  }
+  const input: ExpiredBulkRemovalInput = { ...parsed.data, auth: authOf(actorId) }
+  try {
+    res.status(HTTP_STATUS.OK).send(await service.removeExpiredProducts(input))
+  } catch (error) {
+    handleError(res, correlationId, error)
+  }
+}
+
 const previewOpeningCountController = async (req: RequestExt, res: Response): Promise<void> => {
   const correlationId = correlationOf(req)
   const actorId = requireActor(res, correlationId, req)
@@ -370,6 +450,9 @@ export {
   receivePurchase,
   returnSale,
   removeExpiredBucket,
+  writeOffProduct,
+  removeExpiredProduct,
+  removeExpiredProducts,
   previewOpeningCountController as previewOpeningCount,
   confirmOpeningCountController as confirmOpeningCount
 }

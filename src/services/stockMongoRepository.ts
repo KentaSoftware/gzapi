@@ -44,6 +44,7 @@ interface MongoProductDocument {
   path?: string
   inventory?: {
     minimum?: number
+    expiryAlertDays?: number
     expiryTracking: ExpiryTracking
     baselineStatus: BaselineStatus
   }
@@ -73,6 +74,7 @@ interface MongoMovementDocument {
   rulesVersion: string
   sourceLineId?: Types.ObjectId
   reason?: string
+  note?: string
   reversesMovementId?: Types.ObjectId
   createdBy: Types.ObjectId
   createdAt: Date
@@ -93,6 +95,7 @@ interface MongoMovementWrite {
   rulesVersion: string
   sourceLineId?: Types.ObjectId
   reason?: string
+  note?: string
   reversesMovementId?: Types.ObjectId
   createdBy: Types.ObjectId
   createdAt?: Date
@@ -369,6 +372,7 @@ export const mapMovementDocumentToStockRecord = (document: unknown): StockMoveme
     rulesVersion: nonEmptyStringOf(movement.rulesVersion, 'rulesVersion'),
     sourceLineId,
     reason: movement.reason === undefined ? undefined : nonEmptyStringOf(movement.reason, 'reason'),
+    note: movement.note === undefined ? undefined : boundedOptionalStringOf(movement.note, 'note', 250),
     reversesMovementId,
     createdBy: identifierOf(movement.createdBy, 'createdBy'),
     createdAt,
@@ -390,6 +394,7 @@ const toMovementWrite = (movement: StockMovementRecord): MongoMovementWrite => (
   rulesVersion: movement.rulesVersion,
   ...(movement.sourceLineId === undefined ? {} : { sourceLineId: objectIdOf(movement.sourceLineId, 'sourceLineId') }),
   ...(movement.reason === undefined ? {} : { reason: movement.reason }),
+  ...(movement.note === undefined ? {} : { note: boundedOptionalStringOf(movement.note, 'note', 250) }),
   ...(movement.reversesMovementId === undefined ? {} : { reversesMovementId: objectIdOf(movement.reversesMovementId, 'reversesMovementId') }),
   createdBy: objectIdOf(movement.createdBy, 'createdBy'),
   ...(movement.createdAt === undefined ? {} : { createdAt: dateOf(movement.createdAt, 'createdAt') }),
@@ -521,6 +526,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
             ...(typeof product.categoryName === 'string' && product.categoryName.trim() !== '' ? { categoryName: product.categoryName } : {}),
             ...(imagePath === undefined ? {} : { imagePath }),
             minimum,
+            ...(product.inventory?.expiryAlertDays === undefined ? {} : { expiryAlertDays: nonNegativeIntegerOf(product.inventory.expiryAlertDays, 'Product.inventory.expiryAlertDays') }),
             snapshot
           })
         }
@@ -565,6 +571,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
           ...(typeof categoryName === 'string' && categoryName.trim() !== '' ? { categoryName } : {}),
           ...(imagePath === undefined ? {} : { imagePath }),
           minimum,
+          ...(product.inventory?.expiryAlertDays === undefined ? {} : { expiryAlertDays: nonNegativeIntegerOf(product.inventory.expiryAlertDays, 'Product.inventory.expiryAlertDays') }),
           snapshot
         })
       }
@@ -654,7 +661,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
     try {
       const productObjectId = objectIdOf(productId, 'productId')
       const mongoSession = this.mongoSessionOf(session)
-      const query = ProductModel.findById(productObjectId).select('_id inventory.minimum')
+      const query = ProductModel.findById(productObjectId).select('_id inventory.minimum inventory.expiryAlertDays')
       if (mongoSession !== undefined) void query.session(mongoSession)
       const document = await query.lean<MongoProductDocument>().exec()
       if (document === null) return undefined
@@ -662,30 +669,36 @@ export class MongooseStockRepository implements StockOpeningRepository {
       const minimum = product.inventory?.minimum === undefined
         ? null
         : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
-      return { productId: identifierOf(product._id, 'Product._id'), minimum }
+      const expiryAlertDays = product.inventory?.expiryAlertDays === undefined ? undefined : nonNegativeIntegerOf(product.inventory.expiryAlertDays, 'Product.inventory.expiryAlertDays')
+      return { productId: identifierOf(product._id, 'Product._id'), minimum, ...(expiryAlertDays === undefined ? {} : { expiryAlertDays }) }
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw repositoryError(`Could not read minimum for product ${productId}`, error)
     }
   }
 
-  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession): Promise<StockMinimumResult | undefined> {
+  async updateProductMinimum (productId: string, minimum: number, session?: StockRepositorySession, expiryAlertDays?: number): Promise<StockMinimumResult | undefined> {
     const productObjectId = objectIdOf(productId, 'productId')
     nonNegativeIntegerOf(minimum, 'minimum')
+    if (expiryAlertDays !== undefined) nonNegativeIntegerOf(expiryAlertDays, 'expiryAlertDays')
     try {
       const mongoSession = this.mongoSessionOf(session)
       const query = ProductModel.findOneAndUpdate(
         { _id: productObjectId },
-        { $set: { 'inventory.minimum': minimum } },
+        { $set: { 'inventory.minimum': minimum, ...(expiryAlertDays === undefined ? {} : { 'inventory.expiryAlertDays': expiryAlertDays }) } },
         { new: true, runValidators: true }
       )
       if (mongoSession !== undefined) void query.session(mongoSession)
-      const document = await query.select('_id inventory.minimum').lean<MongoProductDocument>().exec()
+      const document = await query.select('_id inventory.minimum inventory.expiryAlertDays').lean<MongoProductDocument>().exec()
       if (document === null) return undefined
       const product = document as unknown as MongoProductDocument
       const storedMinimum = product.inventory?.minimum
       if (storedMinimum === undefined) throw repositoryError(`Product ${productId} minimum was not returned`)
-      return { productId: identifierOf(product._id, 'Product._id'), minimum: nonNegativeIntegerOf(storedMinimum, 'Product.inventory.minimum') }
+      return {
+        productId: identifierOf(product._id, 'Product._id'),
+        minimum: nonNegativeIntegerOf(storedMinimum, 'Product.inventory.minimum'),
+        ...(product.inventory?.expiryAlertDays === undefined ? {} : { expiryAlertDays: nonNegativeIntegerOf(product.inventory.expiryAlertDays, 'Product.inventory.expiryAlertDays') })
+      }
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw repositoryError(`Could not update minimum for product ${productId}`, error)
@@ -1005,7 +1018,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
       getProductMinimum: async (productId, session) => await this.getProductMinimum(productId, session),
       listProducts: async (page, pageSize, session) => await this.listProducts(page, pageSize, session),
       getSalesHistory: async (productIds, businessDate, rotationDays, timeZone, session) => await this.getSalesHistory(productIds, businessDate, rotationDays, timeZone, session),
-      updateProductMinimum: async (productId, minimum, session) => await this.updateProductMinimum(productId, minimum, session),
+       updateProductMinimum: async (productId, minimum, session, expiryAlertDays) => await this.updateProductMinimum(productId, minimum, session, expiryAlertDays),
       insertMinimumAudit: async (audit, session) => await this.insertMinimumAudit(audit, session),
       getBuckets: async (productId, session) => await this.getBuckets(productId, session),
       getBucket: async (bucketId, session) => await this.getBucket(bucketId, session),

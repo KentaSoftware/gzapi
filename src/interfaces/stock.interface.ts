@@ -9,6 +9,7 @@ export const INVENTORY_MOVEMENT_TYPES = {
   SALE_DELIVERED_OUT: 'SALE_DELIVERED_OUT',
   RETURN_IN: 'RETURN_IN',
   EXPIRED_REMOVAL: 'EXPIRED_REMOVAL',
+  STOCK_WRITE_OFF: 'STOCK_WRITE_OFF',
   PROJECTION_REPAIR: 'PROJECTION_REPAIR'
 } as const
 
@@ -28,6 +29,7 @@ export interface InventoryMovement {
   rulesVersion: string
   sourceLineId?: Types.ObjectId
   reason?: string
+  note?: string
   reversesMovementId?: Types.ObjectId
   createdBy: Types.ObjectId
   createdAt: Date
@@ -200,6 +202,67 @@ export interface ExpiredRemovalInput {
   auth: StockServiceAuth
   reason: string
   occurredAt?: Date
+}
+
+export interface StockWriteOffInput {
+  productId: string
+  operationId: string
+  quantity: number
+  businessDate: string
+  reason: 'vencimiento'
+  note?: string
+  auth: StockServiceAuth
+  occurredAt?: Date
+}
+
+export interface ExpiredProductRemovalInput {
+  productId: string
+  operationId: string
+  businessDate: string
+  auth: StockServiceAuth
+  occurredAt?: Date
+}
+
+export const EXPIRED_PRODUCT_REMOVAL_OUTCOMES = {
+  REMOVED: 'REMOVED',
+  PARTIAL: 'PARTIAL',
+  NO_ELIGIBLE: 'NO_ELIGIBLE'
+} as const
+
+export type ExpiredProductRemovalOutcome = (typeof EXPIRED_PRODUCT_REMOVAL_OUTCOMES)[keyof typeof EXPIRED_PRODUCT_REMOVAL_OUTCOMES]
+
+export const EXPIRED_BULK_PRODUCT_STATUSES = {
+  ...EXPIRED_PRODUCT_REMOVAL_OUTCOMES,
+  FAILED: 'FAILED'
+} as const
+
+export type ExpiredBulkProductStatus = (typeof EXPIRED_BULK_PRODUCT_STATUSES)[keyof typeof EXPIRED_BULK_PRODUCT_STATUSES]
+
+export interface ExpiredProductRemovalResult {
+  productId: string
+  operationId: string
+  outcome: ExpiredProductRemovalOutcome
+  removedQuantity: number
+  movementCount: number
+}
+
+export interface ExpiredBulkRemovalInput {
+  productIds: string[]
+  operationId: string
+  businessDate: string
+  auth: StockServiceAuth
+}
+
+export interface ExpiredBulkProductResult {
+  productId: string
+  status: ExpiredBulkProductStatus
+  removedQuantity: number
+  errorCode?: StockErrorCode
+}
+
+export interface ExpiredBulkRemovalResult {
+  operationId: string
+  results: ExpiredBulkProductResult[]
 }
 
 export interface SaleDeliveryInput {
@@ -375,6 +438,7 @@ export interface StockProductOverviewRecord {
   categoryName?: string
   imagePath?: string
   minimum: number | null
+  expiryAlertDays?: number
   snapshot: StockProductSnapshot
 }
 
@@ -411,6 +475,7 @@ export interface StockOverviewItem {
   expiredQuantity: number
   dataQuality: StockDataQuality
   minimum: number | null
+  expiryAlertDays: number
   alerts: StockAlert[]
   latestSale: StockLatestSale
 }
@@ -449,11 +514,13 @@ export interface StockOverviewGlobalSummary {
 export interface StockMinimumResult {
   productId: string
   minimum: number
+  expiryAlertDays?: number
 }
 
 export interface StockMinimumUpdateOptions {
   correlationId?: string
   reason?: string
+  expiryAlertDays?: number
 }
 
 export interface StockMinimumAuditRecord {
@@ -471,11 +538,13 @@ export interface StockMinimumAuditRecord {
 export interface StockProductMinimum {
   productId: string
   minimum: number | null
+  expiryAlertDays?: number
 }
 
 export interface StockProductDetailResult {
   productId: string
   minimum: number | null
+  expiryAlertDays: number
   availability: AvailabilityResult
   buckets: StockBucketSnapshot[]
   movements: StockMovementRecord[]
@@ -506,6 +575,7 @@ export interface StockMovementRecord {
   rulesVersion: string
   sourceLineId?: string
   reason?: string
+  note?: string
   reversesMovementId?: string
   createdBy: string
   createdAt?: Date
@@ -561,7 +631,7 @@ export interface StockRepository {
   listProducts: (page: number, pageSize: number, session?: StockRepositorySession, filters?: StockProductFilters) => Promise<StockProductOverviewPage>
   getSalesHistory: (productIds: string[], businessDate: string, rotationDays: number, timeZone: string, session?: StockRepositorySession) => Promise<StockRotationInput[]>
   getLatestSales: (productIds: string[], session?: StockRepositorySession) => Promise<StockLatestSaleRecord[]>
-  updateProductMinimum: (productId: string, minimum: number, session?: StockRepositorySession) => Promise<StockMinimumResult | undefined>
+  updateProductMinimum: (productId: string, minimum: number, session?: StockRepositorySession, expiryAlertDays?: number) => Promise<StockMinimumResult | undefined>
   insertMinimumAudit: (audit: StockMinimumAuditRecord, session?: StockRepositorySession) => Promise<StockMinimumAuditRecord>
   getBuckets: (productId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot[]>
   getBucket: (bucketId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot | undefined>
