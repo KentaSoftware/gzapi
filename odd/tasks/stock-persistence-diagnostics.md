@@ -47,5 +47,5 @@ The `/stock/overview` endpoint returned `STOCK_REPOSITORY_ERROR` (HTTP 503), but
 ## Progress and next step
 - Branch `fix/stock-persistence-diagnostics` created from `feat/api-startup-stock-seed`.
 - SPD-1 implementation and checks complete. Work-unit commit: `6c9a55aaaad3239271b9ec6c3c355b08312b5073` (`fix(stock): log sanitized repository failures`).
-- SPD-2 implementation and local verification are complete. SPD-3 remains pending; no remote operations, Production requests, environment inspection, database/provider access, or deployment were performed in this worker.
+- SPD-2 implementation and local verification are complete. Work-unit commit: `37ef2cf` (`fix(stock): add safe persistence diagnostics`). SPD-3 remains pending: update PR #30, deploy, and capture exactly one authorized Production page GET; no direct database/provider access or environment inspection.
 - Forecast: one small work unit, well below the ~400-line delivery budget. Delivery strategy: ask-on-risk.
