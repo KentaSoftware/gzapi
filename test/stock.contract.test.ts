@@ -73,6 +73,13 @@ const overviewResult = {
     committedQuantity: 0,
     availableToSell: 0,
     alertCount: 0
+  },
+  globalSummary: {
+    belowMinimumProductCount: 0,
+    expiringProductCount: 0,
+    expiredProductCount: 0,
+    lowRotationProductCount: 0,
+    activeAlertCount: 0
   }
 }
 
@@ -324,6 +331,7 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.calledOnce).to.equal(true)
     expect(serviceCall.firstCall.args[0]).to.deep.include({ page: 1, pageSize: 50, businessDate: '2026-10-15' })
     expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
+    expect(bodyOf(response)).to.deep.include({ summary: overviewResult.summary, globalSummary: overviewResult.globalSummary })
   })
 
   it('S-05: validates strict product detail queries and maps missing products to a stable 404 envelope', async () => {

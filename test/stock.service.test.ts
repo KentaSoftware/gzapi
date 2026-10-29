@@ -57,6 +57,8 @@ class MemoryRepository implements StockRepository {
   minimumReadSessions: Array<StockRepositorySession | undefined> = []
   minimumAuditSessions: Array<StockRepositorySession | undefined> = []
   rotationHistories = new Map<string, StockRotationInput>()
+  latestSales = new Map<string, Date>()
+  latestSaleCalls: string[][] = []
   failMinimumAudit = false
   projectionSessions: Array<{ method: string, session: StockRepositorySession | undefined }> = []
   receiptSessions: StockRepositorySession[] = []
@@ -130,6 +132,14 @@ class MemoryRepository implements StockRepository {
       timeZone,
       rotationDays,
       sales: [{ occurredAt: `${businessDate}T00:00:00.000Z`, quantity: 1 }]
+    })
+  }
+
+  async getLatestSales (productIds: string[]): Promise<Array<{ productId: string, occurredAt: Date }>> {
+    this.latestSaleCalls.push([...productIds])
+    return productIds.flatMap((productId) => {
+      const occurredAt = this.latestSales.get(productId)
+      return occurredAt === undefined ? [] : [{ productId, occurredAt }]
     })
   }
 
@@ -276,6 +286,87 @@ describe('Stock service', () => {
     expect(overview.items[0]).to.include({ productId: PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, minimum: 8 })
     expect(overview.items[0].alerts.map(({ type }) => type)).to.deep.equal(['LOW_STOCK', 'EXPIRED', 'EXPIRING_SOON'])
     expect(overview.items[1]).to.include({ productId: UNTRACKED_PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, expiredQuantity: 0 })
+    expect(overview.items[0].latestSale).to.deep.equal({ status: 'INCOMPLETE' })
+  })
+
+  it('returns the authoritative old latest-sale timestamp for page products only, while preserving global counters', async () => {
+    const repository = newRepository()
+    const oldSale = new Date('2026-01-10T08:30:00.000Z')
+    repository.latestSales.set(PRODUCT_ID, oldSale)
+    repository.products.set('outside-page', { ...untrackedProduct(), productId: 'outside-page' })
+    const overview = await new StockService(repository).getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+
+    expect(overview.items[0].latestSale).to.deep.equal({ status: 'RECORDED', occurredAt: oldSale.toISOString() })
+    expect(repository.latestSaleCalls).to.deep.equal([[PRODUCT_ID]])
+    expect(overview.globalSummary).to.deep.equal({ belowMinimumProductCount: 0, expiringProductCount: 1, expiredProductCount: 0, lowRotationProductCount: 0, activeAlertCount: 2 })
+  })
+
+  it('adds page-invariant global alert counters, counting products distinctly and excluding expired stock from expiring', async () => {
+    const repository = newRepository()
+    repository.products.set('third', { ...untrackedProduct(), productId: 'third' })
+    repository.minimums.set('third', 0)
+    repository.buckets.clear()
+    repository.buckets.set('bucket-expired-2', { ...bucket('bucket-expired-2', '2026-10-10', 2), productId: PRODUCT_ID })
+    repository.buckets.set('bucket-expiring', { ...bucket('bucket-expiring', '2026-10-20', 2), productId: PRODUCT_ID })
+    repository.buckets.set('bucket-safe', { ...bucket('bucket-safe', '2026-12-20', 6), productId: PRODUCT_ID })
+    repository.minimums.set(PRODUCT_ID, 10)
+    repository.rotationHistories.set(PRODUCT_ID, {
+      productId: PRODUCT_ID,
+      productCreatedAt: '2026-07-17T03:00:00.000Z',
+      businessDate: DATE,
+      timeZone: 'America/Argentina/Buenos_Aires',
+      rotationDays: 90,
+      sales: []
+    })
+    const service = new StockService(repository)
+
+    const firstPage = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+    const lastPage = await service.getOverview({ businessDate: DATE, page: 3, pageSize: 1, auth: ACTOR })
+
+    expect(firstPage.summary.productCount).to.equal(1)
+    expect(lastPage.summary.productCount).to.equal(1)
+    expect(firstPage.globalSummary).to.deep.equal(lastPage.globalSummary)
+    expect(firstPage.globalSummary).to.deep.equal({
+      belowMinimumProductCount: 1,
+      expiringProductCount: 1,
+      expiredProductCount: 1,
+      lowRotationProductCount: 1,
+      activeAlertCount: 4
+    })
+  })
+
+  it('returns zero global alert counters for an empty catalog', async () => {
+    const repository = new MemoryRepository()
+    const overview = await new StockService(repository).getOverview({ businessDate: DATE, page: 1, pageSize: 10, auth: ACTOR })
+
+    expect(overview.globalSummary).to.deep.equal({
+      belowMinimumProductCount: 0,
+      expiringProductCount: 0,
+      expiredProductCount: 0,
+      lowRotationProductCount: 0,
+      activeAlertCount: 0
+    })
+  })
+
+  it('counts informational low-rotation alerts globally while keeping page alert totals page-scoped', async () => {
+    const repository = newRepository()
+    repository.rotationHistories.set(PRODUCT_ID, {
+      productId: PRODUCT_ID,
+      productCreatedAt: '2026-10-01T03:00:00.000Z',
+      businessDate: DATE,
+      timeZone: 'America/Argentina/Buenos_Aires',
+      rotationDays: 90,
+      sales: []
+    })
+    const service = new StockService(repository)
+
+    const singleProductPage = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+    const fullPage = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 2, auth: ACTOR })
+
+    expect(singleProductPage.items[0].alerts.find(({ type }) => type === 'LOW_ROTATION')).to.deep.include({ dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY })
+    expect(singleProductPage.summary.alertCount).to.equal(singleProductPage.items[0].alerts.length)
+    expect(singleProductPage.globalSummary.activeAlertCount).to.equal(fullPage.summary.alertCount)
+    expect(singleProductPage.globalSummary.activeAlertCount).to.be.greaterThan(0)
   })
 
   it('adds persistence-backed low rotation while preserving existing overview alerts', async () => {

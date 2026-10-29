@@ -373,6 +373,23 @@ export interface StockProductOverviewPage {
   items: StockProductOverviewRecord[]
 }
 
+export const STOCK_LATEST_SALE_STATUS = {
+  RECORDED: 'RECORDED',
+  INCOMPLETE: 'INCOMPLETE'
+} as const
+
+export type StockLatestSaleStatus = (typeof STOCK_LATEST_SALE_STATUS)[keyof typeof STOCK_LATEST_SALE_STATUS]
+
+export interface StockLatestSale {
+  status: StockLatestSaleStatus
+  occurredAt?: string
+}
+
+export interface StockLatestSaleRecord {
+  productId: string
+  occurredAt: Date
+}
+
 export interface StockOverviewItem {
   productId: string
   physicalQuantity: number
@@ -382,6 +399,7 @@ export interface StockOverviewItem {
   dataQuality: StockDataQuality
   minimum: number | null
   alerts: StockAlert[]
+  latestSale: StockLatestSale
 }
 
 export interface StockOverviewSummary {
@@ -399,6 +417,15 @@ export interface StockOverviewResult {
   total: number
   items: StockOverviewItem[]
   summary: StockOverviewSummary
+  globalSummary: StockOverviewGlobalSummary
+}
+
+export interface StockOverviewGlobalSummary {
+  belowMinimumProductCount: number
+  expiringProductCount: number
+  expiredProductCount: number
+  lowRotationProductCount: number
+  activeAlertCount: number
 }
 
 export interface StockMinimumResult {
@@ -515,6 +542,7 @@ export interface StockRepository {
   getProductMinimum: (productId: string, session?: StockRepositorySession) => Promise<StockProductMinimum | undefined>
   listProducts: (page: number, pageSize: number, session?: StockRepositorySession) => Promise<StockProductOverviewPage>
   getSalesHistory: (productIds: string[], businessDate: string, rotationDays: number, timeZone: string, session?: StockRepositorySession) => Promise<StockRotationInput[]>
+  getLatestSales: (productIds: string[], session?: StockRepositorySession) => Promise<StockLatestSaleRecord[]>
   updateProductMinimum: (productId: string, minimum: number, session?: StockRepositorySession) => Promise<StockMinimumResult | undefined>
   insertMinimumAudit: (audit: StockMinimumAuditRecord, session?: StockRepositorySession) => Promise<StockMinimumAuditRecord>
   getBuckets: (productId: string, session?: StockRepositorySession) => Promise<StockBucketSnapshot[]>

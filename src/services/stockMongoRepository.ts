@@ -27,6 +27,7 @@ import {
   type StockProductMinimum,
   type StockProductProjectionDelta,
   type StockProductSnapshot,
+  type StockLatestSaleRecord,
   type StockRepository,
   type StockOpeningRepository,
   type StockRotationInput,
@@ -131,6 +132,11 @@ interface MongoSalesHistoryAggregationRow {
   _id: Types.ObjectId
   createdAt?: Date
   sales?: MongoSalesHistoryLine[]
+}
+
+interface MongoLatestSaleRow {
+  _id: Types.ObjectId
+  occurredAt: Date
 }
 
 const repositoryError = (message: string, cause?: unknown): StockServiceError => {
@@ -533,6 +539,45 @@ export class MongooseStockRepository implements StockOpeningRepository {
     } catch (error) {
       if (error instanceof StockServiceError) throw error
       throw repositoryError('Could not aggregate product sales history', error)
+    }
+  }
+
+  async getLatestSales (productIds: string[], session?: StockRepositorySession): Promise<StockLatestSaleRecord[]> {
+    if (productIds.length === 0 || productIds.length > 100) return []
+    const productObjectIds = productIds.map((productId) => objectIdOf(productId, 'productId'))
+    try {
+      const mongoSession = this.mongoSessionOf(session)
+      const pipeline = [
+        { $match: { _id: { $in: productObjectIds } } },
+        {
+          $lookup: {
+            from: 'itemsales',
+            let: { productId: '$_id' },
+            pipeline: [
+              { $match: { $expr: { $and: [{ $eq: ['$idProducto', '$$productId'] }, { $ne: ['$estado', false] }] } } },
+              { $lookup: { from: 'sales', localField: 'idVenta', foreignField: '_id', as: 'sale' } },
+              { $unwind: '$sale' },
+              { $match: { 'sale.estado': { $not: /^(cancelado|cancelled|canceled)$/i }, 'sale.createdAt': { $type: 'date' } } },
+              { $sort: { 'sale.createdAt': -1, 'sale._id': -1 } },
+              { $limit: 1 },
+              { $project: { _id: 0, occurredAt: '$sale.createdAt' } }
+            ],
+            as: 'latestSale'
+          }
+        },
+        { $unwind: '$latestSale' },
+        { $project: { _id: 1, occurredAt: '$latestSale.occurredAt' } }
+      ]
+      const aggregateQuery = ProductModel.aggregate<MongoLatestSaleRow>(pipeline)
+      if (mongoSession !== undefined) void aggregateQuery.session(mongoSession)
+      const rows = await aggregateQuery.exec()
+      return rows.flatMap((row) => {
+        const occurredAt = row.occurredAt instanceof Date ? new Date(row.occurredAt.getTime()) : new Date(String(row.occurredAt))
+        return Number.isNaN(occurredAt.getTime()) ? [] : [{ productId: identifierOf(row._id, 'Product._id'), occurredAt }]
+      })
+    } catch (error) {
+      if (error instanceof StockServiceError) throw error
+      throw repositoryError('Could not aggregate latest product sales', error)
     }
   }
 

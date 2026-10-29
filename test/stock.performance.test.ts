@@ -102,6 +102,10 @@ class PerformanceStockRepository implements StockRepository {
     }))
   }
 
+  async getLatestSales (_productIds: string[]): Promise<Array<{ productId: string, occurredAt: Date }>> {
+    return []
+  }
+
   async updateProductMinimum (_productId: string, _minimum: number, _session?: StockRepositorySession): Promise<StockMinimumResult | undefined> {
     throw new Error('Performance fixture does not support mutations')
   }

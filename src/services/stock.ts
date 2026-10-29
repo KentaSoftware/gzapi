@@ -4,6 +4,7 @@ import {
   EXPIRY_TRACKING,
   INVENTORY_MOVEMENT_TYPES,
   STOCK_DATA_QUALITY,
+  STOCK_LATEST_SALE_STATUS,
   STOCK_ALERT_SEVERITIES,
   STOCK_ALERT_TYPES,
   STOCK_ERROR_CODES,
@@ -23,6 +24,7 @@ import {
   type StockOverviewItem,
   type StockOverviewQuery,
   type StockOverviewResult,
+  type StockOverviewGlobalSummary,
   type StockProductDetailQuery,
   type StockProductDetailResult,
   type StockMinimumResult,
@@ -305,6 +307,15 @@ export class StockService {
     const page = await this.repository.listProducts(query.page, query.pageSize)
     const histories = await this.repository.getSalesHistory(page.items.map(({ productId }) => productId), query.businessDate, STOCK_ROTATION_DAYS, timeZone)
     const historiesByProduct = new Map(histories.map((history) => [history.productId, history]))
+    let latestSales = [] as Awaited<ReturnType<StockRepository['getLatestSales']>>
+    try {
+      latestSales = await this.repository.getLatestSales(page.items.map(({ productId }) => productId))
+    } catch {
+      // A failed authoritative read cannot establish a latest sale or lifetime absence.
+    }
+    const latestSalesByProduct = new Map(latestSales.flatMap(({ productId, occurredAt }) =>
+      Number.isNaN(occurredAt.getTime()) ? [] : [[productId, occurredAt] as const]
+    ))
     const items = await Promise.all(page.items.map(async (record): Promise<StockOverviewItem> => {
       const availability = await this.readAvailability(this.repository, record.productId, query.businessDate, timeZone)
       const buckets = await this.repository.getBuckets(record.productId)
@@ -317,9 +328,13 @@ export class StockService {
         expiredQuantity: availability.expiredQuantity,
         dataQuality: availability.dataQuality,
         minimum: record.minimum,
-        alerts
+        alerts,
+        latestSale: latestSalesByProduct.has(record.productId)
+          ? { status: STOCK_LATEST_SALE_STATUS.RECORDED, occurredAt: (latestSalesByProduct.get(record.productId) as Date).toISOString() }
+          : { status: STOCK_LATEST_SALE_STATUS.INCOMPLETE }
       }
     }))
+    const globalSummary = await this.getGlobalOverviewSummary(page.total, query.businessDate, timeZone)
     return {
       page: query.page,
       pageSize: query.pageSize,
@@ -332,8 +347,40 @@ export class StockService {
         committedQuantity: items.reduce((total, item) => total + item.committedQuantity, 0),
         availableToSell: items.reduce((total, item) => total + item.availableToSell, 0),
         alertCount: items.reduce((total, item) => total + item.alerts.length, 0)
+      },
+      globalSummary
+    }
+  }
+
+  private async getGlobalOverviewSummary (totalProducts: number, businessDate: string, timeZone: string): Promise<StockOverviewGlobalSummary> {
+    const summary: StockOverviewGlobalSummary = {
+      belowMinimumProductCount: 0,
+      expiringProductCount: 0,
+      expiredProductCount: 0,
+      lowRotationProductCount: 0,
+      activeAlertCount: 0
+    }
+    const pageSize = 100
+    const pageCount = Math.ceil(totalProducts / pageSize)
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+      const records = (await this.repository.listProducts(pageNumber, pageSize)).items
+      const histories = await this.repository.getSalesHistory(records.map(({ productId }) => productId), businessDate, STOCK_ROTATION_DAYS, timeZone)
+      const historiesByProduct = new Map(histories.map((history) => [history.productId, history]))
+      const batchAlerts = await Promise.all(records.map(async (record) => {
+        const availability = await this.readAvailability(this.repository, record.productId, businessDate, timeZone)
+        const buckets = await this.repository.getBuckets(record.productId)
+        return this.alertsFor(record.productId, availability, record.minimum, buckets, businessDate, timeZone, historiesByProduct.get(record.productId))
+      }))
+      for (const alerts of batchAlerts) {
+        const hasCompleteAlert = (type: StockAlert['type']): boolean => alerts.some((alert) => alert.type === type && alert.dataQuality === STOCK_DATA_QUALITY.COMPLETE)
+        if (hasCompleteAlert(STOCK_ALERT_TYPES.LOW_STOCK) || hasCompleteAlert(STOCK_ALERT_TYPES.CRITICAL_STOCK)) summary.belowMinimumProductCount += 1
+        if (hasCompleteAlert(STOCK_ALERT_TYPES.EXPIRING_SOON)) summary.expiringProductCount += 1
+        if (hasCompleteAlert(STOCK_ALERT_TYPES.EXPIRED)) summary.expiredProductCount += 1
+        if (hasCompleteAlert(STOCK_ALERT_TYPES.LOW_ROTATION)) summary.lowRotationProductCount += 1
+        summary.activeAlertCount += alerts.length
       }
     }
+    return summary
   }
 
   async getProductDetail (query: StockProductDetailQuery): Promise<StockProductDetailResult> {

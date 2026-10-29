@@ -183,6 +183,45 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     expect(JSON.stringify(pipeline)).to.not.include('bulto')
   })
 
+  it('aggregates only each requested product latest active non-cancelled sale across all history', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const occurredAt = new Date('2025-01-10T08:30:00.000Z')
+    const aggregateQuery = { exec: sinon.stub().resolves([{ _id: productId, occurredAt }]) }
+    const aggregateStub = sinon.stub(ProductModel, 'aggregate').returns(aggregateQuery as unknown as ReturnType<typeof ProductModel.aggregate>)
+    const repository = new MongooseStockRepository()
+
+    const result = await repository.getLatestSales([productId.toString()])
+
+    expect(result).to.deep.equal([{ productId: productId.toString(), occurredAt }])
+    const pipeline = aggregateStub.firstCall.args[0] as unknown[]
+    const serialized = JSON.stringify(pipeline)
+    expect(serialized).to.include('itemsales')
+    expect(serialized).to.include('sales')
+    expect(serialized).to.include('estado')
+    expect(serialized).to.include('createdAt')
+    expect(serialized).to.include('limit')
+    expect(serialized).to.not.include('expiryBucket')
+    const productLookup = (pipeline[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline
+    const activeLineMatch = productLookup[0] as { $match: { $expr: { $and: unknown[] } } }
+    expect(JSON.stringify(activeLineMatch)).to.include('estado')
+    expect(JSON.stringify(activeLineMatch)).to.include('$ne')
+    const saleStatusMatch = productLookup[3] as { $match: { 'sale.estado': { $not: RegExp } } }
+    expect(!saleStatusMatch.$match['sale.estado'].$not.test('Cancelado')).to.equal(false)
+    expect(!saleStatusMatch.$match['sale.estado'].$not.test('Creado')).to.equal(true)
+    expect(productLookup[4]).to.deep.equal({ $sort: { 'sale.createdAt': -1, 'sale._id': -1 } })
+    expect(productLookup[5]).to.deep.equal({ $limit: 1 })
+    expect(aggregateStub.calledOnce).to.equal(true)
+  })
+
+  it('returns no latest-sale rows for no qualifying records and skips oversized product batches', async () => {
+    const aggregateStub = sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+    const repository = new MongooseStockRepository()
+
+    expect(await repository.getLatestSales(['507f1f77bcf86cd799439011'])).to.deep.equal([])
+    expect(await repository.getLatestSales(Array.from({ length: 101 }, () => '507f1f77bcf86cd799439011'))).to.deep.equal([])
+    expect(aggregateStub.calledOnce).to.equal(true)
+  })
+
   it('does not aggregate sales history when the supplied transaction session is unavailable', async () => {
     const aggregateStub = sinon.stub(ProductModel, 'aggregate')
     const repository = new MongooseStockRepository()
