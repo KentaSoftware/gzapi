@@ -38,7 +38,12 @@ import { createOpeningCountWriter } from '../services/stockOpeningWriter'
 import { STOCK_TIME_ZONE } from '../config/stock'
 import { sendErrorEnvelope } from '../utils/error.handle'
 
+interface AuthenticatedUser {
+  id?: string
+}
+
 interface RequestExt extends Request {
+  user?: AuthenticatedUser
 }
 
 const HTTP_STATUS = {

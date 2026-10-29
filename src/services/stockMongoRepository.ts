@@ -1,4 +1,4 @@
-import mongoose, { Types, type ClientSession } from 'mongoose'
+import mongoose, { Types, type ClientSession, type PipelineStage } from 'mongoose'
 import { fromZonedTime } from 'date-fns-tz'
 
 import ProductModel from '../models/product'
@@ -486,7 +486,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
       if (filters !== undefined && (filters.search !== undefined || filters.category !== undefined)) {
         const match: Record<string, unknown> = {}
         if (filters.search !== undefined) match.descripcion = new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
-        const pipeline: Record<string, unknown>[] = [{ $match: match }]
+        const pipeline: PipelineStage[] = [{ $match: match }]
         if (filters.category !== undefined) {
           const categoryPattern = new RegExp(`^${filters.category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
           pipeline.push(
@@ -510,7 +510,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
             }
           }
         )
-        const filteredQuery = ProductModel.aggregate<Array<{ metadata: Array<{ total: number }>, items: Array<MongoProductDocument & { categoryName?: string }> }>>(pipeline)
+        const filteredQuery = ProductModel.aggregate<{ metadata: Array<{ total: number }>, items: Array<MongoProductDocument & { categoryName?: string }> }>(pipeline)
         if (mongoSession !== undefined) void filteredQuery.session(mongoSession)
         const [result] = await filteredQuery.exec()
         const filteredDocs = result?.items ?? []
@@ -547,7 +547,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
         countQuery.exec()
       ])
       const productObjectIds = documents.map((document) => objectIdOf(document._id, 'Product._id'))
-      const metadataQuery = ProductModel.aggregate<Array<{ _id: Types.ObjectId, categoryName?: string }>>([
+      const metadataQuery = ProductModel.aggregate<{ _id: Types.ObjectId, categoryName?: string }>([
         { $match: { _id: { $in: productObjectIds } } },
         { $lookup: { from: 'categories', localField: 'categoria', foreignField: '_id', as: 'categoria' } },
         { $project: { _id: 1, categoryName: { $arrayElemAt: ['$categoria.descripcion', 0] } } }
@@ -590,7 +590,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
     const businessDateInstant = fromZonedTime(`${businessDate}T00:00:00`, timeZone)
     try {
       const mongoSession = this.mongoSessionOf(session)
-      const pipeline = [
+      const pipeline: PipelineStage[] = [
         { $match: { _id: { $in: productObjectIds } } },
         { $project: { _id: 1, createdAt: 1 } },
         {
@@ -623,7 +623,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
     const productObjectIds = productIds.map((productId) => objectIdOf(productId, 'productId'))
     try {
       const mongoSession = this.mongoSessionOf(session)
-      const pipeline = [
+      const pipeline: PipelineStage[] = [
         { $match: { _id: { $in: productObjectIds } } },
         {
           $lookup: {
@@ -1018,6 +1018,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
       getProductMinimum: async (productId, session) => await this.getProductMinimum(productId, session),
       listProducts: async (page, pageSize, session) => await this.listProducts(page, pageSize, session),
       getSalesHistory: async (productIds, businessDate, rotationDays, timeZone, session) => await this.getSalesHistory(productIds, businessDate, rotationDays, timeZone, session),
+      getLatestSales: async (productIds, session) => await this.getLatestSales(productIds, session),
        updateProductMinimum: async (productId, minimum, session, expiryAlertDays) => await this.updateProductMinimum(productId, minimum, session, expiryAlertDays),
       insertMinimumAudit: async (audit, session) => await this.insertMinimumAudit(audit, session),
       getBuckets: async (productId, session) => await this.getBuckets(productId, session),
