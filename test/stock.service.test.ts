@@ -60,6 +60,7 @@ class MemoryRepository implements StockRepository {
   rotationHistories = new Map<string, StockRotationInput>()
   latestSales = new Map<string, Date>()
   displayMetadata = new Map<string, { categoryName?: string, imagePath?: string }>()
+  listProductCalls: Array<{ page: number, pageSize: number, filters?: { search?: string, category?: string } }> = []
   latestSaleCalls: string[][] = []
   failMinimumAudit = false
   projectionSessions: Array<{ method: string, session: StockRepositorySession | undefined }> = []
@@ -117,7 +118,8 @@ class MemoryRepository implements StockRepository {
     return query.limit === undefined ? ordered : ordered.slice(0, query.limit)
   }
 
-  async listProducts (page: number, pageSize: number): Promise<{ total: number, items: TestProductRecord[] }> {
+  async listProducts (page: number, pageSize: number, _session?: StockRepositorySession, filters?: { search?: string, category?: string }): Promise<{ total: number, items: TestProductRecord[] }> {
+    this.listProductCalls.push({ page, pageSize, filters })
     const items = [...this.products.values()].map((snapshot) => ({
       productId: snapshot.productId,
       productName: `Product ${snapshot.productId}`,
@@ -125,7 +127,10 @@ class MemoryRepository implements StockRepository {
       minimum: this.minimums.get(snapshot.productId) ?? null,
       snapshot
     }))
-    return { total: items.length, items: items.slice((page - 1) * pageSize, page * pageSize) }
+    const matching = items.filter((item) =>
+      (filters?.search === undefined || item.productName.toLowerCase().includes(filters.search.toLowerCase())) &&
+      (filters?.category === undefined || item.categoryName?.toLowerCase() === filters.category.toLowerCase()))
+    return { total: matching.length, items: matching.slice((page - 1) * pageSize, page * pageSize) }
   }
 
   async getSalesHistory (productIds: string[], businessDate: string, rotationDays: number, timeZone: string): Promise<StockRotationInput[]> {
@@ -263,6 +268,43 @@ const expectRejected = async (action: () => Promise<unknown>, code?: string): Pr
 }
 
 describe('Stock service', () => {
+  it('S-03/S-09: applies catalog-wide intersecting filters before pagination and preserves global data', async () => {
+    const repository = newRepository()
+    repository.products.set('product-3', { ...untrackedProduct(), productId: 'product-3' })
+    repository.products.set('product-4', { ...untrackedProduct(), productId: 'product-4' })
+    repository.displayMetadata.set(PRODUCT_ID, { categoryName: 'Beverages' })
+    repository.displayMetadata.set(UNTRACKED_PRODUCT_ID, { categoryName: 'Food' })
+    repository.displayMetadata.set('product-3', { categoryName: 'Beverages' })
+    repository.displayMetadata.set('product-4', { categoryName: 'Food' })
+    const service = new StockService(repository)
+    const baseline = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 1, auth: ACTOR })
+    const filtered = await service.getOverview({ businessDate: DATE, page: 2, pageSize: 1, search: 'product', category: 'Beverages', auth: ACTOR })
+    expect(filtered.total).to.equal(2)
+    expect(filtered.items).to.have.length(1)
+    expect(filtered.items[0].categoryName).to.equal('Beverages')
+    expect(repository.listProductCalls.find(({ filters }) => filters !== undefined)).to.deep.include({ page: 2, pageSize: 1, filters: { search: 'product', category: 'Beverages' } })
+    expect(filtered.globalSummary).to.deep.equal(baseline.globalSummary)
+    expect(filtered.globalAlerts).to.deep.equal(baseline.globalAlerts)
+  })
+
+  it('S-09: allows either product filter to be cleared independently and keeps the unfiltered default', async () => {
+    const repository = newRepository()
+    repository.products.set('product-3', { ...untrackedProduct(), productId: 'product-3' })
+    repository.displayMetadata.set(PRODUCT_ID, { categoryName: 'Beverages' })
+    repository.displayMetadata.set(UNTRACKED_PRODUCT_ID, { categoryName: 'Food' })
+    repository.displayMetadata.set('product-3', { categoryName: 'Beverages' })
+    const service = new StockService(repository)
+    const searchOnly = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 10, search: 'product-1', auth: ACTOR })
+    const categoryOnly = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 10, category: 'Beverages', auth: ACTOR })
+    const unfiltered = await service.getOverview({ businessDate: DATE, page: 1, pageSize: 10, auth: ACTOR })
+    expect(searchOnly.total).to.equal(1)
+    expect(categoryOnly.total).to.equal(2)
+    expect(unfiltered.total).to.equal(3)
+    expect(repository.listProductCalls.find(({ filters }) => filters?.search !== undefined)?.filters).to.deep.equal({ search: 'product-1' })
+    expect(repository.listProductCalls.find(({ filters }) => filters?.category !== undefined)?.filters).to.deep.equal({ category: 'Beverages' })
+    expect(repository.listProductCalls.some(({ filters }) => filters === undefined)).to.equal(true)
+  })
+
   it('S-05/TC-015: builds a page-scoped overview through pure availability, expiry, and low-stock rules', async () => {
     const repository = newRepository()
     repository.buckets.clear()

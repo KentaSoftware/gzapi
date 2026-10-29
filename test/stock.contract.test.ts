@@ -333,6 +333,8 @@ describe('Stock contract — HTTP adapter', () => {
       { unexpected: 'nope' },
       { businessDate: '2026-10-15', page: '0' },
       { businessDate: '2026-10-15', pageSize: '101' },
+      { businessDate: '2026-10-15', search: 'x'.repeat(101) },
+      { businessDate: '2026-10-15', category: 'x'.repeat(101) },
       { businessDate: '2026-02-30' }
     ]) {
       const response = makeResponse()
@@ -350,6 +352,15 @@ describe('Stock contract — HTTP adapter', () => {
     expect(serviceCall.firstCall.args[0]).to.have.property('auth').deep.equal({ actorId: ACTOR_ID, canManageStock: true })
     expect(bodyOf(response)).to.deep.include({ summary: overviewResult.summary, globalSummary: overviewResult.globalSummary, globalAlerts: [] })
     expect((bodyOf(response) as typeof overviewResult).items[0]).to.deep.include({ productName: 'Coffee', categoryName: 'Beverages', imagePath: 'coffee.jpg' })
+  })
+
+  it('S-03/S-09: passes normalized search and category filters to overview without changing global response contracts', async () => {
+    const serviceCall = sinon.stub(StockService.prototype, 'getOverview').resolves(overviewResult)
+    const response = makeResponse()
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15', search: ' Coffee ', category: ' Beverages ' } }), response as unknown as Response)
+    expect(response.status.calledWith(200)).to.equal(true)
+    expect(serviceCall.firstCall.args[0]).to.deep.include({ search: 'Coffee', category: 'Beverages' })
+    expect(bodyOf(response)).to.deep.include({ globalSummary: overviewResult.globalSummary, globalAlerts: overviewResult.globalAlerts })
   })
 
   it('S-05: validates strict product detail queries and maps missing products to a stable 404 envelope', async () => {

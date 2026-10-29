@@ -24,6 +24,7 @@ import {
   type StockMovementQuery,
   type StockMovementRecord,
   type StockProductOverviewPage,
+  type StockProductFilters,
   type StockProductMinimum,
   type StockProductProjectionDelta,
   type StockProductSnapshot,
@@ -470,13 +471,61 @@ export class MongooseStockRepository implements StockOpeningRepository {
     }
   }
 
-  async listProducts (page: number, pageSize: number, session?: StockRepositorySession): Promise<StockProductOverviewPage> {
+  async listProducts (page: number, pageSize: number, session?: StockRepositorySession, filters?: StockProductFilters): Promise<StockProductOverviewPage> {
     positiveIntegerOf(page, 'page')
     positiveIntegerOf(pageSize, 'pageSize')
     const skip = (page - 1) * pageSize
     if (!Number.isSafeInteger(skip)) throw repositoryError('Product page offset exceeds safe integer bounds')
     try {
       const mongoSession = this.mongoSessionOf(session)
+      if (filters !== undefined && (filters.search !== undefined || filters.category !== undefined)) {
+        const match: Record<string, unknown> = {}
+        if (filters.search !== undefined) match.descripcion = new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+        const pipeline: Record<string, unknown>[] = [{ $match: match }]
+        if (filters.category !== undefined) {
+          const categoryPattern = new RegExp(`^${filters.category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
+          pipeline.push(
+            { $lookup: { from: 'categories', let: { categoryId: '$categoria' }, pipeline: [{ $match: { $expr: { $eq: ['$_id', '$$categoryId'] } } }, { $project: { _id: 0, descripcion: 1 } }], as: 'categoryMetadata' } },
+            { $match: { 'categoryMetadata.descripcion': categoryPattern } }
+          )
+        }
+        pipeline.push(
+          {
+            $facet: {
+              metadata: [{ $count: 'total' }],
+              items: [
+                { $sort: { _id: 1 } },
+                { $skip: skip },
+                { $limit: pageSize },
+                ...(filters.category === undefined
+                  ? [{ $lookup: { from: 'categories', localField: 'categoria', foreignField: '_id', as: 'categoryMetadata' } }]
+                  : []),
+                { $project: { _id: 1, descripcion: 1, path: 1, stock: 1, inventory: 1, categoria: 1, categoryName: { $arrayElemAt: ['$categoryMetadata.descripcion', 0] } } }
+              ]
+            }
+          }
+        )
+        const filteredQuery = ProductModel.aggregate<Array<{ metadata: Array<{ total: number }>, items: Array<MongoProductDocument & { categoryName?: string }> }>>(pipeline)
+        if (mongoSession !== undefined) void filteredQuery.session(mongoSession)
+        const [result] = await filteredQuery.exec()
+        const filteredDocs = result?.items ?? []
+        const filteredItems = []
+        for (const product of filteredDocs) {
+          const productObjectId = objectIdOf(product._id, 'Product._id')
+          const snapshot = await this.snapshotOf(product, productObjectId, mongoSession)
+          const minimum = product.inventory?.minimum === undefined ? null : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
+          const imagePath = typeof product.path === 'string' && product.path.trim() !== '' ? product.path : undefined
+          filteredItems.push({
+            productId: snapshot.productId,
+            productName: nonEmptyStringOf(product.descripcion, 'Product.descripcion'),
+            ...(typeof product.categoryName === 'string' && product.categoryName.trim() !== '' ? { categoryName: product.categoryName } : {}),
+            ...(imagePath === undefined ? {} : { imagePath }),
+            minimum,
+            snapshot
+          })
+        }
+        return { total: result?.metadata[0]?.total ?? 0, items: filteredItems }
+      }
       const productQuery = ProductModel.find({})
         .select('_id descripcion path stock inventory categoria')
         .sort({ _id: 1 })

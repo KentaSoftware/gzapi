@@ -52,6 +52,7 @@ const queryPageSizeSchema = z.preprocess((value) => {
   if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value)
   return value
 }, positiveIntegerSchema.max(100))
+const stockOverviewTextFilterSchema = z.preprocess((value) => typeof value === 'string' ? value.trim() : value, z.string().min(1).max(100).optional())
 
 const availabilityQuerySchema = z.object({
   productIds: z.array(objectIdSchema).min(1).max(100),
@@ -64,7 +65,9 @@ const stockOverviewQuerySchema = z.object({
   businessDate: civilDateSchema,
   timeZone: z.string().trim().min(1).max(64).refine(isTimeZone, 'timeZone must be a valid IANA time zone').optional(),
   page: queryPositiveIntegerSchema.default(1),
-  pageSize: queryPageSizeSchema.default(50)
+  pageSize: queryPageSizeSchema.default(50),
+  search: stockOverviewTextFilterSchema,
+  category: stockOverviewTextFilterSchema
 }).strict()
 
 const stockProductDetailQuerySchema = z.object({

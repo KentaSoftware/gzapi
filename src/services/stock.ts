@@ -305,7 +305,12 @@ export class StockService {
       throw new StockServiceError(STOCK_ERROR_CODES.STOCK_DATA_INCOMPLETE, 'Stock overview query is incomplete or invalid')
     }
     const timeZone = query.timeZone ?? this.timeZone
-    const page = await this.repository.listProducts(query.page, query.pageSize)
+    const filters = {
+      ...(query.search === undefined ? {} : { search: query.search }),
+      ...(query.category === undefined ? {} : { category: query.category })
+    }
+    const hasFilters = Object.keys(filters).length > 0
+    const page = await this.repository.listProducts(query.page, query.pageSize, undefined, hasFilters ? filters : undefined)
     const histories = await this.repository.getSalesHistory(page.items.map(({ productId }) => productId), query.businessDate, STOCK_ROTATION_DAYS, timeZone)
     const historiesByProduct = new Map(histories.map((history) => [history.productId, history]))
     let latestSales = [] as Awaited<ReturnType<StockRepository['getLatestSales']>>
@@ -338,7 +343,8 @@ export class StockService {
           : { status: STOCK_LATEST_SALE_STATUS.INCOMPLETE }
       }
     }))
-    const { summary: globalSummary, alerts: globalAlerts } = await this.getGlobalOverviewData(page.total, query.businessDate, timeZone)
+    const catalogTotal = hasFilters ? (await this.repository.listProducts(1, 1)).total : page.total
+    const { summary: globalSummary, alerts: globalAlerts } = await this.getGlobalOverviewData(catalogTotal, query.businessDate, timeZone)
     return {
       page: query.page,
       pageSize: query.pageSize,

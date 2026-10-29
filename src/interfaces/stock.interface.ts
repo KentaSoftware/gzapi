@@ -125,7 +125,14 @@ export interface StockOverviewQuery {
   timeZone?: string
   page: number
   pageSize: number
+  search?: string
+  category?: string
   auth: StockServiceAuth
+}
+
+export interface StockProductFilters {
+  search?: string
+  category?: string
 }
 
 export interface StockProductDetailQuery {
@@ -551,7 +558,7 @@ export interface StockRepository {
   withTransaction: <T>(work: (context: StockRepository & StockTransactionContext) => Promise<T>) => Promise<T>
   getProduct: (productId: string, session?: StockRepositorySession) => Promise<StockProductSnapshot | undefined>
   getProductMinimum: (productId: string, session?: StockRepositorySession) => Promise<StockProductMinimum | undefined>
-  listProducts: (page: number, pageSize: number, session?: StockRepositorySession) => Promise<StockProductOverviewPage>
+  listProducts: (page: number, pageSize: number, session?: StockRepositorySession, filters?: StockProductFilters) => Promise<StockProductOverviewPage>
   getSalesHistory: (productIds: string[], businessDate: string, rotationDays: number, timeZone: string, session?: StockRepositorySession) => Promise<StockRotationInput[]>
   getLatestSales: (productIds: string[], session?: StockRepositorySession) => Promise<StockLatestSaleRecord[]>
   updateProductMinimum: (productId: string, minimum: number, session?: StockRepositorySession) => Promise<StockMinimumResult | undefined>
