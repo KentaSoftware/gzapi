@@ -230,6 +230,50 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     expect(pipeline).to.not.include('stock')
   })
 
+  it('classifies category lookup failures with a finite list-products stage', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const productQuery = {
+      select: sinon.stub().returnsThis(), sort: sinon.stub().returnsThis(), skip: sinon.stub().returnsThis(),
+      limit: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([{ _id: productId, descripcion: 'Coffee', stock: 4, inventory: { expiryTracking: EXPIRY_TRACKING.TRACKED, baselineStatus: BASELINE_STATUS.RECONCILED } }])
+    }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().rejects(new Error('private category query details')) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+
+    const error = await new MongooseStockRepository().listProducts(1, 10).catch((caught: unknown) => caught)
+
+    expect(error).to.be.instanceOf(StockServiceError)
+    expect((error as StockServiceError).diagnostic).to.include({
+      operation: 'stock_repository_unknown',
+      stage: 'category_lookup'
+    })
+    expect((error as Error).message).not.to.include('private category query details')
+  })
+
+  it('classifies malformed product IDs as product normalization failures', async () => {
+    const productQuery = {
+      select: sinon.stub().returnsThis(),
+      sort: sinon.stub().returnsThis(),
+      skip: sinon.stub().returnsThis(),
+      limit: sinon.stub().returnsThis(),
+      lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([{ _id: 'malformed-id', descripcion: 'Coffee', stock: 4 }])
+    }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    const aggregateStub = sinon.stub(ProductModel, 'aggregate')
+
+    const error = await new MongooseStockRepository().listProducts(1, 10).catch((caught: unknown) => caught)
+
+    expect(error).to.be.instanceOf(StockServiceError)
+    expect((error as StockServiceError).diagnostic).to.include({
+      operation: 'stock_repository_unknown',
+      stage: 'product_normalization'
+    })
+    expect(aggregateStub.called).to.equal(false)
+  })
+
   it('filters and counts matching catalog products before pagination using escaped name text and category metadata', async () => {
     const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
     const productQuery = {

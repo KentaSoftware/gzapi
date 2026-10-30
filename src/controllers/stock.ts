@@ -144,12 +144,21 @@ const STOCK_DIAGNOSTIC_CAUSES = {
   UNKNOWN: 'unknown'
 } as const
 
+const STOCK_DIAGNOSTIC_STAGES = {
+  CATALOG_QUERY: 'catalog_query',
+  CATEGORY_LOOKUP: 'category_lookup',
+  TRACKED_BUCKET_READ: 'tracked_bucket_read',
+  UNTRACKED_LEDGER_READ: 'untracked_ledger_read',
+  PRODUCT_NORMALIZATION: 'product_normalization'
+} as const
+
 type StockDiagnosticOperation = (typeof STOCK_DIAGNOSTIC_OPERATIONS)[keyof typeof STOCK_DIAGNOSTIC_OPERATIONS]
 type StockDiagnosticCause = (typeof STOCK_DIAGNOSTIC_CAUSES)[keyof typeof STOCK_DIAGNOSTIC_CAUSES]
 
 interface StockDiagnosticRecord {
   operation: StockDiagnosticOperation
   cause: StockDiagnosticCause
+  stage?: (typeof STOCK_DIAGNOSTIC_STAGES)[keyof typeof STOCK_DIAGNOSTIC_STAGES]
   databaseCode?: number
 }
 
@@ -164,10 +173,14 @@ const stockDiagnosticOf = (error: StockServiceError): StockDiagnosticRecord => {
     ? diagnostic.cause as StockDiagnosticCause
     : STOCK_DIAGNOSTIC_CAUSES.UNKNOWN
   const allowedCodes = [11000, 11001, 112, 50, 89, 262]
+  const stages = Object.values(STOCK_DIAGNOSTIC_STAGES) as string[]
+  const stage = diagnostic !== undefined && typeof diagnostic.stage === 'string' && stages.includes(diagnostic.stage)
+    ? diagnostic.stage as StockDiagnosticRecord['stage']
+    : undefined
   const databaseCode = typeof diagnostic?.databaseCode === 'number' && Number.isSafeInteger(diagnostic.databaseCode) && allowedCodes.includes(diagnostic.databaseCode)
     ? diagnostic.databaseCode
     : undefined
-  return { operation, cause, ...(databaseCode === undefined ? {} : { databaseCode }) }
+  return { operation, cause, ...(stage === undefined ? {} : { stage }), ...(databaseCode === undefined ? {} : { databaseCode }) }
 }
 
 const handleError = (res: Response, correlationId: string | undefined, error: unknown): void => {

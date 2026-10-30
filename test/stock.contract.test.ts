@@ -353,6 +353,38 @@ describe('Stock contract — HTTP adapter', () => {
     expect(Object.values(log.firstCall.args[0] as Record<string, unknown>)).not.to.include(original)
   })
 
+  it('logs only allowlisted repository stages and preserves the generic 503 response', async () => {
+    const sentinel = 'private database message mongodb://user:secret@host/db'
+    sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, sentinel), {
+      diagnostic: { operation: 'stock_overview_list_products', cause: 'unknown', stage: 'tracked_bucket_read' }
+    }))
+    const log = sinon.stub(console, 'error')
+    const response = makeResponse()
+
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), response as unknown as Response)
+
+    expect(log.firstCall.args[0]).to.include({ stage: 'tracked_bucket_read' })
+    expect(bodyOf(response)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      message: 'Stock persistence is currently unavailable'
+    })
+    expect(JSON.stringify(log.args)).not.to.include(sentinel)
+
+    sinon.restore()
+    sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, sentinel), {
+      diagnostic: { operation: 'stock_overview_list_products', cause: 'unknown', stage: sentinel }
+    }))
+    const invalidStageLog = sinon.stub(console, 'error')
+    const invalidStageResponse = makeResponse()
+    await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), invalidStageResponse as unknown as Response)
+    expect(invalidStageLog.firstCall.args[0]).not.to.have.property('stage')
+    expect(bodyOf(invalidStageResponse)).to.deep.equal({
+      code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
+      message: 'Stock persistence is currently unavailable'
+    })
+    expect(JSON.stringify(invalidStageLog.args)).not.to.include(sentinel)
+  })
+
   it('preserves allowlisted connection causes and uses a neutral operation for invalid repository metadata', async () => {
     const connectionError = Object.assign(new Error('private connection detail'), { name: 'MongoServerSelectionError' })
     const connectionDiagnostic = stockFailureDiagnosticOf('stock_overview_list_products', connectionError)
