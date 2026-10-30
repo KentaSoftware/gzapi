@@ -152,6 +152,17 @@ const STOCK_DIAGNOSTIC_STAGES = {
   PRODUCT_NORMALIZATION: 'product_normalization'
 } as const
 
+const STOCK_DIAGNOSTIC_SUBSTAGES = {
+  DOCUMENT_SHAPE: 'document_shape',
+  IDENTITY: 'identity',
+  PHYSICAL_QUANTITY: 'physical_quantity',
+  COMMITTED_PROJECTION: 'committed_projection',
+  INVENTORY_CONFIG: 'inventory_config',
+  DISPLAY_FIELDS: 'display_fields',
+  MINIMUM_METADATA: 'minimum_metadata',
+  EXPIRY_ALERT_METADATA: 'expiry_alert_metadata'
+} as const
+
 type StockDiagnosticOperation = (typeof STOCK_DIAGNOSTIC_OPERATIONS)[keyof typeof STOCK_DIAGNOSTIC_OPERATIONS]
 type StockDiagnosticCause = (typeof STOCK_DIAGNOSTIC_CAUSES)[keyof typeof STOCK_DIAGNOSTIC_CAUSES]
 
@@ -159,6 +170,7 @@ interface StockDiagnosticRecord {
   operation: StockDiagnosticOperation
   cause: StockDiagnosticCause
   stage?: (typeof STOCK_DIAGNOSTIC_STAGES)[keyof typeof STOCK_DIAGNOSTIC_STAGES]
+  substage?: (typeof STOCK_DIAGNOSTIC_SUBSTAGES)[keyof typeof STOCK_DIAGNOSTIC_SUBSTAGES]
   databaseCode?: number
 }
 
@@ -177,10 +189,14 @@ const stockDiagnosticOf = (error: StockServiceError): StockDiagnosticRecord => {
   const stage = diagnostic !== undefined && typeof diagnostic.stage === 'string' && stages.includes(diagnostic.stage)
     ? diagnostic.stage as StockDiagnosticRecord['stage']
     : undefined
+  const substages = Object.values(STOCK_DIAGNOSTIC_SUBSTAGES) as string[]
+  const substage = diagnostic !== undefined && typeof diagnostic.substage === 'string' && substages.includes(diagnostic.substage)
+    ? diagnostic.substage as StockDiagnosticRecord['substage']
+    : undefined
   const databaseCode = typeof diagnostic?.databaseCode === 'number' && Number.isSafeInteger(diagnostic.databaseCode) && allowedCodes.includes(diagnostic.databaseCode)
     ? diagnostic.databaseCode
     : undefined
-  return { operation, cause, ...(stage === undefined ? {} : { stage }), ...(databaseCode === undefined ? {} : { databaseCode }) }
+  return { operation, cause, ...(stage === undefined ? {} : { stage }), ...(substage === undefined ? {} : { substage }), ...(databaseCode === undefined ? {} : { databaseCode }) }
 }
 
 const handleError = (res: Response, correlationId: string | undefined, error: unknown): void => {

@@ -269,9 +269,26 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     expect(error).to.be.instanceOf(StockServiceError)
     expect((error as StockServiceError).diagnostic).to.include({
       operation: 'stock_repository_unknown',
-      stage: 'product_normalization'
+      stage: 'product_normalization',
+      substage: 'identity'
     })
     expect(aggregateStub.called).to.equal(false)
+  })
+
+  it('classifies invalid stock metadata at its bounded normalization substage', async () => {
+    const productQuery = {
+      select: sinon.stub().returnsThis(), sort: sinon.stub().returnsThis(), skip: sinon.stub().returnsThis(),
+      limit: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([{ _id: new Types.ObjectId('507f1f77bcf86cd799439011'), descripcion: 'Coffee', stock: -1 }])
+    }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+
+    const error = await new MongooseStockRepository().listProducts(1, 10).catch((caught: unknown) => caught)
+
+    expect(error).to.be.instanceOf(StockServiceError)
+    expect((error as StockServiceError).diagnostic).to.include({ stage: 'product_normalization', substage: 'physical_quantity' })
   })
 
   it('filters and counts matching catalog products before pagination using escaped name text and category metadata', async () => {
