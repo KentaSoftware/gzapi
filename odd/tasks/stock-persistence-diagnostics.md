@@ -58,10 +58,11 @@ The `/stock/overview` endpoint returned `STOCK_REPOSITORY_ERROR` (HTTP 503), but
 - SPD-3a `npm run build` passed. Scoped `npx ts-standard` reported the already-recorded lint findings in existing repository/test lines; no unrelated lint cleanup was included. `git diff --check` passed (only Windows line-ending conversion warnings).
 - Independent read-only review found and corrected an unfiltered-path stage boundary that had classified Product ID conversion errors as category lookup; a regression test observed RED (31 passing, 1 failing) then GREEN (32 passing). The filtered path was unchanged.
 - `gentle-ai review mode status`: off (clone-local). `gentle-ai review assess` with untracked `.codegraph/` excluded: medium risk, under budget; no native review was started while RDD is off.
+- PR #32 created against `master`, linked to approved issue #29, with exactly one `type:bug` label. At last check, Vercel Preview Comments passed and the Vercel deployment check was still pending.
 
 ## Progress and next step
 - Branch `fix/stock-persistence-diagnostics` created from `feat/api-startup-stock-seed`.
 - SPD-1 implementation and checks complete. Work-unit commit: `6c9a55aaaad3239271b9ec6c3c355b08312b5073` (`fix(stock): log sanitized repository failures`).
 - SPD-2 implementation and local verification are complete. Work-unit commit: `37ef2cf` (`fix(stock): add safe persistence diagnostics`). PR #30 had already merged into `feat/api-startup-stock-seed`; replacement PR #31 merged into `master`. Production diagnostics are deployed and one page request captured, but `stock_overview_list_products` reported only cause `unknown`.
-- SPD-3a implementation and focused verification are complete. Work-unit commit: `d17e71c` (`fix(stock): add repository substage diagnostics`). Issue #29 remains approved but closed; delivery PR and authorized Stock page reproduction after deployment remain pending. No DB connection is needed or planned.
+- SPD-3a implementation and focused verification are complete. Work-unit commit: `d17e71c` (`fix(stock): add repository substage diagnostics`); documentation evidence commit: `0a52c3a`. PR #32 is open against `master`; issue #29 remains approved but closed. Wait for Vercel checks, then merge/deploy under the user's authorization and perform the authorized Stock page reproduction. No DB connection is needed or planned.
 - Forecast: one small work unit, well below the ~400-line delivery budget. Delivery strategy: ask-on-risk.
