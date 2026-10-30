@@ -152,6 +152,16 @@ const repositoryError = (message: string, cause?: unknown): StockServiceError =>
   return error
 }
 
+const STOCK_LIST_PRODUCTS_STAGES = {
+  CATALOG_QUERY: 'catalog_query',
+  CATEGORY_LOOKUP: 'category_lookup',
+  TRACKED_BUCKET_READ: 'tracked_bucket_read',
+  UNTRACKED_LEDGER_READ: 'untracked_ledger_read',
+  PRODUCT_NORMALIZATION: 'product_normalization'
+} as const
+
+type StockListProductsStage = (typeof STOCK_LIST_PRODUCTS_STAGES)[keyof typeof STOCK_LIST_PRODUCTS_STAGES]
+
 /** MongoDB standalone (no replica set) rejects multi-document transactions. */
 const STANDALONE_TRANSACTION_ID = '__standalone__'
 
@@ -483,6 +493,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
     positiveIntegerOf(pageSize, 'pageSize')
     const skip = (page - 1) * pageSize
     if (!Number.isSafeInteger(skip)) throw repositoryError('Product page offset exceeds safe integer bounds')
+    let stage: StockListProductsStage = STOCK_LIST_PRODUCTS_STAGES.CATALOG_QUERY
     try {
       const mongoSession = this.mongoSessionOf(session)
       if (filters !== undefined && (filters.search !== undefined || filters.category !== undefined)) {
@@ -514,12 +525,14 @@ export class MongooseStockRepository implements StockOpeningRepository {
         )
         const filteredQuery = ProductModel.aggregate<{ metadata: Array<{ total: number }>, items: Array<MongoProductDocument & { categoryName?: string }> }>(pipeline)
         if (mongoSession !== undefined) void filteredQuery.session(mongoSession)
+        if (filters.category !== undefined) stage = STOCK_LIST_PRODUCTS_STAGES.CATEGORY_LOOKUP
         const [result] = await filteredQuery.exec()
+        stage = STOCK_LIST_PRODUCTS_STAGES.PRODUCT_NORMALIZATION
         const filteredDocs = result?.items ?? []
         const filteredItems = []
         for (const product of filteredDocs) {
           const productObjectId = objectIdOf(product._id, 'Product._id')
-          const snapshot = await this.snapshotOf(product, productObjectId, mongoSession)
+          const snapshot = await this.snapshotOf(product, productObjectId, mongoSession, (nextStage) => { stage = nextStage })
           const minimum = product.inventory?.minimum === undefined ? null : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
           const imagePath = typeof product.path === 'string' && product.path.trim() !== '' ? product.path : undefined
           filteredItems.push({
@@ -548,6 +561,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
         productQuery.lean<MongoProductDocument[]>().exec(),
         countQuery.exec()
       ])
+      stage = STOCK_LIST_PRODUCTS_STAGES.PRODUCT_NORMALIZATION
       const productObjectIds = documents.map((document) => objectIdOf(document._id, 'Product._id'))
       const metadataQuery = ProductModel.aggregate<{ _id: Types.ObjectId, categoryName?: string }>([
         { $match: { _id: { $in: productObjectIds } } },
@@ -555,13 +569,15 @@ export class MongooseStockRepository implements StockOpeningRepository {
         { $project: { _id: 1, categoryName: { $arrayElemAt: ['$categoria.descripcion', 0] } } }
       ])
       if (mongoSession !== undefined) void metadataQuery.session(mongoSession)
+      stage = STOCK_LIST_PRODUCTS_STAGES.CATEGORY_LOOKUP
       const categoryRows = await metadataQuery.exec()
       const categoryNames = new Map(categoryRows.map(({ _id, categoryName }) => [identifierOf(_id, 'Product._id'), categoryName]))
+      stage = STOCK_LIST_PRODUCTS_STAGES.PRODUCT_NORMALIZATION
       const items = []
       for (const document of documents) {
         const product = document as unknown as MongoProductDocument
         const productObjectId = objectIdOf(product._id, 'Product._id')
-        const snapshot = await this.snapshotOf(product, productObjectId, mongoSession)
+        const snapshot = await this.snapshotOf(product, productObjectId, mongoSession, (nextStage) => { stage = nextStage })
         const minimum = product.inventory?.minimum === undefined
           ? null
           : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
@@ -579,8 +595,21 @@ export class MongooseStockRepository implements StockOpeningRepository {
       }
       return { total, items }
     } catch (error) {
-      if (error instanceof StockServiceError) throw error
-      throw repositoryError('Could not list stock products', error)
+      if (error instanceof StockServiceError) {
+        if (error.code === STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR) {
+          const validStages = Object.values(STOCK_LIST_PRODUCTS_STAGES) as string[]
+          const safeStage = validStages.includes(stage) ? stage : STOCK_LIST_PRODUCTS_STAGES.CATALOG_QUERY
+          const diagnostic = error.diagnostic ?? stockFailureDiagnosticOf('stock_repository_unknown', error)
+          error.diagnostic = { ...diagnostic, stage: safeStage }
+        }
+        throw error
+      }
+      const failure = repositoryError('Could not list stock products', error)
+      failure.message = 'Could not list stock products'
+      const validStages = Object.values(STOCK_LIST_PRODUCTS_STAGES) as string[]
+      const safeStage = validStages.includes(stage) ? stage : STOCK_LIST_PRODUCTS_STAGES.CATALOG_QUERY
+      if (failure.diagnostic !== undefined) failure.diagnostic = { ...failure.diagnostic, stage: safeStage }
+      throw failure
     }
   }
 
@@ -1054,17 +1083,20 @@ export class MongooseStockRepository implements StockOpeningRepository {
     return documents as unknown as MongoBucketDocument[]
   }
 
-  private async snapshotOf (product: MongoProductDocument, productObjectId: Types.ObjectId, session?: ClientSession): Promise<StockProductSnapshot> {
+  private async snapshotOf (product: MongoProductDocument, productObjectId: Types.ObjectId, session?: ClientSession, onStage?: (stage: StockListProductsStage) => void): Promise<StockProductSnapshot> {
     const inventoryTracking = product.inventory?.expiryTracking
     let committedQuantity = 0
     if (inventoryTracking === EXPIRY_TRACKING.TRACKED) {
+      onStage?.(STOCK_LIST_PRODUCTS_STAGES.TRACKED_BUCKET_READ)
       const buckets = await this.bucketDocuments(productObjectId, session)
       committedQuantity = buckets.reduce((total, bucket) => total + nonNegativeIntegerOf(bucket.committedQuantity, 'committedQuantity'), 0)
     } else if (inventoryTracking === EXPIRY_TRACKING.NOT_TRACKED) {
+      onStage?.(STOCK_LIST_PRODUCTS_STAGES.UNTRACKED_LEDGER_READ)
       const movements = await this.ledgerMovements(productObjectId, session)
       committedQuantity = ledgerCommittedQuantity(movements)
       if (committedQuantity < 0) throw repositoryError(`Ledger commitments are negative for ${product._id.toString()}`)
     }
+    onStage?.(STOCK_LIST_PRODUCTS_STAGES.PRODUCT_NORMALIZATION)
     return mapProductDocumentToStockSnapshot(product, committedQuantity)
   }
 

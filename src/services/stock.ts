@@ -122,6 +122,7 @@ type StockFailureCause = (typeof STOCK_FAILURE_CAUSES)[keyof typeof STOCK_FAILUR
 interface StockFailureDiagnostic {
   operation: StockFailureOperation
   cause: StockFailureCause
+  stage?: string
   databaseCode?: number
 }
 
@@ -157,7 +158,8 @@ const withOverviewDiagnostic = async <T>(operation: StockFailureOperation, work:
     if (error instanceof StockServiceError && error.code === STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR) {
       const cause = error.diagnostic?.cause ?? STOCK_FAILURE_CAUSES.UNKNOWN
       const databaseCode = error.diagnostic?.databaseCode
-      error.diagnostic = { operation, cause, ...(databaseCode === undefined ? {} : { databaseCode }) }
+      const stage = error.diagnostic?.stage
+      error.diagnostic = { operation, cause, ...(stage === undefined ? {} : { stage }), ...(databaseCode === undefined ? {} : { databaseCode }) }
     } else if (error instanceof Error) Object.assign(error, { diagnostic: stockFailureDiagnosticOf(operation, error) })
     throw error
   }
