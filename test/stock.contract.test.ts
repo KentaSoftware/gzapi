@@ -330,7 +330,7 @@ describe('Stock contract — HTTP adapter', () => {
     const sentinel = 'private Mongo URL mongodb://user:secret@host/db'
     const original = Object.assign(new Error(sentinel), { code: sentinel })
     sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, sentinel), {
-      diagnostic: { operation: 'untrusted_operation', cause: original, databaseCode: Number.POSITIVE_INFINITY }
+      diagnostic: { operation: 'untrusted_operation', cause: original, databaseCode: Number.POSITIVE_INFINITY, substage: 'mongodb://private-secret' }
     }))
     const log = sinon.stub(console, 'error')
     const response = makeResponse()
@@ -356,7 +356,7 @@ describe('Stock contract — HTTP adapter', () => {
   it('logs only allowlisted repository stages and preserves the generic 503 response', async () => {
     const sentinel = 'private database message mongodb://user:secret@host/db'
     sinon.stub(StockService.prototype, 'getOverview').rejects(Object.assign(new StockServiceError(STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR, sentinel), {
-      diagnostic: { operation: 'stock_overview_list_products', cause: 'unknown', stage: 'tracked_bucket_read' }
+      diagnostic: { operation: 'stock_overview_list_products', cause: 'unknown', stage: 'tracked_bucket_read', substage: 'mongodb://private-secret' }
     }))
     const log = sinon.stub(console, 'error')
     const response = makeResponse()
@@ -364,6 +364,7 @@ describe('Stock contract — HTTP adapter', () => {
     await getOverview(makeRequest({ query: { businessDate: '2026-10-15' } }), response as unknown as Response)
 
     expect(log.firstCall.args[0]).to.include({ stage: 'tracked_bucket_read' })
+    expect(log.firstCall.args[0]).not.to.have.property('substage')
     expect(bodyOf(response)).to.deep.equal({
       code: STOCK_ERROR_CODES.STOCK_REPOSITORY_ERROR,
       message: 'Stock persistence is currently unavailable'

@@ -269,9 +269,83 @@ describe('Stock Mongo repository and commercial reference mapping', () => {
     expect(error).to.be.instanceOf(StockServiceError)
     expect((error as StockServiceError).diagnostic).to.include({
       operation: 'stock_repository_unknown',
-      stage: 'product_normalization'
+      stage: 'product_normalization',
+      substage: 'identity'
     })
     expect(aggregateStub.called).to.equal(false)
+  })
+
+  it('classifies invalid stock metadata at its bounded normalization substage', async () => {
+    const productQuery = {
+      select: sinon.stub().returnsThis(), sort: sinon.stub().returnsThis(), skip: sinon.stub().returnsThis(),
+      limit: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(),
+      exec: sinon.stub().resolves([{ _id: new Types.ObjectId('507f1f77bcf86cd799439011'), descripcion: 'Coffee', stock: -1 }])
+    }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+
+    const error = await new MongooseStockRepository().listProducts(1, 10).catch((caught: unknown) => caught)
+
+    expect(error).to.be.instanceOf(StockServiceError)
+    expect((error as StockServiceError).diagnostic).to.include({ stage: 'product_normalization', substage: 'physical_quantity' })
+  })
+
+  it('omits stale normalization substage when tracked bucket read fails', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const productQuery = { select: sinon.stub().returnsThis(), sort: sinon.stub().returnsThis(), skip: sinon.stub().returnsThis(), limit: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([{ _id: productId, descripcion: 'Coffee', stock: 4, inventory: { expiryTracking: EXPIRY_TRACKING.TRACKED, baselineStatus: BASELINE_STATUS.RECONCILED } }]) }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+    sinon.stub(StockExpiryBucketModel, 'find').returns({ sort: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().rejects(new Error('private bucket detail')) } as unknown as ReturnType<typeof StockExpiryBucketModel.find>)
+
+    const error = await new MongooseStockRepository().listProducts(1, 10).catch((caught: unknown) => caught)
+
+    expect((error as StockServiceError).diagnostic).to.include({ stage: 'tracked_bucket_read' })
+    expect((error as StockServiceError).diagnostic).not.to.have.property('substage')
+  })
+
+  it('omits stale normalization substage when untracked ledger read fails', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const productQuery = { select: sinon.stub().returnsThis(), sort: sinon.stub().returnsThis(), skip: sinon.stub().returnsThis(), limit: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([{ _id: productId, descripcion: 'Coffee', stock: 4, inventory: { expiryTracking: EXPIRY_TRACKING.NOT_TRACKED, baselineStatus: BASELINE_STATUS.RECONCILED } }]) }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+    sinon.stub(InventoryMovementModel, 'find').returns({ lean: sinon.stub().returnsThis(), exec: sinon.stub().rejects(new Error('private ledger detail')) } as unknown as ReturnType<typeof InventoryMovementModel.find>)
+
+    const error = await new MongooseStockRepository().listProducts(1, 10).catch((caught: unknown) => caught)
+
+    expect((error as StockServiceError).diagnostic).to.include({ stage: 'untracked_ledger_read' })
+    expect((error as StockServiceError).diagnostic).not.to.have.property('substage')
+  })
+
+  for (const inventory of [
+    { expiryTracking: 'INVALID', baselineStatus: BASELINE_STATUS.RECONCILED },
+    { expiryTracking: EXPIRY_TRACKING.TRACKED, baselineStatus: 'INVALID' }
+  ]) {
+    it('classifies invalid inventory configuration at its normalization substage', async () => {
+      const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+      const productQuery = { select: sinon.stub().returnsThis(), sort: sinon.stub().returnsThis(), skip: sinon.stub().returnsThis(), limit: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([{ _id: productId, descripcion: 'Coffee', stock: 4, inventory }]) }
+      sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+      sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+      sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+      if (inventory.expiryTracking === EXPIRY_TRACKING.TRACKED) {
+        sinon.stub(StockExpiryBucketModel, 'find').returns({ sort: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof StockExpiryBucketModel.find>)
+      }
+      const error = await new MongooseStockRepository().listProducts(1, 10).catch((caught: unknown) => caught)
+      expect((error as StockServiceError).diagnostic).to.include({ stage: 'product_normalization', substage: 'inventory_config' })
+    })
+  }
+
+  it('classifies commitment greater than physical stock at its normalization substage', async () => {
+    const productId = new Types.ObjectId('507f1f77bcf86cd799439011')
+    const productQuery = { select: sinon.stub().returnsThis(), sort: sinon.stub().returnsThis(), skip: sinon.stub().returnsThis(), limit: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([{ _id: productId, descripcion: 'Coffee', stock: 1, inventory: { expiryTracking: EXPIRY_TRACKING.TRACKED, baselineStatus: BASELINE_STATUS.RECONCILED } }]) }
+    sinon.stub(ProductModel, 'find').returns(productQuery as unknown as ReturnType<typeof ProductModel.find>)
+    sinon.stub(ProductModel, 'countDocuments').returns({ exec: sinon.stub().resolves(1) } as unknown as ReturnType<typeof ProductModel.countDocuments>)
+    sinon.stub(ProductModel, 'aggregate').returns({ exec: sinon.stub().resolves([]) } as unknown as ReturnType<typeof ProductModel.aggregate>)
+    sinon.stub(StockExpiryBucketModel, 'find').returns({ sort: sinon.stub().returnsThis(), lean: sinon.stub().returnsThis(), exec: sinon.stub().resolves([{ _id: new Types.ObjectId('507f1f77bcf86cd799439012'), productId, expiryDate: new Date('2026-12-31T00:00:00Z'), receivedQuantity: 3, availableQuantity: 0, committedQuantity: 3 }]) } as unknown as ReturnType<typeof StockExpiryBucketModel.find>)
+    const error = await new MongooseStockRepository().listProducts(1, 10).catch((caught: unknown) => caught)
+    expect((error as StockServiceError).diagnostic).to.include({ stage: 'product_normalization', substage: 'committed_projection' })
   })
 
   it('filters and counts matching catalog products before pagination using escaped name text and category metadata', async () => {

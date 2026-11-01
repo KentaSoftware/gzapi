@@ -123,6 +123,7 @@ interface StockFailureDiagnostic {
   operation: StockFailureOperation
   cause: StockFailureCause
   stage?: string
+  substage?: string
   databaseCode?: number
 }
 
@@ -159,7 +160,8 @@ const withOverviewDiagnostic = async <T>(operation: StockFailureOperation, work:
       const cause = error.diagnostic?.cause ?? STOCK_FAILURE_CAUSES.UNKNOWN
       const databaseCode = error.diagnostic?.databaseCode
       const stage = error.diagnostic?.stage
-      error.diagnostic = { operation, cause, ...(stage === undefined ? {} : { stage }), ...(databaseCode === undefined ? {} : { databaseCode }) }
+      const substage = error.diagnostic?.substage
+      error.diagnostic = { operation, cause, ...(stage === undefined ? {} : { stage }), ...(substage === undefined ? {} : { substage }), ...(databaseCode === undefined ? {} : { databaseCode }) }
     } else if (error instanceof Error) Object.assign(error, { diagnostic: stockFailureDiagnosticOf(operation, error) })
     throw error
   }
