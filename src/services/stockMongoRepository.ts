@@ -345,11 +345,13 @@ const toMinimumAuditWrite = (audit: StockMinimumAuditRecord): Omit<MongoMinimumA
   ...(audit.reason === undefined ? {} : { reason: boundedOptionalStringOf(audit.reason, 'reason', 200) })
 })
 
-export const mapProductDocumentToStockSnapshot = (document: unknown, committedQuantity: number): StockProductSnapshot => {
+export const mapProductDocumentToStockSnapshot = (document: unknown, committedQuantity: number, onSubstage?: (substage: StockListProductsSubstage) => void): StockProductSnapshot => {
   const product = recordOf(document, 'Product')
   const physicalQuantity = nonNegativeIntegerOf(product.stock, 'Product.stock')
+  onSubstage?.(STOCK_LIST_PRODUCTS_SUBSTAGES.COMMITTED_PROJECTION)
   const committed = nonNegativeIntegerOf(committedQuantity, 'committedQuantity')
   if (committed > physicalQuantity) throw repositoryError('Committed quantity exceeds physical quantity')
+  onSubstage?.(STOCK_LIST_PRODUCTS_SUBSTAGES.INVENTORY_CONFIG)
   const inventory = product.inventory === undefined ? undefined : recordOf(product.inventory, 'Product.inventory')
   return {
     productId: identifierOf(product._id, 'Product._id'),
@@ -552,7 +554,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
           substage = STOCK_LIST_PRODUCTS_SUBSTAGES.INVENTORY_CONFIG
           if (product.inventory !== undefined && (typeof product.inventory !== 'object' || product.inventory === null || Array.isArray(product.inventory))) throw repositoryError('Product inventory configuration is invalid')
           substage = STOCK_LIST_PRODUCTS_SUBSTAGES.COMMITTED_PROJECTION
-          const snapshot = await this.snapshotOf(product, productObjectId, mongoSession, (nextStage) => { stage = nextStage })
+          const snapshot = await this.snapshotOf(product, productObjectId, mongoSession, (nextStage) => { stage = nextStage }, (nextSubstage) => { substage = nextSubstage })
           substage = STOCK_LIST_PRODUCTS_SUBSTAGES.MINIMUM_METADATA
           const minimum = product.inventory?.minimum === undefined ? null : nonNegativeIntegerOf(product.inventory.minimum, 'Product.inventory.minimum')
           substage = STOCK_LIST_PRODUCTS_SUBSTAGES.DISPLAY_FIELDS
@@ -608,7 +610,7 @@ export class MongooseStockRepository implements StockOpeningRepository {
         substage = STOCK_LIST_PRODUCTS_SUBSTAGES.INVENTORY_CONFIG
         if (product.inventory !== undefined && (typeof product.inventory !== 'object' || product.inventory === null || Array.isArray(product.inventory))) throw repositoryError('Product inventory configuration is invalid')
         substage = STOCK_LIST_PRODUCTS_SUBSTAGES.COMMITTED_PROJECTION
-        const snapshot = await this.snapshotOf(product, productObjectId, mongoSession, (nextStage) => { stage = nextStage })
+        const snapshot = await this.snapshotOf(product, productObjectId, mongoSession, (nextStage) => { stage = nextStage; substage = undefined }, (nextSubstage) => { substage = nextSubstage })
         substage = STOCK_LIST_PRODUCTS_SUBSTAGES.MINIMUM_METADATA
         const minimum = product.inventory?.minimum === undefined
           ? null
@@ -1116,21 +1118,23 @@ export class MongooseStockRepository implements StockOpeningRepository {
     return documents as unknown as MongoBucketDocument[]
   }
 
-  private async snapshotOf (product: MongoProductDocument, productObjectId: Types.ObjectId, session?: ClientSession, onStage?: (stage: StockListProductsStage) => void): Promise<StockProductSnapshot> {
+  private async snapshotOf (product: MongoProductDocument, productObjectId: Types.ObjectId, session?: ClientSession, onStage?: (stage: StockListProductsStage) => void, onSubstage?: (substage: StockListProductsSubstage | undefined) => void): Promise<StockProductSnapshot> {
     const inventoryTracking = product.inventory?.expiryTracking
     let committedQuantity = 0
     if (inventoryTracking === EXPIRY_TRACKING.TRACKED) {
+      onSubstage?.(undefined)
       onStage?.(STOCK_LIST_PRODUCTS_STAGES.TRACKED_BUCKET_READ)
       const buckets = await this.bucketDocuments(productObjectId, session)
       committedQuantity = buckets.reduce((total, bucket) => total + nonNegativeIntegerOf(bucket.committedQuantity, 'committedQuantity'), 0)
     } else if (inventoryTracking === EXPIRY_TRACKING.NOT_TRACKED) {
+      onSubstage?.(undefined)
       onStage?.(STOCK_LIST_PRODUCTS_STAGES.UNTRACKED_LEDGER_READ)
       const movements = await this.ledgerMovements(productObjectId, session)
       committedQuantity = ledgerCommittedQuantity(movements)
       if (committedQuantity < 0) throw repositoryError(`Ledger commitments are negative for ${product._id.toString()}`)
     }
     onStage?.(STOCK_LIST_PRODUCTS_STAGES.PRODUCT_NORMALIZATION)
-    return mapProductDocumentToStockSnapshot(product, committedQuantity)
+    return mapProductDocumentToStockSnapshot(product, committedQuantity, onSubstage)
   }
 
   private async ledgerMovements (productId: Types.ObjectId, session?: ClientSession): Promise<StockMovementRecord[]> {
