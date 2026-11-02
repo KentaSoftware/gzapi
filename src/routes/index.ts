@@ -24,6 +24,7 @@ import { router as providerRouter } from './provider'
 import { router as roleRouter } from './role'
 import { router as routePlanRouter } from './routePlan'
 import { router as saleRouter } from './sale'
+import { router as simulationRouter } from './simulation'
 import { router as stockRouter } from './stock'
 import { router as userRouter } from './user'
 
@@ -57,6 +58,7 @@ const routeRegistry: RouteEntry[] = [
   { prefix: '/role', router: roleRouter },
   { prefix: '/routePlan', router: routePlanRouter },
   { prefix: '/sale', router: saleRouter },
+  { prefix: '/simulation', router: simulationRouter },
   { prefix: '/stock', router: stockRouter },
   { prefix: '/user', router: userRouter }
 ]

@@ -31,6 +31,7 @@ describe('route loader', () => {
       '/role',
       '/routePlan',
       '/sale',
+      '/simulation',
       '/stock',
       '/user'
     ])
