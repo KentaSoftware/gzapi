@@ -24,6 +24,13 @@ const TARGETS = [
       { name: 'idx_simulation_preset_version_unique', key: { name: 1, version: 1 }, unique: true },
       { name: 'idx_simulation_preset_status_created', key: { status: 1, createdAt: -1 }, unique: false }
     ]
+  },
+  {
+    name: 'simulationsnapshothandles',
+    indexes: [
+      { name: 'idx_simulation_snapshot_handle_digest_unique', key: { handleDigest: 1 }, unique: true },
+      { name: 'idx_simulation_snapshot_handle_expires_ttl', key: { expiresAt: 1 }, unique: false, expireAfterSeconds: 0 }
+    ]
   }
 ]
 
@@ -121,6 +128,19 @@ const planIndexes = async (db) => {
     for (const expected of target.indexes) {
       const current = existing.find((index) => index.name === expected.name)
       if (current === undefined) {
+        const sameKeyUnderAnotherName = existing.find((index) => {
+          return index.name !== expected.name && normalizeKey(index.key) === normalizeKey(expected.key)
+        })
+        if (sameKeyUnderAnotherName !== undefined) {
+          conflicts.push({
+            collection: target.name,
+            index: expected.name,
+            expected,
+            observed: sameKeyUnderAnotherName,
+            reason: 'the same index key already exists under a different name'
+          })
+          continue
+        }
         planned.push({ collection: target.name, index: expected })
         continue
       }
@@ -154,7 +174,7 @@ const applyIndexes = async (db) => {
 const runMigration = async (options) => {
   if (options.dryRun) {
     printArtifact('dry-run', options, {
-      plannedActions: ['create missing named indexes on the three simulation collections', 'fail on conflicting indexes without dropping or rebuilding them'],
+      plannedActions: ['create missing named indexes on the four simulation collections', 'fail on conflicting indexes without dropping or rebuilding them'],
       indexes: TARGETS,
       businessDataMutated: false
     })
@@ -188,3 +208,5 @@ if (require.main === module) {
     process.exitCode = 1
   })
 }
+
+module.exports = { TARGETS, planIndexes, applyIndexes }

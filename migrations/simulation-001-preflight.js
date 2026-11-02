@@ -24,6 +24,13 @@ const TARGETS = [
       { name: 'idx_simulation_preset_version_unique', key: { name: 1, version: 1 }, unique: true },
       { name: 'idx_simulation_preset_status_created', key: { status: 1, createdAt: -1 }, unique: false }
     ]
+  },
+  {
+    name: 'simulationsnapshothandles',
+    indexes: [
+      { name: 'idx_simulation_snapshot_handle_digest_unique', key: { handleDigest: 1 }, unique: true },
+      { name: 'idx_simulation_snapshot_handle_expires_ttl', key: { expiresAt: 1 }, unique: false, expireAfterSeconds: 0 }
+    ]
   }
 ]
 
@@ -131,11 +138,41 @@ const inspectExisting = async (db, collectionName) => {
   }
 }
 
+const findIndexConflicts = (targets, inventory) => {
+  const conflicts = []
+  for (const target of targets) {
+    const existing = inventory.find((entry) => entry.name === target.name)
+    if (existing === undefined || !existing.exists) continue
+    for (const expected of target.indexes) {
+      const current = existing.indexes.find((index) => index.name === expected.name)
+      if (current !== undefined) {
+        if (!sameIndex(current, expected)) {
+          conflicts.push({ collection: target.name, index: expected.name, expected, observed: current })
+        }
+        continue
+      }
+      const sameKeyUnderAnotherName = existing.indexes.find((index) => {
+        return index.name !== expected.name && normalizeKey(index.key) === normalizeKey(expected.key)
+      })
+      if (sameKeyUnderAnotherName !== undefined) {
+        conflicts.push({
+          collection: target.name,
+          index: expected.name,
+          expected,
+          observed: sameKeyUnderAnotherName,
+          reason: 'the same index key already exists under a different name'
+        })
+      }
+    }
+  }
+  return conflicts
+}
+
 const runPreflight = async (options) => {
   if (options.dryRun) {
     printArtifact('dry-run', options, {
       plannedActions: [
-        'inspect the three simulation collections and their indexes',
+        'inspect the four simulation collections and their indexes',
         'report unexpected indexes and index conflicts without modifying anything',
         'report protected commercial collections as read-only context'
       ],
@@ -150,17 +187,7 @@ const runPreflight = async (options) => {
     await client.connect()
     const db = client.db()
     const inventory = await Promise.all(TARGETS.map(async (target) => await inspectExisting(db, target.name)))
-    const conflicts = []
-    for (const target of TARGETS) {
-      const existing = inventory.find((entry) => entry.name === target.name)
-      if (existing === undefined || !existing.exists) continue
-      for (const expected of target.indexes) {
-        const current = existing.indexes.find((index) => index.name === expected.name)
-        if (current !== undefined && !sameIndex(current, expected)) {
-          conflicts.push({ collection: target.name, index: expected.name, expected, observed: current })
-        }
-      }
-    }
+    const conflicts = findIndexConflicts(TARGETS, inventory)
     if (conflicts.length > 0) {
       printArtifact('failed', options, {
         failures: ['Existing simulation indexes conflict with the expected definitions'],
@@ -199,3 +226,5 @@ if (require.main === module) {
     process.exitCode = 1
   })
 }
+
+module.exports = { TARGETS, findIndexConflicts }

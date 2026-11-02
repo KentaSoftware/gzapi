@@ -24,6 +24,13 @@ const TARGETS = [
       { name: 'idx_simulation_preset_version_unique', key: { name: 1, version: 1 }, unique: true },
       { name: 'idx_simulation_preset_status_created', key: { status: 1, createdAt: -1 }, unique: false }
     ]
+  },
+  {
+    name: 'simulationsnapshothandles',
+    indexes: [
+      { name: 'idx_simulation_snapshot_handle_digest_unique', key: { handleDigest: 1 }, unique: true },
+      { name: 'idx_simulation_snapshot_handle_expires_ttl', key: { expiresAt: 1 }, unique: false, expireAfterSeconds: 0 }
+    ]
   }
 ]
 
@@ -136,64 +143,66 @@ const isValidDirectLoad = (value) => {
   return hasUniqueValues(value.map((entry) => entry.productId))
 }
 
-const validateRouteSnapshot = (snapshot, id, failures) => {
+const validateRouteSnapshot = (snapshot, id, failures, subject = 'Run') => {
+  const owner = `${subject} ${id}`
   if (!isObject(snapshot)) {
-    failures.push(`Run ${id} has a malformed route snapshot`)
+    failures.push(`${owner} has a malformed route snapshot`)
     return
   }
-  if (!isContractVersion(snapshot.contractVersion)) failures.push(`Run ${id} has an invalid route contract version`)
-  if (!isIsoDateTimeString(snapshot.capturedAt)) failures.push(`Run ${id} has an invalid route capture timestamp`)
-  if (!isObjectIdString(snapshot.routeId)) failures.push(`Run ${id} has an invalid route identifier`)
-  if (!ROUTE_STATUSES.includes(snapshot.status)) failures.push(`Run ${id} has an invalid route status`)
-  if (!isLabel(snapshot.zoneCode)) failures.push(`Run ${id} has an invalid route zone`)
+  if (!isContractVersion(snapshot.contractVersion)) failures.push(`${owner} has an invalid route contract version`)
+  if (!isIsoDateTimeString(snapshot.capturedAt)) failures.push(`${owner} has an invalid route capture timestamp`)
+  if (!isObjectIdString(snapshot.routeId)) failures.push(`${owner} has an invalid route identifier`)
+  if (!ROUTE_STATUSES.includes(snapshot.status)) failures.push(`${owner} has an invalid route status`)
+  if (!isLabel(snapshot.zoneCode)) failures.push(`${owner} has an invalid route zone`)
   if (!Array.isArray(snapshot.stops) || snapshot.stops.length === 0 || snapshot.stops.length > 1000) {
-    failures.push(`Run ${id} has no route stops`)
+    failures.push(`${owner} has no route stops`)
   } else {
     const sequences = []
     const saleIds = []
     for (const stop of snapshot.stops) {
       if (!isObject(stop) || !isPositiveInteger(stop.sequence) || !isObjectIdString(stop.clientId) ||
         !Array.isArray(stop.saleIds) || stop.saleIds.length === 0 || stop.saleIds.length > 1000 || !stop.saleIds.every(isObjectIdString)) {
-        failures.push(`Run ${id} has an invalid route stop`)
+        failures.push(`${owner} has an invalid route stop`)
         break
       }
       sequences.push(String(stop.sequence))
       saleIds.push(...stop.saleIds)
     }
-    if (!hasUniqueValues(sequences)) failures.push(`Run ${id} has duplicate route stop sequences`)
-    if (!hasUniqueValues(saleIds)) failures.push(`Run ${id} has duplicate route sale references`)
+    if (!hasUniqueValues(sequences)) failures.push(`${owner} has duplicate route stop sequences`)
+    if (!hasUniqueValues(saleIds)) failures.push(`${owner} has duplicate route sale references`)
   }
-  if (!isNonNegativeNumber(snapshot.distanceMeters) || !isNonNegativeNumber(snapshot.durationSeconds)) failures.push(`Run ${id} has invalid route metrics`)
+  if (!isNonNegativeNumber(snapshot.distanceMeters) || !isNonNegativeNumber(snapshot.durationSeconds)) failures.push(`${owner} has invalid route metrics`)
   if (!isObject(snapshot.vehicle) || !isLabel(snapshot.vehicle.vehicleCode) ||
     !isFiniteNumber(snapshot.vehicle.fuelConsumptionLitersPer100Km) || snapshot.vehicle.fuelConsumptionLitersPer100Km <= 0) {
-    failures.push(`Run ${id} has an invalid route vehicle`)
+    failures.push(`${owner} has an invalid route vehicle`)
   }
   if (!isObject(snapshot.capacity) || !isMeasure(snapshot.capacity.maxWeight) || !isMeasure(snapshot.capacity.maxVolume)) {
-    failures.push(`Run ${id} has an invalid route capacity`)
+    failures.push(`${owner} has an invalid route capacity`)
   }
-  if (!isMoney(snapshot.tollsArs) || !isMoney(snapshot.parkingArs)) failures.push(`Run ${id} has invalid route costs`)
+  if (!isMoney(snapshot.tollsArs) || !isMoney(snapshot.parkingArs)) failures.push(`${owner} has invalid route costs`)
 }
 
-const validateStockSnapshot = (snapshot, id, failures) => {
+const validateStockSnapshot = (snapshot, id, failures, subject = 'Run') => {
+  const owner = `${subject} ${id}`
   if (!isObject(snapshot)) {
-    failures.push(`Run ${id} has a malformed stock snapshot`)
+    failures.push(`${owner} has a malformed stock snapshot`)
     return
   }
-  if (!isContractVersion(snapshot.contractVersion)) failures.push(`Run ${id} has an invalid stock contract version`)
-  if (!isIsoDateTimeString(snapshot.capturedAt)) failures.push(`Run ${id} has an invalid stock capture timestamp`)
+  if (!isContractVersion(snapshot.contractVersion)) failures.push(`${owner} has an invalid stock contract version`)
+  if (!isIsoDateTimeString(snapshot.capturedAt)) failures.push(`${owner} has an invalid stock capture timestamp`)
   if (!Array.isArray(snapshot.products) || snapshot.products.length === 0 || snapshot.products.length > 10000) {
-    failures.push(`Run ${id} has no stock products`)
+    failures.push(`${owner} has no stock products`)
     return
   }
   for (const product of snapshot.products) {
     if (!isObject(product) || !isObjectIdString(product.productId) || !isNonNegativeNumber(product.availableQuantity) ||
       !isMoney(product.unitCostArs) || !isMoney(product.presalePriceArs) || !isMeasure(product.weight) || !isMeasure(product.volume)) {
-      failures.push(`Run ${id} has an invalid stock product`)
+      failures.push(`${owner} has an invalid stock product`)
       break
     }
   }
   if (!hasUniqueValues(snapshot.products.filter(isObject).map((product) => product.productId))) {
-    failures.push(`Run ${id} has duplicate stock products`)
+    failures.push(`${owner} has duplicate stock products`)
   }
 }
 
@@ -333,6 +342,44 @@ const validatePreset = (preset, failures) => {
   if (!isStatus(preset.status)) failures.push(`Preset ${id} has an invalid status`)
 }
 
+const isSha256Hex = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+
+const validateSnapshotHandle = (handle, failures) => {
+  if (!isObject(handle)) {
+    failures.push('Snapshot handle record is malformed')
+    return
+  }
+  const id = String(handle._id)
+  if (!isSha256Hex(handle.handleDigest)) failures.push(`Snapshot handle ${id} has an invalid digest`)
+  if (!isNonEmptyString(handle.actorId) || handle.actorId.length > 128) failures.push(`Snapshot handle ${id} has no actor binding`)
+  validateRouteSnapshot(handle.routeSnapshot, id, failures, 'Snapshot handle')
+  validateStockSnapshot(handle.stockSnapshot, id, failures, 'Snapshot handle')
+  if (isObject(handle.routeSnapshot) && handle.routeSnapshot.status !== 'VALIDATED') {
+    failures.push(`Snapshot handle ${id} has a non-validated route snapshot`)
+  }
+  if (!isObject(handle.versions)) {
+    failures.push(`Snapshot handle ${id} has no version evidence`)
+  } else {
+    for (const field of ['rulesVersion', 'routeContractVersion', 'stockContractVersion']) {
+      if (!isContractVersion(handle.versions[field])) failures.push(`Snapshot handle ${id} has no ${field}`)
+    }
+    if (isObject(handle.routeSnapshot) && isContractVersion(handle.versions.routeContractVersion) &&
+      handle.routeSnapshot.contractVersion !== handle.versions.routeContractVersion) {
+      failures.push(`Snapshot handle ${id} has mismatched route contract evidence`)
+    }
+    if (isObject(handle.stockSnapshot) && isContractVersion(handle.versions.stockContractVersion) &&
+      handle.stockSnapshot.contractVersion !== handle.versions.stockContractVersion) {
+      failures.push(`Snapshot handle ${id} has mismatched stock contract evidence`)
+    }
+  }
+  if (!isSha256Hex(handle.baseScenarioHash)) failures.push(`Snapshot handle ${id} has an invalid base scenario hash`)
+  if (!isDate(handle.issuedAt)) failures.push(`Snapshot handle ${id} has no issuance timestamp`)
+  if (!isDate(handle.expiresAt)) failures.push(`Snapshot handle ${id} has no expiration timestamp`)
+  if (isDate(handle.issuedAt) && isDate(handle.expiresAt) && handle.expiresAt.getTime() <= handle.issuedAt.getTime()) {
+    failures.push(`Snapshot handle ${id} has an expiration that does not follow issuance`)
+  }
+}
+
 const verify = async (db) => {
   const existingCollections = new Set((await db.listCollections({}, { nameOnly: true }).toArray()).map((entry) => entry.name))
   const failures = []
@@ -371,6 +418,7 @@ const verify = async (db) => {
   const runsChecked = await scanCollection('simulationruns', validateRun)
   const configurationsChecked = await scanCollection('simulationconfigversions', validateConfiguration)
   const presetsChecked = await scanCollection('simulationpresetversions', validatePreset)
+  const snapshotHandlesChecked = await scanCollection('simulationsnapshothandles', validateSnapshotHandle)
 
   return {
     failures,
@@ -378,6 +426,7 @@ const verify = async (db) => {
     runsChecked,
     configurationsChecked,
     presetsChecked,
+    snapshotHandlesChecked,
     structuralValidationCheck: 'evaluated-by-migration',
     modelImmutabilityCheck: 'not-evaluated-by-migration'
   }
@@ -387,10 +436,11 @@ const runVerification = async (options) => {
   if (options.dryRun) {
     printArtifact('dry-run', options, {
       plannedActions: [
-        'verify the three simulation collections exist',
+        'verify the four simulation collections exist',
         'verify every expected index exists with its exact key and uniqueness',
         'verify runs preserve structurally valid snapshots, inputs, results, actor, and versions',
-        'verify configuration and preset versions preserve author, reason, scope, and definitions'
+        'verify configuration and preset versions preserve author, reason, scope, and definitions',
+        'verify snapshot handles preserve actor binding, frozen evidence, versions, and expiration'
       ],
       businessDataMutated: false
     })
@@ -420,4 +470,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { validateRun, validateConfiguration, validatePreset, verify }
+module.exports = { TARGETS, validateRun, validateConfiguration, validatePreset, validateSnapshotHandle, verify }

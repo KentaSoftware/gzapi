@@ -6,7 +6,8 @@ const MIGRATION_ID = 'simulation-002-create-collections'
 const TARGET_COLLECTIONS = [
   'simulationruns',
   'simulationconfigversions',
-  'simulationpresetversions'
+  'simulationpresetversions',
+  'simulationsnapshothandles'
 ]
 
 const PROTECTED_COLLECTIONS = [
@@ -116,3 +117,5 @@ if (require.main === module) {
     process.exitCode = 1
   })
 }
+
+module.exports = { TARGET_COLLECTIONS }

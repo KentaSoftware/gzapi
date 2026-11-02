@@ -206,6 +206,31 @@ export interface SimulationRun {
   updatedAt: Date
 }
 
+export interface SimulationSnapshotHandleVersions {
+  routeContractVersion: string
+  stockContractVersion: string
+  rulesVersion: string
+}
+
+// Temporary base-scenario state, not a persisted simulation run. The raw handle
+// is only sent to its bound actor; storage keeps a deterministic digest and the
+// frozen evidence until the TTL index removes the expired record.
+export interface SimulationSnapshotHandle {
+  handleDigest: string
+  actorId: string
+  routeSnapshot: SimulationRouteSnapshot
+  stockSnapshot: SimulationStockSnapshot
+  versions: SimulationSnapshotHandleVersions
+  baseScenarioHash: string
+  issuedAt: Date
+  expiresAt: Date
+}
+
+export interface SimulationSnapshotHandleRepository {
+  insert: (handle: SimulationSnapshotHandle) => Promise<void>
+  findByHandleDigest: (handleDigest: string) => Promise<unknown | null>
+}
+
 export interface SimulationPeriod {
   from: Date
   to: Date
