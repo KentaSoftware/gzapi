@@ -222,7 +222,16 @@ const periodSchema = z.object({
   path: ['from']
 })
 
-const numericValuesSchema = z.record(boundedIdentifierSchema, nonNegativeNumberSchema)
+const hasTrimmedKeyCollision = (input: object): boolean => {
+  const normalizedKeys = Object.keys(input).map((key) => key.trim())
+  return new Set(normalizedKeys).size !== normalizedKeys.length
+}
+
+const numericValuesSchema = z.unknown().superRefine((input, ctx) => {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return
+  if (!hasTrimmedKeyCollision(input)) return
+  ctx.addIssue({ code: 'custom', message: 'numeric value keys must be unique after trimming' })
+}).pipe(z.record(boundedIdentifierSchema, nonNegativeNumberSchema))
 
 const simulationVersionedConfigurationInputSchema = z.object({
   vehicleCode: labelSchema,

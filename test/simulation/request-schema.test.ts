@@ -125,6 +125,31 @@ describe('Simulation contract - versioned inputs', () => {
     }).success).to.equal(false)
   })
 
+  it('TC-030: rejects raw value keys that collide after trimming', () => {
+    const collidingValues = simulationVersionedConfigurationInputSchema.safeParse({
+      ...validConfigurationInput,
+      values: { fuelPricePerLiter: 1200.5, 'fuelPricePerLiter ': 1300 }
+    })
+    const collidingLimits = simulationVersionedConfigurationInputSchema.safeParse({
+      ...validConfigurationInput,
+      limits: { demandMaximum: 100, ' demandMaximum': 200 }
+    })
+
+    expect(collidingValues.success).to.equal(false)
+    expect(collidingLimits.success).to.equal(false)
+  })
+
+  it('TC-030: trims a single padded value key without losing it', () => {
+    const parsed = simulationVersionedConfigurationInputSchema.safeParse({
+      ...validConfigurationInput,
+      values: { ' fuelPricePerLiter ': 1200.5 }
+    })
+
+    expect(parsed.success).to.equal(true)
+    if (!parsed.success) throw new Error('expected padded value keys to be accepted')
+    expect(Object.keys(parsed.data.values)).to.deep.equal(['fuelPricePerLiter'])
+  })
+
   it('TC-030: accepts a versioned preset definition with a reason', () => {
     const preset = {
       name: 'Conservative',
