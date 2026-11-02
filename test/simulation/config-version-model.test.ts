@@ -63,6 +63,26 @@ describe('Simulation persistence - versioned configuration model', () => {
     expect(() => assertConfigVersionUpdateAllowed({ $unset: { approvalId: '' } })).to.throw()
   })
 
+  it('TC-012: validates status values on permitted update paths', () => {
+    expect(() => assertConfigVersionUpdateAllowed({ $set: { status: SIMULATION_RECORD_STATUSES.ACTIVE } })).to.not.throw()
+    expect(() => assertConfigVersionUpdateAllowed({ $set: { status: SIMULATION_RECORD_STATUSES.ARCHIVED } })).to.not.throw()
+    expect(() => assertConfigVersionUpdateAllowed({ $set: { status: 'PENDING' } })).to.throw()
+    expect(() => assertConfigVersionUpdateAllowed({ $set: { status: 'archived' } })).to.throw()
+    expect(() => assertConfigVersionUpdateAllowed({ $set: { status: ['ARCHIVED'] } })).to.throw()
+    expect(() => assertConfigVersionUpdateAllowed({ $set: { status: null } })).to.throw()
+  })
+
+  it('TC-012: installed configuration middleware rejects unsupported status values', async () => {
+    const deniedStatusUpdate = SimulationConfigVersionModel.updateOne({ _id: USER_ID }, { $set: { status: 'PENDING' } })
+    await expectHookRejection(SimulationConfigVersionModel.schema, 'updateOne', deniedStatusUpdate)
+
+    const deniedStatusFind = SimulationConfigVersionModel.findOneAndUpdate({ _id: USER_ID }, { $set: { status: 'PENDING' } })
+    await expectHookRejection(SimulationConfigVersionModel.schema, 'findOneAndUpdate', deniedStatusFind)
+
+    const allowedStatusUpdate = SimulationConfigVersionModel.updateOne({ _id: USER_ID }, { $set: { status: SIMULATION_RECORD_STATUSES.ACTIVE } })
+    await executePreHook(SimulationConfigVersionModel.schema, 'updateOne', allowedStatusUpdate)
+  })
+
   it('TC-012: installed configuration middleware blocks evidence and permits archive', async () => {
     const allowedUpdate = SimulationConfigVersionModel.updateOne({ _id: USER_ID }, { $set: { status: SIMULATION_RECORD_STATUSES.ARCHIVED } })
     await executePreHook(SimulationConfigVersionModel.schema, 'updateOne', allowedUpdate)

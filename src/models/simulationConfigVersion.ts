@@ -11,6 +11,8 @@ const CONFIG_IMMUTABLE_MESSAGE = 'Simulation configuration versions are immutabl
 const TIMESTAMP_MANAGED_PATHS = new Set(['createdAt', 'updatedAt'])
 const CONFIG_MUTABLE_PATHS = new Set(['status', 'archivedAt', 'archivedBy'])
 const CONFIG_UNSETTABLE_PATHS = new Set(['archivedAt', 'archivedBy'])
+const CONFIG_STATUS_VALUES: ReadonlySet<unknown> = new Set(Object.values(SIMULATION_RECORD_STATUSES))
+const CONFIG_STATUS_MESSAGE = `Simulation configuration status must be one of: ${Object.values(SIMULATION_RECORD_STATUSES).join(', ')}`
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/
 const BOUNDED_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
 
@@ -113,8 +115,12 @@ const assertAllowedUpdate = (update: unknown): void => {
       throw new Error(CONFIG_IMMUTABLE_MESSAGE)
     }
     const allowedPaths = operator === '$set' ? CONFIG_MUTABLE_PATHS : CONFIG_UNSETTABLE_PATHS
+    const payloadRecord = payload as Record<string, unknown>
     for (const path of Object.keys(payload)) {
       if (!allowedPaths.has(path)) throw new Error(CONFIG_IMMUTABLE_MESSAGE)
+    }
+    if (operator === '$set' && 'status' in payloadRecord && !CONFIG_STATUS_VALUES.has(payloadRecord.status)) {
+      throw new Error(CONFIG_STATUS_MESSAGE)
     }
   }
 }
