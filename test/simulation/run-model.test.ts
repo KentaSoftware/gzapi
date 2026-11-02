@@ -3,7 +3,8 @@ import { Types } from 'mongoose'
 
 import {
   SIMULATION_DATA_QUALITY,
-  SIMULATION_RECORD_STATUSES
+  SIMULATION_RECORD_STATUSES,
+  type SimulationRun
 } from '../../src/interfaces/simulation.interface'
 import SimulationRunModel, {
   assertRunDocumentTransitionAllowed,
@@ -112,6 +113,30 @@ describe('Simulation persistence - run model', () => {
     expect(() => assertRunUpdateAllowed({ $unset: { routeSnapshot: '' } })).to.throw()
     expect(() => assertRunUpdateAllowed({ $inc: { 'calculation.totals.marginArs': 1 } })).to.throw()
     expect(() => assertRunUpdateAllowed({ status: SIMULATION_RECORD_STATUSES.ARCHIVED })).to.throw()
+  })
+
+  it('TC-012: rejects status values outside the run model contract on guarded update documents', () => {
+    expect(() => assertRunUpdateAllowed({ $set: { status: 'DELETED' } })).to.throw()
+    expect(() => assertRunUpdateAllowed({ $set: { status: 'active' } })).to.throw()
+    expect(() => assertRunUpdateAllowed({ $set: { status: { $ne: null } } })).to.throw()
+    expect(() => assertRunUpdateAllowed({ $set: { status: SIMULATION_RECORD_STATUSES.ACTIVE } })).to.not.throw()
+  })
+
+  it('TC-012: guarded update middleware rejects unknown status values', async () => {
+    const invalidStatus = 'DELETED' as unknown as SimulationRun['status']
+
+    const updateOne = SimulationRunModel.updateOne({ _id: USER_ID }, { $set: { status: invalidStatus } })
+    await expectHookRejection(SimulationRunModel.schema, 'updateOne', updateOne)
+
+    const updateMany = SimulationRunModel.updateMany({ _id: USER_ID }, { $set: { status: invalidStatus } })
+    await expectHookRejection(SimulationRunModel.schema, 'updateMany', updateMany)
+
+    const findOneAndUpdate = SimulationRunModel.findOneAndUpdate({ _id: USER_ID }, { $set: { status: invalidStatus } })
+    await expectHookRejection(SimulationRunModel.schema, 'findOneAndUpdate', findOneAndUpdate)
+  })
+
+  it('TC-012: rejects model-level bulkWrite so query guards cannot be bypassed', async () => {
+    await expectHookRejection(SimulationRunModel.schema, 'bulkWrite', {})
   })
 
   it('TC-012: installed run middleware blocks evidence and permits lifecycle transitions', async () => {

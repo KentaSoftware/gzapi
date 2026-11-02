@@ -13,9 +13,11 @@ import {
 } from '../schemas/simulation.schema'
 
 const RUN_IMMUTABLE_MESSAGE = 'Simulation run evidence is immutable'
+const RUN_STATUS_MESSAGE = 'Simulation run status is outside the reversible lifecycle'
 const TIMESTAMP_MANAGED_PATHS = new Set(['createdAt', 'updatedAt'])
 const RUN_MUTABLE_PATHS = new Set(['status', 'archivedAt', 'archivedBy'])
 const RUN_UNSETTABLE_PATHS = new Set(['archivedAt', 'archivedBy'])
+const RUN_STATUS_VALUES = new Set<string>(Object.values(SIMULATION_RECORD_STATUSES))
 
 interface MutationOptions {
   timestamps?: boolean
@@ -162,8 +164,21 @@ const assertAllowedUpdate = (
   }
 }
 
+const assertRunUpdateStatusAllowed = (update: unknown): void => {
+  if (update === null || typeof update !== 'object' || Array.isArray(update)) return
+  const payload = (update as Record<string, unknown>).$set
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return
+  const setFields = payload as Record<string, unknown>
+  if (!Object.prototype.hasOwnProperty.call(setFields, 'status')) return
+  const status = setFields.status
+  if (typeof status !== 'string' || !RUN_STATUS_VALUES.has(status)) {
+    throw new Error(RUN_STATUS_MESSAGE)
+  }
+}
+
 const assertRunUpdateAllowed = (update: unknown): void => {
   assertAllowedUpdate(update, RUN_MUTABLE_PATHS, RUN_UNSETTABLE_PATHS)
+  assertRunUpdateStatusAllowed(update)
 }
 
 const assertRunDocumentTransitionAllowed = (isNew: boolean, modifiedPaths: string[]): void => {
@@ -206,6 +221,13 @@ simulationRunSchema.pre(['findOneAndUpdate', 'updateOne', 'updateMany', 'replace
 })
 
 simulationRunSchema.pre(['deleteOne', 'deleteMany', 'findOneAndDelete'], function () {
+  throw new Error(RUN_IMMUTABLE_MESSAGE)
+})
+
+// Rejects Model.bulkWrite() so it cannot skip the query update guards above.
+// Connection-level writes and other direct database access bypass Mongoose
+// middleware by design and are outside this model-level guard.
+simulationRunSchema.pre('bulkWrite', function () {
   throw new Error(RUN_IMMUTABLE_MESSAGE)
 })
 
