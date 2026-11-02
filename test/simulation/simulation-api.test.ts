@@ -9,6 +9,8 @@ import {
   SIMULATION_DATA_QUALITY,
   SIMULATION_ERROR_CODES,
   SIMULATION_RULES_PROVISIONAL_V1,
+  SIMULATION_VIABILITY,
+  type SimulationCalculationResult,
   type SimulationSnapshotHandleVersions
 } from '../../src/interfaces/simulation.interface'
 import {
@@ -454,6 +456,291 @@ describe('Simulation API', () => {
       })
 
       const response = await post(calculatePath(), validVariant())
+
+      expect(response.status).to.equal(503)
+      expect(response.body.code).to.equal(SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE)
+    })
+  })
+
+  describe('POST /simulation/compare', () => {
+    const comparisonVariant = (
+      overrides: Partial<SimulationCalculationResult> = {}
+    ): SimulationCalculationResult => ({
+      baseScenarioHash: validatedBaseScenario().baseScenarioHash,
+      variantId: 'variant-optimized',
+      dataQuality: SIMULATION_DATA_QUALITY.COMPLETE,
+      viability: SIMULATION_VIABILITY.VIABLE,
+      recommended: false,
+      risks: [],
+      components: [{ code: 'fuel', amountArs: 100.25 }],
+      totals: {
+        revenueArs: 1000,
+        merchandiseCostArs: 100,
+        operatingCostArs: 50,
+        marginArs: 850
+      },
+      calculatedAt: FIXED_CLOCK,
+      ...overrides
+    })
+
+    it('S-03: ranks variants with the actor-bound token and writes nothing', async () => {
+      const verifyBaseScenarioToken = sinon.stub().resolves(validatedBaseScenario())
+      const loadSnapshots = sinon.stub().resolves(snapshots())
+      const issueBaseScenarioToken = sinon.stub().resolves(ISSUED_TOKEN)
+      configure({ service: { verifyBaseScenarioToken, loadSnapshots, issueBaseScenarioToken } })
+
+      const response = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [
+          comparisonVariant(),
+          comparisonVariant({
+            variantId: 'variant-conservative',
+            totals: {
+              revenueArs: 1000,
+              merchandiseCostArs: 100,
+              operatingCostArs: 20,
+              marginArs: 150
+            }
+          }),
+          comparisonVariant({
+            variantId: 'variant-overcapacity',
+            viability: SIMULATION_VIABILITY.NOT_VIABLE,
+            totals: {
+              revenueArs: 1000,
+              merchandiseCostArs: 100,
+              operatingCostArs: 10,
+              marginArs: 900
+            }
+          })
+        ]
+      })
+
+      expect(response.status).to.equal(200)
+      expect(response.body.baseScenarioHash).to.equal(validatedBaseScenario().baseScenarioHash)
+      expect(response.body.recommendedVariantId).to.equal('variant-optimized')
+      expect(response.body.variants.map((variant: SimulationCalculationResult) => ({
+        variantId: variant.variantId,
+        recommended: variant.recommended
+      }))).to.deep.equal([
+        { variantId: 'variant-optimized', recommended: true },
+        { variantId: 'variant-conservative', recommended: false },
+        { variantId: 'variant-overcapacity', recommended: false }
+      ])
+      expect(verifyBaseScenarioToken.calledOnceWith(ISSUED_TOKEN, { actorId: USER_ID })).to.equal(true)
+      expect(loadSnapshots.called).to.equal(false)
+      expect(issueBaseScenarioToken.called).to.equal(false)
+    })
+
+    it('S-13: breaks a margin tie by lower operating cost', async () => {
+      configure()
+
+      const response = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [
+          comparisonVariant({
+            variantId: 'variant-expensive',
+            totals: {
+              revenueArs: 1000,
+              merchandiseCostArs: 100,
+              operatingCostArs: 100,
+              marginArs: 500
+            }
+          }),
+          comparisonVariant({
+            variantId: 'variant-lean',
+            totals: {
+              revenueArs: 1000,
+              merchandiseCostArs: 100,
+              operatingCostArs: 40,
+              marginArs: 500
+            }
+          })
+        ]
+      })
+
+      expect(response.status).to.equal(200)
+      expect(response.body.recommendedVariantId).to.equal('variant-lean')
+    })
+
+    it('preserves submitted totals verbatim because comparison is advisory', async () => {
+      configure()
+
+      const submitted = comparisonVariant({
+        recommended: false,
+        components: [{ code: 'fuel', amountArs: 1 }],
+        totals: {
+          revenueArs: 9999,
+          merchandiseCostArs: 1,
+          operatingCostArs: 1,
+          marginArs: 9997
+        }
+      })
+      const response = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [
+          submitted,
+          comparisonVariant({
+            variantId: 'variant-conservative',
+            totals: {
+              revenueArs: 1000,
+              merchandiseCostArs: 100,
+              operatingCostArs: 20,
+              marginArs: 150
+            }
+          })
+        ]
+      })
+
+      expect(response.status).to.equal(200)
+      expect(response.body.recommendedVariantId).to.equal('variant-optimized')
+      expect(response.body.variants[0].components).to.deep.equal(submitted.components)
+      expect(response.body.variants[0].totals).to.deep.equal(submitted.totals)
+    })
+
+    it('rejects variants bound to a different base scenario with 409', async () => {
+      const foreignHash = 'b'.repeat(64)
+      configure()
+
+      const response = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [
+          comparisonVariant({ baseScenarioHash: foreignHash }),
+          comparisonVariant({ variantId: 'variant-conservative', baseScenarioHash: foreignHash })
+        ]
+      }, { 'x-correlation-id': 'corr-compare-hash' })
+
+      expect(response.status).to.equal(409)
+      expect(response.body).to.deep.equal({
+        code: SIMULATION_ERROR_CODES.BASE_SCENARIO_INVALID,
+        message: 'Compared variants belong to a different base scenario',
+        correlationId: 'corr-compare-hash'
+      })
+    })
+
+    it('TC-030: rejects an invalid comparison contract before token verification', async () => {
+      const verifyBaseScenarioToken = sinon.stub().resolves(validatedBaseScenario())
+      configure({ service: { verifyBaseScenarioToken } })
+
+      const singleVariant = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [comparisonVariant()]
+      })
+      const mixedHashes = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [
+          comparisonVariant(),
+          comparisonVariant({ variantId: 'variant-conservative', baseScenarioHash: 'b'.repeat(64) })
+        ]
+      })
+      const extraField = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [comparisonVariant(), comparisonVariant({ variantId: 'variant-conservative' })],
+        recalculate: true
+      })
+
+      for (const response of [singleVariant, mixedHashes, extraField]) {
+        expect(response.status).to.equal(400)
+        expect(response.body.code).to.equal(SIMULATION_ERROR_CODES.INPUT_INVALID)
+      }
+      expect(verifyBaseScenarioToken.called).to.equal(false)
+    })
+
+    it('maps invalid, expired and other-actor tokens to 401', async () => {
+      const tokenErrors = [
+        new SimulationTokenError(SIMULATION_ERROR_CODES.TOKEN_INVALID, 'Base scenario handle token is malformed'),
+        new SimulationTokenError(SIMULATION_ERROR_CODES.TOKEN_EXPIRED, 'Base scenario handle has expired'),
+        new SimulationTokenError(SIMULATION_ERROR_CODES.TOKEN_INVALID, 'Base scenario handle is bound to a different actor')
+      ]
+
+      for (const tokenError of tokenErrors) {
+        configure({
+          service: {
+            verifyBaseScenarioToken: async () => {
+              throw tokenError
+            }
+          }
+        })
+
+        const response = await post('/simulation/compare', {
+          token: ISSUED_TOKEN,
+          variants: [
+            comparisonVariant(),
+            comparisonVariant({ variantId: 'variant-conservative' })
+          ]
+        }, { 'x-correlation-id': `corr-compare-${tokenError.code.toLowerCase()}` })
+
+        expect(response.status).to.equal(401)
+        expect(response.body.code).to.equal(tokenError.code)
+        expect(response.body.correlationId).to.equal(`corr-compare-${tokenError.code.toLowerCase()}`)
+      }
+    })
+
+    it('SIMULATION_DISABLED: returns 503 when the flag is off', async () => {
+      configure({ enabled: false })
+
+      const response = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [
+          comparisonVariant(),
+          comparisonVariant({ variantId: 'variant-conservative' })
+        ]
+      })
+
+      expect(response.status).to.equal(503)
+      expect(response.body.code).to.equal(SIMULATION_ERROR_CODES.DISABLED)
+    })
+
+    it('returns 401 when authentication is missing', async () => {
+      configure()
+
+      const response = await request(app)
+        .post('/simulation/compare')
+        .send({
+          token: ISSUED_TOKEN,
+          variants: [
+            comparisonVariant(),
+            comparisonVariant({ variantId: 'variant-conservative' })
+          ]
+        })
+
+      expect(response.status).to.equal(401)
+      expect(response.body.code).to.equal('AUTHENTICATION_INVALID')
+    })
+
+    it('returns 403 when the actor lacks simulation:write', async () => {
+      configure()
+
+      const response = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [
+          comparisonVariant(),
+          comparisonVariant({ variantId: 'variant-conservative' })
+        ]
+      }, { 'x-test-permission': 'deny' })
+
+      expect(response.status).to.equal(403)
+      expect(response.body.code).to.equal('PERMISSION_DENIED')
+    })
+
+    it('returns 503 when the token configuration is unavailable', async () => {
+      configure({
+        service: {
+          verifyBaseScenarioToken: async () => {
+            throw new SimulationTokenError(
+              SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE,
+              'A base scenario token secret is required'
+            )
+          }
+        }
+      })
+
+      const response = await post('/simulation/compare', {
+        token: ISSUED_TOKEN,
+        variants: [
+          comparisonVariant(),
+          comparisonVariant({ variantId: 'variant-conservative' })
+        ]
+      })
 
       expect(response.status).to.equal(503)
       expect(response.body.code).to.equal(SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE)

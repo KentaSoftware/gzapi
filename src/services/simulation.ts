@@ -10,6 +10,8 @@ import {
   type SimulationBaseScenarioResult,
   type SimulationCalculationParameters,
   type SimulationCalculationResult,
+  type SimulationComparisonInput,
+  type SimulationComparisonResult,
   type SimulationErrorCode,
   type SimulationRouteSnapshot,
   type SimulationSnapshotHandleVersions,
@@ -20,12 +22,15 @@ import {
 import {
   simulationBaseScenarioInputSchema,
   simulationBaseScenarioResultSchema,
+  simulationComparisonInputSchema,
+  simulationComparisonResultSchema,
   simulationVariantCalculationResultSchema,
   simulationVariantInputSchema
 } from '../schemas/simulation.schema'
 import {
   buildIncompleteCalculation,
-  calculateVariant as calculateVariantResult
+  calculateVariant as calculateVariantResult,
+  compareVariants as compareVariantResults
 } from './simulationRules'
 import {
   SimulationSnapshotError,
@@ -198,6 +203,15 @@ const assertCalculationResult = (
   return result
 }
 
+const assertComparisonResult = (
+  result: SimulationComparisonResult
+): SimulationComparisonResult => {
+  if (!simulationComparisonResultSchema.safeParse(result).success) {
+    throw configurationUnavailable('The comparison result does not match the declared contract')
+  }
+  return result
+}
+
 const baseScenarioVersions = (snapshots: ValidatedSnapshots): SimulationSnapshotHandleVersions => ({
   routeContractVersion: snapshots.routeSnapshot.contractVersion,
   stockContractVersion: snapshots.stockSnapshot.contractVersion,
@@ -333,4 +347,39 @@ export const calculateVariant = async (
   }
 
   return assertCalculationResult(result)
+}
+
+// Advisory comparison only. The canonical request carries already calculated
+// variants, not their inputs, so this operation cannot re-derive the submitted
+// totals or formulas. It validates the actor-bound base scenario, ranks the
+// supplied server-calculated results and persists nothing; saving a run is the
+// separate operation that recalculates from frozen snapshots.
+export const compareVariants = async (
+  input: SimulationComparisonInput,
+  context: BaseScenarioRequestContext,
+  dependencies: SimulationServiceDependencies
+): Promise<SimulationComparisonResult> => {
+  const parsedInput = simulationComparisonInputSchema.safeParse(input)
+  if (!parsedInput.success) {
+    throw inputInvalid('Comparison input is invalid', 'variants')
+  }
+
+  let base: ValidatedBaseScenario
+  try {
+    base = await dependencies.verifyBaseScenarioToken(parsedInput.data.token, context)
+  } catch (error) {
+    return rethrowKnownError(error)
+  }
+
+  if (parsedInput.data.variants.some((variant) => variant.baseScenarioHash !== base.baseScenarioHash)) {
+    throw new SimulationServiceError(
+      SIMULATION_ERROR_CODES.BASE_SCENARIO_INVALID,
+      'Compared variants belong to a different base scenario'
+    )
+  }
+
+  // The schema already constrains risk codes to the declared enum; the cast only
+  // narrows Zod's widened string[] inference at this validated boundary.
+  const variants = parsedInput.data.variants as SimulationCalculationResult[]
+  return assertComparisonResult(compareVariantResults(variants))
 }
