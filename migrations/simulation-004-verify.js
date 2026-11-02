@@ -88,10 +88,15 @@ const isLabel = (value) => isNonEmptyString(value) && value.length <= 64 && /^[A
 const isBoundedIdentifier = (value) => isNonEmptyString(value) && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
 const isContractVersion = (value) => isNonEmptyString(value) && value.length <= 64 && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)
 const isObjectIdString = (value) => typeof value === 'string' && /^[a-fA-F0-9]{24}$/.test(value)
+const isCivilDateString = (value) => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
 const isIsoDateTimeString = (value) => {
   if (typeof value !== 'string') return false
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return false
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value.slice(0, 10))) return false
+  if (!isCivilDateString(value.slice(0, 10))) return false
   return !Number.isNaN(new Date(value).getTime())
 }
 const isPersistedIdentifier = (value) => {
@@ -353,21 +358,26 @@ const verify = async (db) => {
     }
   }
 
-  const runs = existingCollections.has('simulationruns') ? await db.collection('simulationruns').find({}).toArray() : []
-  for (const run of runs) validateRun(run, failures)
+  const scanCollection = async (name, validate) => {
+    if (!existingCollections.has(name)) return 0
+    let checked = 0
+    for await (const document of db.collection(name).find({})) {
+      validate(document, failures)
+      checked += 1
+    }
+    return checked
+  }
 
-  const configurations = existingCollections.has('simulationconfigversions') ? await db.collection('simulationconfigversions').find({}).toArray() : []
-  for (const version of configurations) validateConfiguration(version, failures)
-
-  const presets = existingCollections.has('simulationpresetversions') ? await db.collection('simulationpresetversions').find({}).toArray() : []
-  for (const preset of presets) validatePreset(preset, failures)
+  const runsChecked = await scanCollection('simulationruns', validateRun)
+  const configurationsChecked = await scanCollection('simulationconfigversions', validateConfiguration)
+  const presetsChecked = await scanCollection('simulationpresetversions', validatePreset)
 
   return {
     failures,
     indexes,
-    runsChecked: runs.length,
-    configurationsChecked: configurations.length,
-    presetsChecked: presets.length,
+    runsChecked,
+    configurationsChecked,
+    presetsChecked,
     structuralValidationCheck: 'evaluated-by-migration',
     modelImmutabilityCheck: 'not-evaluated-by-migration'
   }

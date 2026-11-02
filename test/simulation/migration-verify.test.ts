@@ -11,12 +11,23 @@ import {
   validStockSnapshot
 } from './fixtures'
 
+interface VerificationResult {
+  failures: string[]
+  indexes: Array<{ collection: string, name: string }>
+  runsChecked: number
+  configurationsChecked: number
+  presetsChecked: number
+  structuralValidationCheck: string
+  modelImmutabilityCheck: string
+}
+
 interface VerificationModule {
   validateRun: (run: unknown, failures: string[]) => void
+  verify: (db: unknown) => Promise<VerificationResult>
 }
 
 const requireFromTest = createRequire(__filename)
-const { validateRun } = requireFromTest('../../migrations/simulation-004-verify.js') as VerificationModule
+const { validateRun, verify } = requireFromTest('../../migrations/simulation-004-verify.js') as VerificationModule
 
 describe('Simulation migration - persisted structural verification', () => {
   const persistedRun = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -62,5 +73,65 @@ describe('Simulation migration - persisted structural verification', () => {
       calculation: { ...validCalculation, dataQuality: SIMULATION_DATA_QUALITY.INCOMPLETE }
     }), inconsistentRecommendation)
     expect(inconsistentRecommendation.some((failure) => failure.includes('recommends an incomplete or non-viable calculation'))).to.equal(true)
+  })
+
+  it('TC-012: rejects impossible civil dates in persisted evidence while accepting real leap-year dates', () => {
+    const impossibleDay: string[] = []
+    validateRun(persistedRun({
+      routeSnapshot: { ...validRouteSnapshot, capturedAt: '2026-02-30T12:00:00.000Z' }
+    }), impossibleDay)
+    expect(impossibleDay.some((failure) => failure.includes('invalid route capture timestamp'))).to.equal(true)
+
+    const impossibleMonthEnd: string[] = []
+    validateRun(persistedRun({
+      stockSnapshot: { ...validStockSnapshot, capturedAt: '2026-04-31T12:00:00.000Z' },
+      calculation: { ...validCalculation, calculatedAt: '2026-02-29T12:00:00.000Z' }
+    }), impossibleMonthEnd)
+    expect(impossibleMonthEnd.some((failure) => failure.includes('invalid stock capture timestamp'))).to.equal(true)
+    expect(impossibleMonthEnd.some((failure) => failure.includes('invalid calculation timestamp'))).to.equal(true)
+
+    const leapDay: string[] = []
+    validateRun(persistedRun({
+      routeSnapshot: { ...validRouteSnapshot, capturedAt: '2024-02-29T12:00:00.000Z' },
+      stockSnapshot: { ...validStockSnapshot, capturedAt: '2024-02-29T12:00:00.000Z' },
+      calculation: { ...validCalculation, calculatedAt: '2024-02-29T12:00:00.000Z' }
+    }), leapDay)
+    expect(leapDay).to.deep.equal([])
+  })
+
+  it('TC-013: iterates persisted collections incrementally instead of materializing them', async () => {
+    const cursorFor = (documents: unknown[]): unknown => {
+      let index = 0
+      return {
+        toArray: async () => {
+          throw new Error('collection was materialized with toArray')
+        },
+        [Symbol.asyncIterator]: () => ({
+          next: async () => {
+            if (index >= documents.length) return { done: true, value: undefined }
+            const value = documents[index]
+            index += 1
+            return { done: false, value }
+          }
+        })
+      }
+    }
+    const documents: Record<string, unknown[]> = {
+      simulationruns: [persistedRun(), persistedRun({ _id: '507f1f77bcf86cd799439016' })],
+      simulationconfigversions: [],
+      simulationpresetversions: []
+    }
+    const db = {
+      listCollections: () => ({ toArray: async () => Object.keys(documents).map((name) => ({ name })) }),
+      collection: (name: string) => ({
+        indexes: async () => [],
+        find: () => cursorFor(documents[name] ?? [])
+      })
+    }
+
+    const result = await verify(db)
+    expect(result.runsChecked).to.equal(2)
+    expect(result.configurationsChecked).to.equal(0)
+    expect(result.presetsChecked).to.equal(0)
   })
 })
