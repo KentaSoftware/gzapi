@@ -16,10 +16,15 @@ import {
   createBaseScenario,
   type SimulationServiceDependencies
 } from '../services/simulation'
+import {
+  SimulationRunRepositoryError,
+  type SimulationRunRepository
+} from '../services/simulationRunRepository'
 import { sendErrorEnvelope } from '../utils/error.handle'
 
 interface SimulationControllerDependencies {
   service: SimulationServiceDependencies
+  runRepository: SimulationRunRepository
 }
 
 const statusForSimulationError = (
@@ -91,6 +96,20 @@ const handleSimulationFailure = (
   sendErrorEnvelope(res, 503, SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE, 'Simulation request is unavailable')
 }
 
+const handleRunFailure = (res: Response, error: unknown): void => {
+  if (error instanceof SimulationRunRepositoryError) {
+    sendErrorEnvelope(res, statusForSimulationError(error.code), error.code, error.message)
+    return
+  }
+
+  sendErrorEnvelope(
+    res,
+    503,
+    SIMULATION_ERROR_CODES.REPOSITORY_ERROR,
+    'Simulation run repository is unavailable'
+  )
+}
+
 const postBaseScenario = async (
   req: Request,
   res: Response,
@@ -141,5 +160,62 @@ const postCalculateVariant = async (
   }
 }
 
-export { postBaseScenario, postCalculateVariant }
+const getRun = async (
+  req: Request,
+  res: Response,
+  dependencies: SimulationControllerDependencies
+): Promise<void> => {
+  const actorId = actorIdOf(res)
+  if (actorId === undefined) {
+    sendErrorEnvelope(res, 401, 'AUTHENTICATION_INVALID', 'Authentication credentials are invalid')
+    return
+  }
+
+  try {
+    const run = await dependencies.runRepository.findById(req.params.id)
+    res.status(200).send(run)
+  } catch (error) {
+    handleRunFailure(res, error)
+  }
+}
+
+const postArchiveRun = async (
+  req: Request,
+  res: Response,
+  dependencies: SimulationControllerDependencies
+): Promise<void> => {
+  const actorId = actorIdOf(res)
+  if (actorId === undefined) {
+    sendErrorEnvelope(res, 401, 'AUTHENTICATION_INVALID', 'Authentication credentials are invalid')
+    return
+  }
+
+  try {
+    const run = await dependencies.runRepository.archive(req.params.id, actorId)
+    res.status(200).send(run)
+  } catch (error) {
+    handleRunFailure(res, error)
+  }
+}
+
+const postRestoreRun = async (
+  req: Request,
+  res: Response,
+  dependencies: SimulationControllerDependencies
+): Promise<void> => {
+  const actorId = actorIdOf(res)
+  if (actorId === undefined) {
+    sendErrorEnvelope(res, 401, 'AUTHENTICATION_INVALID', 'Authentication credentials are invalid')
+    return
+  }
+
+  try {
+    const run = await dependencies.runRepository.restore(req.params.id, actorId)
+    res.status(200).send(run)
+  } catch (error) {
+    handleRunFailure(res, error)
+  }
+}
+
+export { getRun, postArchiveRun, postBaseScenario, postCalculateVariant, postRestoreRun }
 export type { SimulationControllerDependencies }

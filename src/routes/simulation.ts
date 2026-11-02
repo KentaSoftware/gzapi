@@ -6,8 +6,11 @@ import {
 
 import { getSimulationConfig, type SimulationConfiguration } from '../config/simulation'
 import {
+  getRun,
+  postArchiveRun,
   postBaseScenario,
-  postCalculateVariant
+  postCalculateVariant,
+  postRestoreRun
 } from '../controllers/simulation'
 import { SIMULATION_ERROR_CODES } from '../interfaces/simulation.interface'
 import { checkPermission } from '../middleware/checkPermission'
@@ -16,6 +19,10 @@ import {
   SimulationServiceError,
   type SimulationServiceDependencies
 } from '../services/simulation'
+import {
+  createSimulationRunMongoRepository,
+  type SimulationRunRepository
+} from '../services/simulationRunRepository'
 import { sendErrorEnvelope } from '../utils/error.handle'
 
 interface SimulationRouteDependencies {
@@ -23,6 +30,11 @@ interface SimulationRouteDependencies {
   checkPermission: (action: string) => RequestHandler
   getConfig: () => SimulationConfiguration
   service: SimulationServiceDependencies
+  runRepository: SimulationRunRepository
+}
+
+type InjectedSimulationRouteDependencies = Omit<SimulationRouteDependencies, 'runRepository'> & {
+  runRepository?: SimulationRunRepository
 }
 
 const SIMULATION_DEPENDENCIES_LOCAL = 'simulationRouteDependencies'
@@ -42,13 +54,14 @@ const productionDependencies: SimulationRouteDependencies = {
     loadSnapshots: unavailableService,
     issueBaseScenarioToken: unavailableService,
     verifyBaseScenarioToken: unavailableService
-  }
+  },
+  runRepository: createSimulationRunMongoRepository()
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
-const isRouteDependencies = (value: unknown): value is SimulationRouteDependencies =>
+const isRouteDependencies = (value: unknown): value is InjectedSimulationRouteDependencies =>
   isRecord(value) &&
   typeof value.checkJwt === 'function' &&
   typeof value.checkPermission === 'function' &&
@@ -60,7 +73,12 @@ const resolveDependencies = (
   fallback: SimulationRouteDependencies
 ): SimulationRouteDependencies => {
   const injected: unknown = req.app.locals[SIMULATION_DEPENDENCIES_LOCAL]
-  return isRouteDependencies(injected) ? injected : fallback
+  if (!isRouteDependencies(injected)) return fallback
+  return {
+    ...fallback,
+    ...injected,
+    runRepository: injected.runRepository ?? fallback.runRepository
+  }
 }
 
 const simulationEnabledGuard = (fallback: SimulationRouteDependencies): RequestHandler => (req, res, next) => {
@@ -91,12 +109,35 @@ const createSimulationRouter = (
     simulationEnabledGuard(dependencies)
   ]
 
+  const controllerDependencies = (req: Request): {
+    service: SimulationServiceDependencies
+    runRepository: SimulationRunRepository
+  } => {
+    const resolved = resolveDependencies(req, dependencies)
+    return {
+      service: resolved.service,
+      runRepository: resolved.runRepository
+    }
+  }
+
   router.post('/base-scenarios', ...guards('simulation:write'), (req, res) => {
-    void postBaseScenario(req, res, { service: resolveDependencies(req, dependencies).service })
+    void postBaseScenario(req, res, controllerDependencies(req))
   })
 
   router.post('/base-scenarios/:token/variants/calculate', ...guards('simulation:write'), (req, res) => {
-    void postCalculateVariant(req, res, { service: resolveDependencies(req, dependencies).service })
+    void postCalculateVariant(req, res, controllerDependencies(req))
+  })
+
+  router.get('/runs/:id', ...guards('simulation:read'), (req, res) => {
+    void getRun(req, res, controllerDependencies(req))
+  })
+
+  router.post('/runs/:id/archive', ...guards('simulation:write'), (req, res) => {
+    void postArchiveRun(req, res, controllerDependencies(req))
+  })
+
+  router.post('/runs/:id/restore', ...guards('simulation:write'), (req, res) => {
+    void postRestoreRun(req, res, controllerDependencies(req))
   })
 
   return router
