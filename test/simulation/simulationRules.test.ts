@@ -84,11 +84,11 @@ describe('Simulation pure rules', () => {
     expect(comparison.recommendedVariantId).to.equal(validCalculation.variantId)
   })
 
-  it('S-03b: does not recommend when no complete viable variant exists', () => {
-    const incomplete = {
+  it('S-03b: does not recommend when viability is unassessed', () => {
+    const unassessed = {
       ...validCalculation,
-      variantId: 'variant-incomplete',
-      dataQuality: SIMULATION_DATA_QUALITY.INCOMPLETE,
+      variantId: 'variant-unassessed',
+      dataQuality: SIMULATION_DATA_QUALITY.COMPLETE,
       viability: SIMULATION_VIABILITY.INCOMPLETE,
       recommended: false
     }
@@ -99,7 +99,7 @@ describe('Simulation pure rules', () => {
       recommended: false
     }
 
-    expect(compareVariants([incomplete, notViable]).recommendedVariantId).to.equal(null)
+    expect(compareVariants([unassessed, notViable]).recommendedVariantId).to.equal(null)
   })
 
   it('S-03c: rejects comparison results from different base scenarios', () => {
