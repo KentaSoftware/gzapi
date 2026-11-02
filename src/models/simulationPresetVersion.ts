@@ -10,6 +10,8 @@ const PRESET_IMMUTABLE_MESSAGE = 'Simulation preset versions are immutable'
 const TIMESTAMP_MANAGED_PATHS = new Set(['createdAt', 'updatedAt'])
 const PRESET_MUTABLE_PATHS = new Set(['status', 'archivedAt', 'archivedBy'])
 const PRESET_UNSETTABLE_PATHS = new Set(['archivedAt', 'archivedBy'])
+const PRESET_STATUS_VALUES: ReadonlySet<unknown> = new Set(Object.values(SIMULATION_RECORD_STATUSES))
+const PRESET_STATUS_MESSAGE = `Simulation preset status must be one of: ${Object.values(SIMULATION_RECORD_STATUSES).join(', ')}`
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/
 
 interface MutationOptions {
@@ -80,8 +82,12 @@ const assertAllowedUpdate = (update: unknown): void => {
       throw new Error(PRESET_IMMUTABLE_MESSAGE)
     }
     const allowedPaths = operator === '$set' ? PRESET_MUTABLE_PATHS : PRESET_UNSETTABLE_PATHS
+    const payloadRecord = payload as Record<string, unknown>
     for (const path of Object.keys(payload)) {
       if (!allowedPaths.has(path)) throw new Error(PRESET_IMMUTABLE_MESSAGE)
+    }
+    if (operator === '$set' && 'status' in payloadRecord && !PRESET_STATUS_VALUES.has(payloadRecord.status)) {
+      throw new Error(PRESET_STATUS_MESSAGE)
     }
   }
 }

@@ -53,6 +53,26 @@ describe('Simulation persistence - versioned preset model', () => {
     expect(() => assertPresetVersionUpdateAllowed({ $unset: { name: '' } })).to.throw()
   })
 
+  it('TC-012: validates status values on permitted update paths', () => {
+    expect(() => assertPresetVersionUpdateAllowed({ $set: { status: SIMULATION_RECORD_STATUSES.ACTIVE } })).to.not.throw()
+    expect(() => assertPresetVersionUpdateAllowed({ $set: { status: SIMULATION_RECORD_STATUSES.ARCHIVED } })).to.not.throw()
+    expect(() => assertPresetVersionUpdateAllowed({ $set: { status: 'PENDING' } })).to.throw()
+    expect(() => assertPresetVersionUpdateAllowed({ $set: { status: 'archived' } })).to.throw()
+    expect(() => assertPresetVersionUpdateAllowed({ $set: { status: ['ARCHIVED'] } })).to.throw()
+    expect(() => assertPresetVersionUpdateAllowed({ $set: { status: null } })).to.throw()
+  })
+
+  it('TC-012: installed preset middleware rejects unsupported status values', async () => {
+    const deniedStatusUpdate = SimulationPresetVersionModel.updateOne({ _id: USER_ID }, { $set: { status: 'PENDING' } })
+    await expectHookRejection(SimulationPresetVersionModel.schema, 'updateOne', deniedStatusUpdate)
+
+    const deniedStatusFind = SimulationPresetVersionModel.findOneAndUpdate({ _id: USER_ID }, { $set: { status: 'PENDING' } })
+    await expectHookRejection(SimulationPresetVersionModel.schema, 'findOneAndUpdate', deniedStatusFind)
+
+    const allowedStatusUpdate = SimulationPresetVersionModel.updateOne({ _id: USER_ID }, { $set: { status: SIMULATION_RECORD_STATUSES.ACTIVE } })
+    await executePreHook(SimulationPresetVersionModel.schema, 'updateOne', allowedStatusUpdate)
+  })
+
   it('TC-012: installed preset middleware blocks evidence and permits archive', async () => {
     const allowedUpdate = SimulationPresetVersionModel.updateOne({ _id: USER_ID }, { $set: { status: SIMULATION_RECORD_STATUSES.ARCHIVED } })
     await executePreHook(SimulationPresetVersionModel.schema, 'updateOne', allowedUpdate)
