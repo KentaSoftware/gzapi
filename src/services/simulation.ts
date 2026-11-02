@@ -3,17 +3,14 @@ import { createHash } from 'node:crypto'
 import {
   SIMULATION_DATA_QUALITY,
   SIMULATION_ERROR_CODES,
-  SIMULATION_RISK_CODES,
   SIMULATION_RULES_PROVISIONAL_V1,
-  SIMULATION_VIABILITY,
   type SimulationBaseScenarioCompleteResult,
   type SimulationBaseScenarioIncompleteResult,
   type SimulationBaseScenarioInput,
   type SimulationBaseScenarioResult,
+  type SimulationCalculationParameters,
   type SimulationCalculationResult,
   type SimulationErrorCode,
-  type SimulationIncompleteCalculationResult,
-  type SimulationRiskCode,
   type SimulationRouteSnapshot,
   type SimulationSnapshotHandleVersions,
   type SimulationStockSnapshot,
@@ -27,11 +24,8 @@ import {
   simulationVariantInputSchema
 } from '../schemas/simulation.schema'
 import {
-  calculateDirectLoadTotals,
-  calculateDistanceBasedCostArs,
-  calculateDurationBasedCostArs,
-  calculateFuelCostArs,
-  roundCommercialAmount
+  buildIncompleteCalculation,
+  calculateVariant as calculateVariantResult
 } from './simulationRules'
 import {
   SimulationSnapshotError,
@@ -43,15 +37,11 @@ import {
   type ValidatedBaseScenario
 } from './simulationToken'
 
-// Provisional technical inputs for composing the existing pure helpers. There are
-// no defaults: when a caller cannot supply all approved values, the function must
-// return the incomplete state instead of treating a missing value as zero.
-export interface SimulationCalculationParameters {
-  fuelPriceArsPerLiter: number
-  durationCostArsPerHour: number
-  distanceCostArsPerKm: number
-}
+export type { SimulationCalculationParameters }
 
+// Dependencies for the provisional service composition. `calculationParameters` is
+// test/service input only; it is not approved configuration, so live calculation
+// remains unavailable until approved configuration and producers exist.
 export interface SimulationBaseScenarioHashInput {
   routeSnapshot: SimulationRouteSnapshot
   stockSnapshot: SimulationStockSnapshot
@@ -265,8 +255,6 @@ export const createBaseScenario = async (
   return assertBaseScenarioResult(result)
 }
 
-const variantIdOf = (name: string): string => name.trim().replace(/\s+/g, '_')
-
 type ResolvedParameters =
   | { missing: string[] }
   | { values: SimulationCalculationParameters }
@@ -290,22 +278,6 @@ const resolveParameters = (
   if (missing.length > 0) return { missing }
   return { values: parameters }
 }
-
-const incompleteCalculation = (
-  base: ValidatedBaseScenario,
-  variantId: string,
-  missingFields: string[],
-  calculatedAt: string
-): SimulationIncompleteCalculationResult => ({
-  baseScenarioHash: base.baseScenarioHash,
-  variantId,
-  dataQuality: SIMULATION_DATA_QUALITY.INCOMPLETE,
-  viability: SIMULATION_VIABILITY.INCOMPLETE,
-  recommended: false,
-  risks: [SIMULATION_RISK_CODES.INCOMPLETE_DATA],
-  missingFields,
-  calculatedAt
-})
 
 export const calculateVariant = async (
   token: string,
@@ -332,66 +304,32 @@ export const calculateVariant = async (
   }
 
   const calculatedAt = clockNow(dependencies)
-  const variantId = variantIdOf(parsedInput.data.name)
+  const variantId = parsedInput.data.name
   const resolved = resolveParameters(dependencies.calculationParameters)
   if ('missing' in resolved) {
-    return assertCalculationResult(incompleteCalculation(base, variantId, resolved.missing, calculatedAt))
+    return assertCalculationResult(buildIncompleteCalculation(
+      base.baseScenarioHash,
+      variantId,
+      resolved.missing,
+      calculatedAt
+    ))
   }
 
-  let directLoad: { revenueArs: number, merchandiseCostArs: number }
+  let result: SimulationCalculationResult
   try {
-    directLoad = calculateDirectLoadTotals(base.stockSnapshot, parsedInput.data.directLoad)
+    result = calculateVariantResult(
+      {
+        baseScenarioHash: base.baseScenarioHash,
+        routeSnapshot: base.routeSnapshot,
+        stockSnapshot: base.stockSnapshot
+      },
+      parsedInput.data,
+      resolved.values,
+      calculatedAt
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Direct load could not be calculated'
     throw inputInvalid(message, 'directLoad')
-  }
-
-  const fuelArs = calculateFuelCostArs({
-    distanceMeters: base.routeSnapshot.distanceMeters,
-    consumptionLitersPer100Km: base.routeSnapshot.vehicle.fuelConsumptionLitersPer100Km,
-    priceArsPerLiter: resolved.values.fuelPriceArsPerLiter
-  })
-  const durationArs = calculateDurationBasedCostArs(
-    base.routeSnapshot.durationSeconds,
-    resolved.values.durationCostArsPerHour
-  )
-  const distanceArs = calculateDistanceBasedCostArs(
-    base.routeSnapshot.distanceMeters,
-    resolved.values.distanceCostArsPerKm
-  )
-  const tollsArs = roundCommercialAmount(base.routeSnapshot.tollsArs)
-  const parkingArs = roundCommercialAmount(base.routeSnapshot.parkingArs)
-  const operatingCostArs = roundCommercialAmount(
-    fuelArs + durationArs + distanceArs + tollsArs + parkingArs
-  )
-  const marginArs = roundCommercialAmount(
-    directLoad.revenueArs - operatingCostArs - directLoad.merchandiseCostArs
-  )
-  const negativeMargin = marginArs < 0
-  const risks: SimulationRiskCode[] = negativeMargin ? [SIMULATION_RISK_CODES.NEGATIVE_MARGIN] : []
-
-  const result: SimulationCalculationResult = {
-    baseScenarioHash: base.baseScenarioHash,
-    variantId,
-    dataQuality: SIMULATION_DATA_QUALITY.COMPLETE,
-    viability: negativeMargin ? SIMULATION_VIABILITY.NOT_VIABLE : SIMULATION_VIABILITY.VIABLE,
-    recommended: false,
-    risks,
-    components: [
-      { code: 'fuel', amountArs: fuelArs },
-      { code: 'duration', amountArs: durationArs },
-      { code: 'distance', amountArs: distanceArs },
-      { code: 'tolls', amountArs: tollsArs },
-      { code: 'parking', amountArs: parkingArs },
-      { code: 'merchandise', amountArs: directLoad.merchandiseCostArs }
-    ],
-    totals: {
-      revenueArs: directLoad.revenueArs,
-      merchandiseCostArs: directLoad.merchandiseCostArs,
-      operatingCostArs,
-      marginArs
-    },
-    calculatedAt
   }
 
   return assertCalculationResult(result)

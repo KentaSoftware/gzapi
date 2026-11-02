@@ -150,10 +150,27 @@ export interface SimulationCalculationTotals {
   marginArs: number
 }
 
+// Provisional test/service inputs for composing the existing pure helpers. They are
+// not approved configuration or homologation evidence. Live calculation remains
+// unavailable until an approved configuration and producer contracts exist.
+export interface SimulationCalculationParameters {
+  fuelPriceArsPerLiter: number
+  durationCostArsPerHour: number
+  distanceCostArsPerKm: number
+}
+
+export interface SimulationVariantCalculationBase {
+  baseScenarioHash: string
+  routeSnapshot: SimulationRouteSnapshot
+  stockSnapshot: SimulationStockSnapshot
+}
+
+// Complete-data calculation. Capacity evaluation has no approved evaluator or
+// threshold, so viability may still be INCOMPLETE even when every input is present.
 export interface SimulationCalculationResult {
   baseScenarioHash: string
   variantId: string
-  dataQuality: SimulationDataQuality
+  dataQuality: typeof SIMULATION_DATA_QUALITY.COMPLETE
   viability: SimulationViability
   recommended: boolean
   risks: SimulationRiskCode[]

@@ -1,10 +1,16 @@
 import {
   SIMULATION_DATA_QUALITY,
+  SIMULATION_RISK_CODES,
   SIMULATION_VIABILITY,
+  type SimulationCalculationParameters,
   type SimulationCalculationResult,
   type SimulationComparisonResult,
   type SimulationDirectLoadLine,
-  type SimulationStockSnapshot
+  type SimulationIncompleteCalculationResult,
+  type SimulationRiskCode,
+  type SimulationStockSnapshot,
+  type SimulationVariantCalculationBase,
+  type SimulationVariantInput
 } from '../interfaces/simulation.interface'
 
 interface FuelCostInput {
@@ -82,6 +88,84 @@ export const calculateDirectLoadTotals = (
   return {
     revenueArs: roundCommercialAmount(revenueArs),
     merchandiseCostArs: roundCommercialAmount(merchandiseCostArs)
+  }
+}
+
+// FR-028 result construction for missing required calculation inputs. The caller
+// supplies the identified fields; no component or total is fabricated.
+export const buildIncompleteCalculation = (
+  baseScenarioHash: string,
+  variantId: string,
+  missingFields: string[],
+  calculatedAt: string
+): SimulationIncompleteCalculationResult => ({
+  baseScenarioHash,
+  variantId,
+  dataQuality: SIMULATION_DATA_QUALITY.INCOMPLETE,
+  viability: SIMULATION_VIABILITY.INCOMPLETE,
+  recommended: false,
+  risks: [SIMULATION_RISK_CODES.INCOMPLETE_DATA],
+  missingFields: [...missingFields],
+  calculatedAt
+})
+
+// Plan §7.3.2 pure calculation: no I/O, no clock read and no mutation. The service
+// verifies the handle and supplies validated snapshots, provisional parameters and
+// the injected timestamp. Capacity has no approved evaluator or threshold, so a
+// non-negative margin is not evidence of viability and the result stays INCOMPLETE.
+export const calculateVariant = (
+  base: SimulationVariantCalculationBase,
+  input: SimulationVariantInput,
+  parameters: SimulationCalculationParameters,
+  calculatedAt: string
+): SimulationCalculationResult => {
+  const directLoad = calculateDirectLoadTotals(base.stockSnapshot, input.directLoad)
+  const fuelArs = calculateFuelCostArs({
+    distanceMeters: base.routeSnapshot.distanceMeters,
+    consumptionLitersPer100Km: base.routeSnapshot.vehicle.fuelConsumptionLitersPer100Km,
+    priceArsPerLiter: parameters.fuelPriceArsPerLiter
+  })
+  const durationArs = calculateDurationBasedCostArs(
+    base.routeSnapshot.durationSeconds,
+    parameters.durationCostArsPerHour
+  )
+  const distanceArs = calculateDistanceBasedCostArs(
+    base.routeSnapshot.distanceMeters,
+    parameters.distanceCostArsPerKm
+  )
+  const tollsArs = roundCommercialAmount(base.routeSnapshot.tollsArs)
+  const parkingArs = roundCommercialAmount(base.routeSnapshot.parkingArs)
+  const operatingCostArs = roundCommercialAmount(
+    fuelArs + durationArs + distanceArs + tollsArs + parkingArs
+  )
+  const marginArs = roundCommercialAmount(
+    directLoad.revenueArs - operatingCostArs - directLoad.merchandiseCostArs
+  )
+  const negativeMargin = marginArs < 0
+  const risks: SimulationRiskCode[] = negativeMargin ? [SIMULATION_RISK_CODES.NEGATIVE_MARGIN] : []
+
+  return {
+    baseScenarioHash: base.baseScenarioHash,
+    variantId: input.name,
+    dataQuality: SIMULATION_DATA_QUALITY.COMPLETE,
+    viability: negativeMargin ? SIMULATION_VIABILITY.NOT_VIABLE : SIMULATION_VIABILITY.INCOMPLETE,
+    recommended: false,
+    risks,
+    components: [
+      { code: 'fuel', amountArs: fuelArs },
+      { code: 'duration', amountArs: durationArs },
+      { code: 'distance', amountArs: distanceArs },
+      { code: 'tolls', amountArs: tollsArs },
+      { code: 'parking', amountArs: parkingArs },
+      { code: 'merchandise', amountArs: directLoad.merchandiseCostArs }
+    ],
+    totals: {
+      revenueArs: directLoad.revenueArs,
+      merchandiseCostArs: directLoad.merchandiseCostArs,
+      operatingCostArs,
+      marginArs
+    },
+    calculatedAt
   }
 }
 

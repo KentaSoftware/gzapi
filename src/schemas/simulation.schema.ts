@@ -146,11 +146,17 @@ const calculationTotalsSchema = z.object({
   marginArs: signedMoneyArsSchema
 }).strict()
 
+const calculationViabilitySchema = z.enum([
+  SIMULATION_VIABILITY.VIABLE,
+  SIMULATION_VIABILITY.NOT_VIABLE,
+  SIMULATION_VIABILITY.INCOMPLETE
+])
+
 const simulationCalculationResultSchema = z.object({
   baseScenarioHash: hashSchema,
-  variantId: boundedIdentifierSchema,
-  dataQuality: z.enum(Object.values(SIMULATION_DATA_QUALITY) as [string, ...string[]]),
-  viability: z.enum(Object.values(SIMULATION_VIABILITY) as [string, ...string[]]),
+  variantId: labelSchema,
+  dataQuality: z.literal(SIMULATION_DATA_QUALITY.COMPLETE),
+  viability: calculationViabilitySchema,
   recommended: z.boolean(),
   risks: z.array(z.enum(Object.values(SIMULATION_RISK_CODES) as [string, ...string[]])).max(4).refine(
     (risks) => hasUniqueValues(risks),
@@ -286,7 +292,7 @@ const simulationBaseScenarioResultSchema = z.discriminatedUnion('dataQuality', [
 
 const simulationIncompleteCalculationResultSchema = z.object({
   baseScenarioHash: hashSchema,
-  variantId: boundedIdentifierSchema,
+  variantId: labelSchema,
   dataQuality: z.literal(SIMULATION_DATA_QUALITY.INCOMPLETE),
   viability: z.literal(SIMULATION_VIABILITY.INCOMPLETE),
   recommended: z.literal(false),
@@ -298,7 +304,7 @@ const simulationIncompleteCalculationResultSchema = z.object({
   calculatedAt: isoDateTimeSchema
 }).strict()
 
-const simulationVariantCalculationResultSchema = z.union([
+const simulationVariantCalculationResultSchema = z.discriminatedUnion('dataQuality', [
   simulationCalculationResultSchema,
   simulationIncompleteCalculationResultSchema
 ])
