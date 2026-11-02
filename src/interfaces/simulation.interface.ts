@@ -46,6 +46,10 @@ export const SIMULATION_CONTRACT_IDS = {
 
 export type SimulationContractId = (typeof SIMULATION_CONTRACT_IDS)[keyof typeof SIMULATION_CONTRACT_IDS]
 
+// Provisional technical identifier for composing the existing pure helpers. It is
+// not homologation evidence and does not approve formulas, units, limits or defaults.
+export const SIMULATION_RULES_PROVISIONAL_V1 = 'SIMULATION_RULES_PROVISIONAL_V1'
+
 export const SIMULATION_ERROR_CODES = {
   DISABLED: 'SIMULATION_DISABLED',
   CONTRACT_NOT_APPROVED: 'SIMULATION_CONTRACT_NOT_APPROVED',
@@ -158,6 +162,21 @@ export interface SimulationCalculationResult {
   calculatedAt: string
 }
 
+// FR-028 represents missing calculation inputs honestly: no components or totals
+// are fabricated, and the variant is explicitly incomplete and non-recommendable.
+export interface SimulationIncompleteCalculationResult {
+  baseScenarioHash: string
+  variantId: string
+  dataQuality: typeof SIMULATION_DATA_QUALITY.INCOMPLETE
+  viability: typeof SIMULATION_VIABILITY.INCOMPLETE
+  recommended: false
+  risks: SimulationRiskCode[]
+  missingFields: string[]
+  calculatedAt: string
+}
+
+export type SimulationVariantCalculationResult = SimulationCalculationResult | SimulationIncompleteCalculationResult
+
 export interface SimulationComparisonInput {
   token: string
   variants: SimulationCalculationResult[]
@@ -172,6 +191,21 @@ export interface SimulationComparisonResult {
 export interface SimulationBaseScenarioInput {
   routeId: string
 }
+
+export interface SimulationBaseScenarioCompleteResult {
+  dataQuality: typeof SIMULATION_DATA_QUALITY.COMPLETE
+  token: string
+  baseScenarioHash: string
+  versions: SimulationSnapshotHandleVersions
+}
+
+export interface SimulationBaseScenarioIncompleteResult {
+  dataQuality: typeof SIMULATION_DATA_QUALITY.INCOMPLETE
+  error: SimulationErrorEnvelope
+  missingField?: string
+}
+
+export type SimulationBaseScenarioResult = SimulationBaseScenarioCompleteResult | SimulationBaseScenarioIncompleteResult
 
 export interface SimulationSaveRunInput {
   token: string

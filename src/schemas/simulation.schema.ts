@@ -260,6 +260,49 @@ const simulationErrorEnvelopeSchema = z.object({
   correlationId: z.string().trim().min(1).max(128).optional()
 }).strict()
 
+const simulationBaseScenarioVersionsSchema = z.object({
+  routeContractVersion: contractVersionSchema,
+  stockContractVersion: contractVersionSchema,
+  rulesVersion: contractVersionSchema
+}).strict()
+
+const simulationBaseScenarioCompleteResultSchema = z.object({
+  dataQuality: z.literal(SIMULATION_DATA_QUALITY.COMPLETE),
+  token: tokenSchema,
+  baseScenarioHash: hashSchema,
+  versions: simulationBaseScenarioVersionsSchema
+}).strict()
+
+const simulationBaseScenarioIncompleteResultSchema = z.object({
+  dataQuality: z.literal(SIMULATION_DATA_QUALITY.INCOMPLETE),
+  error: simulationErrorEnvelopeSchema,
+  missingField: z.string().trim().min(1).max(128).optional()
+}).strict()
+
+const simulationBaseScenarioResultSchema = z.discriminatedUnion('dataQuality', [
+  simulationBaseScenarioCompleteResultSchema,
+  simulationBaseScenarioIncompleteResultSchema
+])
+
+const simulationIncompleteCalculationResultSchema = z.object({
+  baseScenarioHash: hashSchema,
+  variantId: boundedIdentifierSchema,
+  dataQuality: z.literal(SIMULATION_DATA_QUALITY.INCOMPLETE),
+  viability: z.literal(SIMULATION_VIABILITY.INCOMPLETE),
+  recommended: z.literal(false),
+  risks: z.array(z.enum(Object.values(SIMULATION_RISK_CODES) as [string, ...string[]])).min(1).refine(
+    (risks) => risks.includes(SIMULATION_RISK_CODES.INCOMPLETE_DATA),
+    'incomplete calculations must declare the incomplete-data risk'
+  ),
+  missingFields: z.array(z.string().trim().min(1).max(128)).min(1),
+  calculatedAt: isoDateTimeSchema
+}).strict()
+
+const simulationVariantCalculationResultSchema = z.union([
+  simulationCalculationResultSchema,
+  simulationIncompleteCalculationResultSchema
+])
+
 export {
   objectIdSchema,
   measureSchema,
@@ -270,9 +313,15 @@ export {
   directLoadLineSchema,
   simulationVariantInputSchema,
   simulationCalculationResultSchema,
+  simulationIncompleteCalculationResultSchema,
+  simulationVariantCalculationResultSchema,
   simulationComparisonInputSchema,
   simulationComparisonResultSchema,
   simulationBaseScenarioInputSchema,
+  simulationBaseScenarioVersionsSchema,
+  simulationBaseScenarioCompleteResultSchema,
+  simulationBaseScenarioIncompleteResultSchema,
+  simulationBaseScenarioResultSchema,
   simulationSaveRunInputSchema,
   periodSchema,
   simulationVersionedConfigurationInputSchema,
