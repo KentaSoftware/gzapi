@@ -14,6 +14,12 @@ import {
   SimulationServiceError,
   calculateVariant,
   createBaseScenario,
+  getSimulationDemoCatalog,
+  getSimulationDemoRoutes,
+  getSimulationDemoScenarios,
+  simulateDemoScenario,
+  type SimulationDemoProduct,
+  type SimulationDemoRunInput,
   type SimulationServiceDependencies
 } from '../services/simulation'
 import {
@@ -108,6 +114,102 @@ const handleRunFailure = (res: Response, error: unknown): void => {
     SIMULATION_ERROR_CODES.REPOSITORY_ERROR,
     'Simulation run repository is unavailable'
   )
+}
+
+const demoInputError = (res: Response, message: string): void => {
+  sendErrorEnvelope(res, 400, SIMULATION_ERROR_CODES.INPUT_INVALID, message)
+}
+
+const demoPage = (value: unknown): number | undefined => {
+  if (value === undefined) return 1
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return undefined
+  const page = Number(value)
+  return Number.isSafeInteger(page) ? page : undefined
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
+  Object.keys(value).every((key) => allowed.includes(key))
+
+const getDemoRoutes = (req: Request, res: Response): void => {
+  const page = demoPage(req.query.page)
+  if (page === undefined) {
+    demoInputError(res, 'page must be a positive integer')
+    return
+  }
+  res.status(200).send(getSimulationDemoRoutes(page))
+}
+
+const getDemoCatalog = (_req: Request, res: Response): void => {
+  res.status(200).send(getSimulationDemoCatalog())
+}
+
+const getDemoScenarios = (req: Request, res: Response): void => {
+  const page = demoPage(req.query.page)
+  if (page === undefined) {
+    demoInputError(res, 'page must be a positive integer')
+    return
+  }
+  res.status(200).send(getSimulationDemoScenarios(page))
+}
+
+const postDemoScenario = (req: Request, res: Response): void => {
+  const body: unknown = req.body
+  if (!isRecord(body) || !hasOnlyKeys(body, ['routeId', 'parameters', 'products']) ||
+      typeof body.routeId !== 'string' || !isRecord(body.parameters) ||
+      !hasOnlyKeys(body.parameters, ['fuelPricePerLiter', 'includeSurplus', 'generalCosts', 'hourlyRate']) ||
+      typeof body.parameters.includeSurplus !== 'boolean' || !Array.isArray(body.products)) {
+    demoInputError(res, 'scenario input has an invalid shape')
+    return
+  }
+
+  const parameters = body.parameters
+  const numericParameters = ['fuelPricePerLiter', 'generalCosts', 'hourlyRate'] as const
+  if (numericParameters.some((key) => typeof parameters[key] !== 'number' ||
+      !Number.isFinite(parameters[key]) || parameters[key] < 0)) {
+    demoInputError(res, 'scenario parameters must be finite non-negative numbers')
+    return
+  }
+
+  const catalog = getSimulationDemoCatalog()
+  const products: SimulationDemoRunInput['products'] = []
+  const seen = new Set<string>()
+  for (const value of body.products) {
+    if (!isRecord(value) || !hasOnlyKeys(value, ['id', 'quantity']) || typeof value.id !== 'string' ||
+        typeof value.quantity !== 'number' || !Number.isFinite(value.quantity) || value.quantity < 0 || seen.has(value.id)) {
+      demoInputError(res, 'products must contain unique product ids and non-negative quantities')
+      return
+    }
+    const product: SimulationDemoProduct | undefined = catalog.available.find((entry) => entry.id === value.id)
+    if (product === undefined || value.quantity > product.stock) {
+      demoInputError(res, 'product is unknown or quantity exceeds available stock')
+      return
+    }
+    seen.add(value.id)
+    products.push({ ...product, quantity: value.quantity })
+  }
+
+  const input: SimulationDemoRunInput = {
+    routeId: body.routeId,
+    parameters: {
+      fuelPricePerLiter: parameters.fuelPricePerLiter as number,
+      includeSurplus: parameters.includeSurplus as boolean,
+      generalCosts: parameters.generalCosts as number,
+      hourlyRate: parameters.hourlyRate as number
+    },
+    products
+  }
+  try {
+    res.status(201).send(simulateDemoScenario(input))
+  } catch (error) {
+    if (error instanceof SimulationServiceError && error.code === SIMULATION_ERROR_CODES.INPUT_INVALID) {
+      demoInputError(res, error.message)
+      return
+    }
+    sendErrorEnvelope(res, 503, SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE, 'Simulation demo is unavailable')
+  }
 }
 
 const postBaseScenario = async (
@@ -217,5 +319,5 @@ const postRestoreRun = async (
   }
 }
 
-export { getRun, postArchiveRun, postBaseScenario, postCalculateVariant, postRestoreRun }
+export { getDemoCatalog, getDemoRoutes, getDemoScenarios, getRun, postArchiveRun, postBaseScenario, postCalculateVariant, postDemoScenario, postRestoreRun }
 export type { SimulationControllerDependencies }

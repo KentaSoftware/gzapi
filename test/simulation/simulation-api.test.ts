@@ -459,4 +459,66 @@ describe('Simulation API', () => {
       expect(response.body.code).to.equal(SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE)
     })
   })
+
+  describe('Simulation demo API', () => {
+    it('serves paginated demo routes and the available/included product catalog without the simulation grant or feature flag', async () => {
+      configure({ enabled: false })
+
+      const routes = await request(app).get('/simulation/demo/routes?page=1').set('Authorization', AUTH_HEADER).set('x-test-permission', 'deny')
+      const catalog = await request(app).get('/simulation/demo/catalog').set('Authorization', AUTH_HEADER).set('x-test-permission', 'deny')
+
+      expect(routes.status).to.equal(200)
+      expect(routes.body).to.include({ page: 1, pageSize: 5, total: 8 })
+      expect(routes.body.items[0]).to.include({ id: 'R-001', zone: 'Norte' })
+      expect(catalog.status).to.equal(200)
+      expect(catalog.body.available).to.have.length(5)
+      expect(catalog.body.included[0]).to.include({ id: 'agua-500', quantity: 40 })
+    })
+
+    it('calculates and stores a scenario in the process-local history', async () => {
+      configure({ enabled: false })
+
+      const response = await post('/simulation/demo/scenarios', {
+        routeId: 'R-002',
+        parameters: { fuelPricePerLiter: 1250, includeSurplus: true, generalCosts: 25000, hourlyRate: 8000 },
+        products: [{ id: 'agua-500', quantity: 10 }, { id: 'gaseosa-15', quantity: 2 }]
+      }, { 'x-test-permission': 'deny' })
+      const history = await request(app).get('/simulation/demo/scenarios?page=1').set('Authorization', AUTH_HEADER)
+
+      expect(response.status).to.equal(201)
+      expect(response.body).to.include({
+        id: 'ESC-015',
+        routeId: 'R-002',
+        estimatedRevenue: 17000,
+        operatingCost: 84800,
+        grossMargin: -67800
+      })
+      expect(history.status).to.equal(200)
+      expect(history.body.total).to.equal(15)
+      expect(history.body.items[0].id).to.equal('ESC-015')
+    })
+
+    it('returns predictable validation errors and rejects excluded cost overrides', async () => {
+      configure()
+
+      const invalidPage = await request(app).get('/simulation/demo/routes?page=0').set('Authorization', AUTH_HEADER)
+      const excludedCost = await post('/simulation/demo/scenarios', {
+        routeId: 'R-001',
+        parameters: { fuelPricePerLiter: 1000, includeSurplus: true, generalCosts: 0, hourlyRate: 100, tollsArs: 500 },
+        products: []
+      })
+      const unknownRoute = await post('/simulation/demo/scenarios', {
+        routeId: 'missing',
+        parameters: { fuelPricePerLiter: 1000, includeSurplus: true, generalCosts: 0, hourlyRate: 100 },
+        products: []
+      })
+
+      expect(invalidPage.status).to.equal(400)
+      expect(invalidPage.body.code).to.equal(SIMULATION_ERROR_CODES.INPUT_INVALID)
+      expect(excludedCost.status).to.equal(400)
+      expect(excludedCost.body.code).to.equal(SIMULATION_ERROR_CODES.INPUT_INVALID)
+      expect(unknownRoute.status).to.equal(400)
+      expect(unknownRoute.body.message).to.equal('Unknown route')
+    })
+  })
 })

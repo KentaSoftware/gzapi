@@ -7,9 +7,13 @@ import {
 import { getSimulationConfig, type SimulationConfiguration } from '../config/simulation'
 import {
   getRun,
+  getDemoCatalog,
+  getDemoRoutes,
+  getDemoScenarios,
   postArchiveRun,
   postBaseScenario,
   postCalculateVariant,
+  postDemoScenario,
   postRestoreRun
 } from '../controllers/simulation'
 import { SIMULATION_ERROR_CODES } from '../interfaces/simulation.interface'
@@ -119,6 +123,18 @@ const createSimulationRouter = (
       runRepository: resolved.runRepository
     }
   }
+
+  // The thesis/demo endpoints use fixture data and deliberately bypass the
+  // production simulation grant and feature-flag gates. JWT authentication is
+  // retained to match the frontend's normal API client session behavior.
+  const demoGuards: RequestHandler[] = [
+    (req, res, next) => { resolveDependencies(req, dependencies).checkJwt(req, res, next) }
+  ]
+
+  router.get('/demo/routes', ...demoGuards, (req, res) => { getDemoRoutes(req, res) })
+  router.get('/demo/catalog', ...demoGuards, (req, res) => { getDemoCatalog(req, res) })
+  router.get('/demo/scenarios', ...demoGuards, (req, res) => { getDemoScenarios(req, res) })
+  router.post('/demo/scenarios', ...demoGuards, (req, res) => { postDemoScenario(req, res) })
 
   router.post('/base-scenarios', ...guards('simulation:write'), (req, res) => {
     void postBaseScenario(req, res, controllerDependencies(req))
