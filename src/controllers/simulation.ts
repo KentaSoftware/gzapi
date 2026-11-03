@@ -17,6 +17,7 @@ import {
   getSimulationDemoCatalog,
   getSimulationDemoRoutes,
   getSimulationDemoScenarios,
+  getSimulationDemoScenarioDetail,
   simulateDemoScenario,
   type SimulationDemoProduct,
   type SimulationDemoRunInput,
@@ -27,10 +28,12 @@ import {
   type SimulationRunRepository
 } from '../services/simulationRunRepository'
 import { sendErrorEnvelope } from '../utils/error.handle'
+import { simulationDemoRepository, type SimulationDemoRepository } from '../models/simulationDemoFixture'
 
 interface SimulationControllerDependencies {
   service: SimulationServiceDependencies
   runRepository: SimulationRunRepository
+  demoRepository: SimulationDemoRepository
 }
 
 const statusForSimulationError = (
@@ -133,29 +136,38 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
   Object.keys(value).every((key) => allowed.includes(key))
 
-const getDemoRoutes = (req: Request, res: Response): void => {
+const getDemoRoutes = async (req: Request, res: Response, repository: SimulationDemoRepository = simulationDemoRepository): Promise<void> => {
   const page = demoPage(req.query.page)
   if (page === undefined) {
     demoInputError(res, 'page must be a positive integer')
     return
   }
-  res.status(200).send(getSimulationDemoRoutes(page))
+  res.status(200).send(await getSimulationDemoRoutes(page, repository))
 }
 
-const getDemoCatalog = (_req: Request, res: Response): void => {
-  res.status(200).send(getSimulationDemoCatalog())
+const getDemoCatalog = async (_req: Request, res: Response, repository: SimulationDemoRepository = simulationDemoRepository): Promise<void> => {
+  res.status(200).send(await getSimulationDemoCatalog(repository))
 }
 
-const getDemoScenarios = (req: Request, res: Response): void => {
+const getDemoScenarios = async (req: Request, res: Response, repository: SimulationDemoRepository = simulationDemoRepository): Promise<void> => {
   const page = demoPage(req.query.page)
   if (page === undefined) {
     demoInputError(res, 'page must be a positive integer')
     return
   }
-  res.status(200).send(getSimulationDemoScenarios(page))
+  res.status(200).send(await getSimulationDemoScenarios(page, repository))
 }
 
-const postDemoScenario = (req: Request, res: Response): void => {
+const getDemoScenarioDetail = async (req: Request, res: Response, repository: SimulationDemoRepository = simulationDemoRepository): Promise<void> => {
+  const detail = await getSimulationDemoScenarioDetail(req.params.scenarioId, repository)
+  if (detail === null) {
+    sendErrorEnvelope(res, 404, SIMULATION_ERROR_CODES.RUN_NOT_FOUND, 'Simulation demo scenario was not found')
+    return
+  }
+  res.status(200).send(detail)
+}
+
+const postDemoScenario = async (req: Request, res: Response, repository: SimulationDemoRepository = simulationDemoRepository): Promise<void> => {
   const body: unknown = req.body
   if (!isRecord(body) || !hasOnlyKeys(body, ['routeId', 'parameters', 'products']) ||
       typeof body.routeId !== 'string' || !isRecord(body.parameters) ||
@@ -173,7 +185,7 @@ const postDemoScenario = (req: Request, res: Response): void => {
     return
   }
 
-  const catalog = getSimulationDemoCatalog()
+  const catalog = await getSimulationDemoCatalog(repository)
   const products: SimulationDemoRunInput['products'] = []
   const seen = new Set<string>()
   for (const value of body.products) {
@@ -202,13 +214,19 @@ const postDemoScenario = (req: Request, res: Response): void => {
     products
   }
   try {
-    res.status(201).send(simulateDemoScenario(input))
+    res.status(201).send(await simulateDemoScenario(input, new Date(), repository))
   } catch (error) {
     if (error instanceof SimulationServiceError && error.code === SIMULATION_ERROR_CODES.INPUT_INVALID) {
       demoInputError(res, error.message)
       return
     }
-    sendErrorEnvelope(res, 503, SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE, 'Simulation demo is unavailable')
+    const correlationId: unknown = res.locals.correlationId
+    console.log(JSON.stringify({
+      event: 'simulation_demo_scenario_failed',
+      correlationId: typeof correlationId === 'string' ? correlationId : undefined,
+      operation: 'create_scenario'
+    }))
+    sendErrorEnvelope(res, 503, SIMULATION_ERROR_CODES.REPOSITORY_ERROR, 'Simulation demo repository is unavailable')
   }
 }
 
@@ -319,5 +337,5 @@ const postRestoreRun = async (
   }
 }
 
-export { getDemoCatalog, getDemoRoutes, getDemoScenarios, getRun, postArchiveRun, postBaseScenario, postCalculateVariant, postDemoScenario, postRestoreRun }
+export { getDemoCatalog, getDemoRoutes, getDemoScenarios, getDemoScenarioDetail, getRun, postArchiveRun, postBaseScenario, postCalculateVariant, postDemoScenario, postRestoreRun }
 export type { SimulationControllerDependencies }

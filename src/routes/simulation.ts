@@ -1,6 +1,7 @@
 import {
   Router,
   type Request,
+  type Response,
   type RequestHandler
 } from 'express'
 
@@ -10,6 +11,7 @@ import {
   getDemoCatalog,
   getDemoRoutes,
   getDemoScenarios,
+  getDemoScenarioDetail,
   postArchiveRun,
   postBaseScenario,
   postCalculateVariant,
@@ -28,6 +30,7 @@ import {
   type SimulationRunRepository
 } from '../services/simulationRunRepository'
 import { sendErrorEnvelope } from '../utils/error.handle'
+import { simulationDemoRepository, type SimulationDemoRepository } from '../models/simulationDemoFixture'
 
 interface SimulationRouteDependencies {
   checkJwt: RequestHandler
@@ -35,10 +38,12 @@ interface SimulationRouteDependencies {
   getConfig: () => SimulationConfiguration
   service: SimulationServiceDependencies
   runRepository: SimulationRunRepository
+  demoRepository: SimulationDemoRepository
 }
 
-type InjectedSimulationRouteDependencies = Omit<SimulationRouteDependencies, 'runRepository'> & {
+type InjectedSimulationRouteDependencies = Omit<SimulationRouteDependencies, 'runRepository' | 'demoRepository'> & {
   runRepository?: SimulationRunRepository
+  demoRepository?: SimulationDemoRepository
 }
 
 const SIMULATION_DEPENDENCIES_LOCAL = 'simulationRouteDependencies'
@@ -59,7 +64,8 @@ const productionDependencies: SimulationRouteDependencies = {
     issueBaseScenarioToken: unavailableService,
     verifyBaseScenarioToken: unavailableService
   },
-  runRepository: createSimulationRunMongoRepository()
+  runRepository: createSimulationRunMongoRepository(),
+  demoRepository: simulationDemoRepository
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -81,7 +87,8 @@ const resolveDependencies = (
   return {
     ...fallback,
     ...injected,
-    runRepository: injected.runRepository ?? fallback.runRepository
+    runRepository: injected.runRepository ?? fallback.runRepository,
+    demoRepository: injected.demoRepository ?? fallback.demoRepository
   }
 }
 
@@ -116,11 +123,13 @@ const createSimulationRouter = (
   const controllerDependencies = (req: Request): {
     service: SimulationServiceDependencies
     runRepository: SimulationRunRepository
+    demoRepository: SimulationDemoRepository
   } => {
     const resolved = resolveDependencies(req, dependencies)
     return {
       service: resolved.service,
-      runRepository: resolved.runRepository
+      runRepository: resolved.runRepository,
+      demoRepository: resolved.demoRepository
     }
   }
 
@@ -131,10 +140,31 @@ const createSimulationRouter = (
     (req, res, next) => { resolveDependencies(req, dependencies).checkJwt(req, res, next) }
   ]
 
-  router.get('/demo/routes', ...demoGuards, (req, res) => { getDemoRoutes(req, res) })
-  router.get('/demo/catalog', ...demoGuards, (req, res) => { getDemoCatalog(req, res) })
-  router.get('/demo/scenarios', ...demoGuards, (req, res) => { getDemoScenarios(req, res) })
-  router.post('/demo/scenarios', ...demoGuards, (req, res) => { postDemoScenario(req, res) })
+  const demoRouteHandler = (
+    operation: string,
+    handler: (req: Request, res: Response, repository: SimulationDemoRepository) => Promise<void>
+  ): RequestHandler => (req, res) => {
+    void handler(req, res, resolveDependencies(req, dependencies).demoRepository).catch(() => {
+      const correlationId: unknown = res.locals.correlationId
+      console.log(JSON.stringify({
+        event: 'simulation_demo_request_failed',
+        correlationId: typeof correlationId === 'string' ? correlationId : undefined,
+        operation
+      }))
+      sendErrorEnvelope(
+        res,
+        503,
+        SIMULATION_ERROR_CODES.REPOSITORY_ERROR,
+        'Simulation demo repository is unavailable'
+      )
+    })
+  }
+
+  router.get('/demo/routes', ...demoGuards, demoRouteHandler('read_routes', getDemoRoutes))
+  router.get('/demo/catalog', ...demoGuards, demoRouteHandler('read_catalog', getDemoCatalog))
+  router.get('/demo/scenarios', ...demoGuards, demoRouteHandler('read_scenarios', getDemoScenarios))
+  router.get('/demo/scenarios/:scenarioId', ...demoGuards, demoRouteHandler('read_scenario_detail', getDemoScenarioDetail))
+  router.post('/demo/scenarios', ...demoGuards, demoRouteHandler('create_scenario', postDemoScenario))
 
   router.post('/base-scenarios', ...guards('simulation:write'), (req, res) => {
     void postBaseScenario(req, res, controllerDependencies(req))

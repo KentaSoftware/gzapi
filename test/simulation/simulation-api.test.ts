@@ -14,11 +14,17 @@ import {
 import {
   SimulationServiceError,
   calculateBaseScenarioHash,
+  seedSimulationDemoFixtures,
   type SimulationServiceDependencies
 } from '../../src/services/simulation'
 import { SimulationSnapshotError } from '../../src/services/simulationSnapshotAdapter'
 import { SimulationTokenError } from '../../src/services/simulationToken'
 import { sendErrorEnvelope } from '../../src/utils/error.handle'
+import {
+  createInMemorySimulationDemoRepository,
+  createSimulationDemoRepository,
+  type SimulationDemoDocument
+} from '../../src/models/simulationDemoFixture'
 import {
   PRODUCT_ID,
   ROUTE_ID,
@@ -129,12 +135,14 @@ describe('Simulation API', () => {
     enabled?: boolean
     service?: Partial<SimulationServiceDependencies>
     getConfig?: () => SimulationConfiguration
+    demoRepository?: ReturnType<typeof createInMemorySimulationDemoRepository>
   } = {}): void => {
     app.locals.simulationRouteDependencies = {
       checkJwt,
       checkPermission,
       getConfig: options.getConfig ?? (() => simulationConfig(options.enabled ?? true)),
-      service: serviceDependencies(options.service)
+      service: serviceDependencies(options.service),
+      demoRepository: options.demoRepository ?? createInMemorySimulationDemoRepository()
     }
   }
 
@@ -461,6 +469,12 @@ describe('Simulation API', () => {
   })
 
   describe('Simulation demo API', () => {
+    const validDemoScenarioInput = {
+      routeId: 'R-002',
+      parameters: { fuelPricePerLiter: 1250, includeSurplus: true, generalCosts: 25000, hourlyRate: 8000 },
+      products: [{ id: 'agua-500', quantity: 10 }]
+    }
+
     it('serves paginated demo routes and the available/included product catalog without the simulation grant or feature flag', async () => {
       configure({ enabled: false })
 
@@ -473,6 +487,9 @@ describe('Simulation API', () => {
       expect(catalog.status).to.equal(200)
       expect(catalog.body.available).to.have.length(5)
       expect(catalog.body.included[0]).to.include({ id: 'agua-500', quantity: 40 })
+      expect(catalog.body.included.map((product: { quantity: number }) => product.quantity)).to.deep.equal([40, 30, 20, 25, 15])
+      const laterRoutes = await request(app).get('/simulation/demo/routes?page=2').set('Authorization', AUTH_HEADER)
+      expect(laterRoutes.body.items).to.have.length(3)
     })
 
     it('calculates and stores a scenario in the process-local history', async () => {
@@ -498,6 +515,146 @@ describe('Simulation API', () => {
       expect(history.body.items[0].id).to.equal('ESC-015')
     })
 
+    it('persists and retrieves complete detail for a created scenario without changing list summaries', async () => {
+      configure()
+      const input = {
+        routeId: 'R-002',
+        parameters: { fuelPricePerLiter: 1400, includeSurplus: false, generalCosts: 30000, hourlyRate: 9000 },
+        products: [{ id: 'agua-500', quantity: 10 }, { id: 'snacks', quantity: 4 }]
+      }
+      const created = await post('/simulation/demo/scenarios', input)
+      const detail = await request(app).get(`/simulation/demo/scenarios/${created.body.id}`).set('Authorization', AUTH_HEADER)
+      const history = await request(app).get('/simulation/demo/scenarios?page=1').set('Authorization', AUTH_HEADER)
+
+      expect(created.status).to.equal(201)
+      expect(detail.status).to.equal(200)
+      expect(detail.body).to.include({ id: 'ESC-015', routeId: 'R-002', orderCount: 10, fuelLiters: 15.2, distanceKm: 85.6, durationHours: 5.1 })
+      expect(detail.body.parameters).to.deep.equal(input.parameters)
+      expect(detail.body.products.map((product: { id: string, quantity: number }) => ({ id: product.id, quantity: product.quantity }))).to.deep.equal(input.products)
+      expect(history.body.items[0]).to.deep.equal(created.body)
+    })
+
+    it('logs unexpected scenario repository failures with only safe correlation fields', async () => {
+      const secretErrorMessage = 'repository failure with sensitive details'
+      const demoRepository = createInMemorySimulationDemoRepository()
+      sinon.stub(demoRepository, 'addScenario').rejects(new Error(secretErrorMessage))
+      configure({ demoRepository })
+      const log = sinon.stub(console, 'log')
+
+      const response = await post('/simulation/demo/scenarios', validDemoScenarioInput, {
+        'x-correlation-id': 'corr-demo-create-failure'
+      })
+
+      const failureLog = log.args
+        .map(([entry]) => typeof entry === 'string' ? JSON.parse(entry) as Record<string, unknown> : undefined)
+        .find((entry) => entry?.event === 'simulation_demo_scenario_failed')
+
+      expect(response.status).to.equal(503)
+      expect(failureLog).to.deep.equal({
+        event: 'simulation_demo_scenario_failed',
+        correlationId: 'corr-demo-create-failure',
+        operation: 'create_scenario'
+      })
+      expect(JSON.stringify(log.args)).not.to.contain(secretErrorMessage)
+    })
+
+    it('allocates distinct scenario ids for concurrent creates and preserves each detail', async () => {
+      let document: SimulationDemoDocument | null = null
+      const demoRepository = createSimulationDemoRepository({
+        seed: async (seeded) => { document ??= structuredClone(seeded) },
+        read: async () => {
+          const snapshot = document === null ? null : structuredClone(document)
+          await new Promise<void>((resolve) => setTimeout(resolve, 20))
+          return snapshot
+        },
+        allocateScenarioNumber: async () => {
+          if (document === null) throw new Error('test fixtures are not seeded')
+          const highest = document.scenarios.reduce((number, scenario) => Math.max(number, Number.parseInt(scenario.id.slice(4), 10) || 0), 0)
+          document.nextScenarioNumber = Math.max(document.nextScenarioNumber, highest + 1) + 1
+          return document.nextScenarioNumber - 1
+        },
+        addScenario: async (scenario, detail) => {
+          if (document === null) throw new Error('test fixtures are not seeded')
+          document.scenarios.unshift(structuredClone(scenario))
+          document.scenarioDetails ??= {}
+          document.scenarioDetails[scenario.id] = structuredClone(detail)
+        }
+      })
+      await seedSimulationDemoFixtures(demoRepository)
+      if (document === null) throw new Error('test fixtures are not seeded')
+      document.scenarios.unshift({
+        ...document.scenarios[0],
+        id: 'ESC-017'
+      })
+      configure({ demoRepository })
+      const inputs = [
+        { ...validDemoScenarioInput, products: [{ id: 'agua-500', quantity: 11 }] },
+        { ...validDemoScenarioInput, products: [{ id: 'agua-500', quantity: 22 }] },
+        { ...validDemoScenarioInput, products: [{ id: 'agua-500', quantity: 33 }] },
+        { ...validDemoScenarioInput, products: [{ id: 'agua-500', quantity: 44 }] }
+      ]
+
+      const created = await Promise.all(inputs.map(async (input) => await post('/simulation/demo/scenarios', input)))
+      const ids = created.map((response) => response.body.id)
+      const details = await Promise.all(ids.map(async (id) => await request(app)
+        .get(`/simulation/demo/scenarios/${id}`)
+        .set('Authorization', AUTH_HEADER)))
+
+      expect(created.map((response) => response.status)).to.deep.equal([201, 201, 201, 201])
+      expect(new Set(ids).size).to.equal(inputs.length)
+      expect(ids.map((id: string) => Number.parseInt(id.slice(4), 10)).sort((a: number, b: number) => a - b))
+        .to.deep.equal([18, 19, 20, 21])
+      expect(details.map((response) => response.status)).to.deep.equal([200, 200, 200, 200])
+      expect(details.map((response) => response.body.products[0].quantity).sort((a: number, b: number) => a - b))
+        .to.deep.equal([11, 22, 33, 44])
+    })
+
+    it('returns controlled HTTP errors for rejected demo repository reads on every async demo route', async () => {
+      const demoRepository = createSimulationDemoRepository({
+        seed: async () => {},
+        read: async () => { throw new Error('injected repository read failure') },
+        allocateScenarioNumber: async () => { throw new Error('unexpected scenario allocation') },
+        addScenario: async () => {}
+      })
+      configure({ demoRepository })
+      const paths = [
+        '/simulation/demo/routes',
+        '/simulation/demo/catalog',
+        '/simulation/demo/scenarios',
+        '/simulation/demo/scenarios/ESC-014'
+      ]
+      const unhandledRejections: unknown[] = []
+      const recordUnhandledRejection = (reason: unknown): void => { unhandledRejections.push(reason) }
+      process.on('unhandledRejection', recordUnhandledRejection)
+
+      try {
+        for (const path of paths) {
+          const response = await request(app).get(path).set('Authorization', AUTH_HEADER).timeout({ response: 1000 })
+          expect(response.status, path).to.equal(503)
+          expect(response.body).to.include({ code: SIMULATION_ERROR_CODES.REPOSITORY_ERROR })
+        }
+
+        const created = await post('/simulation/demo/scenarios', validDemoScenarioInput).timeout({ response: 1000 })
+        expect(created.status).to.equal(503)
+        expect(created.body.code).to.equal(SIMULATION_ERROR_CODES.REPOSITORY_ERROR)
+      } finally {
+        process.removeListener('unhandledRejection', recordUnhandledRejection)
+      }
+      expect(unhandledRejections).to.deep.equal([])
+    })
+
+    it('projects detail for seeded scenarios and returns 404 for unknown scenario ids', async () => {
+      configure()
+      const seeded = await request(app).get('/simulation/demo/scenarios/ESC-014').set('Authorization', AUTH_HEADER)
+      const missing = await request(app).get('/simulation/demo/scenarios/ESC-999').set('Authorization', AUTH_HEADER)
+
+      expect(seeded.status).to.equal(200)
+      expect(seeded.body).to.include({ id: 'ESC-014', routeId: 'R-001', orderCount: 12, fuelLiters: 18.5, distanceKm: 102.4, durationHours: 6.5 })
+      expect(seeded.body.parameters).to.deep.equal({ fuelPricePerLiter: 1250, includeSurplus: true, generalCosts: 25000, hourlyRate: 8000 })
+      expect(seeded.body.products.map((product: { quantity: number }) => product.quantity)).to.deep.equal([40, 30, 20, 25, 15])
+      expect(missing.status).to.equal(404)
+    })
+
     it('returns predictable validation errors and rejects excluded cost overrides', async () => {
       configure()
 
@@ -519,6 +676,17 @@ describe('Simulation API', () => {
       expect(excludedCost.body.code).to.equal(SIMULATION_ERROR_CODES.INPUT_INVALID)
       expect(unknownRoute.status).to.equal(400)
       expect(unknownRoute.body.message).to.equal('Unknown route')
+    })
+
+    it('serves the complete fourteen-record initial scenario history', async () => {
+      configure()
+      const history = await request(app).get('/simulation/demo/scenarios?page=1').set('Authorization', AUTH_HEADER)
+
+      expect(history.status).to.equal(200)
+      expect(history.body.total).to.equal(14)
+      expect(history.body.items.map((scenario: { id: string }) => scenario.id)).to.deep.equal([
+        'ESC-014', 'ESC-013', 'ESC-012', 'ESC-011', 'ESC-010', 'ESC-009', 'ESC-008', 'ESC-007'
+      ])
     })
   })
 })

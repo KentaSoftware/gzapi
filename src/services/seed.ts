@@ -1,6 +1,7 @@
 import RoleModel from '../models/role'
 import UserModel from '../models/user'
 import { encrypt } from '../utils/bcrypt.handle'
+import { seedSimulationDemoFixtures } from './simulation'
 
 const BASE_PERMISSIONS = [
   'create_user', 'delete_user', 'update_user', 'read_user',
@@ -67,6 +68,8 @@ export const seedDatabase = async (): Promise<void> => {
   for (const grant of PHASE_0_ROLE_GRANTS) {
     await upsertRole(grant.name, grant.permissions)
   }
+
+  await seedSimulationDemoFixtures()
 
   const adminUser = await UserModel.findOne({ nickname: 'admin' })
 

@@ -7,6 +7,8 @@ import ProductModel from '../../src/models/product'
 import { seedDatabase } from '../../src/services/seed'
 import { verified } from '../../src/utils/bcrypt.handle'
 import { seed as seedRoutePlanFixtures } from '../../migrations/route-plan-002-seed-test-data'
+import { createInMemorySimulationDemoRepository } from '../../src/models/simulationDemoFixture'
+import { seedSimulationDemoFixtures } from '../../src/services/simulation'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_test'
 const ROUTE_TEST_DB_URI = 'mongodb://127.0.0.1:27017/test_route_plan'
@@ -184,6 +186,25 @@ describe('Phase 0 — role seed idempotency', () => {
       const count = await RoleModel.countDocuments({ name })
       expect(count).to.equal(1)
     }
+  })
+})
+
+describe('Simulation demo seed fixtures', () => {
+  it('seeds idempotent routes, catalog quantities, and initial scenarios using an in-memory seam', async () => {
+    const repository = createInMemorySimulationDemoRepository()
+    await seedSimulationDemoFixtures(repository)
+    await seedSimulationDemoFixtures(repository)
+
+    const fixtures = await repository.read()
+    expect(fixtures?.routes.map((route) => route.id)).to.deep.equal([
+      'R-001', 'R-002', 'R-003', 'R-004', 'R-005', 'R-006', 'R-007', 'R-008'
+    ])
+    expect(fixtures?.catalog.available).to.have.length(5)
+    expect(fixtures?.catalog.included.map((product) => product.quantity)).to.deep.equal([40, 30, 20, 25, 15])
+    expect(fixtures?.scenarios.map((scenario) => scenario.id)).to.deep.equal([
+      'ESC-014', 'ESC-013', 'ESC-012', 'ESC-011', 'ESC-010', 'ESC-009', 'ESC-008',
+      'ESC-007', 'ESC-006', 'ESC-005', 'ESC-004', 'ESC-003', 'ESC-002', 'ESC-001'
+    ])
   })
 })
 

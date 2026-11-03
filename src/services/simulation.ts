@@ -36,6 +36,10 @@ import {
   type BaseScenarioRequestContext,
   type ValidatedBaseScenario
 } from './simulationToken'
+import {
+  simulationDemoRepository,
+  type SimulationDemoRepository
+} from '../models/simulationDemoFixture'
 
 export type { SimulationCalculationParameters }
 
@@ -87,6 +91,15 @@ export interface SimulationDemoScenario {
   grossMargin: number
 }
 
+export interface SimulationDemoScenarioDetail extends SimulationDemoScenario {
+  orderCount: number
+  fuelLiters: number
+  distanceKm: number
+  durationHours: number
+  parameters: SimulationDemoRunInput['parameters']
+  products: Array<SimulationDemoProduct & { quantity: number }>
+}
+
 export interface SimulationDemoRunInput {
   routeId: string
   parameters: {
@@ -125,7 +138,7 @@ const DEMO_INCLUDED_QUANTITIES: Readonly<Record<string, number>> = {
   panificados: 15
 }
 
-const demoScenarios: SimulationDemoScenario[] = [
+const DEMO_SCENARIOS: readonly SimulationDemoScenario[] = [
   { id: 'ESC-014', date: '26/05/2025', routeId: 'R-001', zone: 'Norte', driver: 'Juan Pérez', vehicle: 'Móvil 1', estimatedRevenue: 485000, operatingCost: 125000, grossMargin: 360000 },
   { id: 'ESC-013', date: '25/05/2025', routeId: 'R-004', zone: 'Este', driver: 'Ana Torres', vehicle: 'Móvil 1', estimatedRevenue: 620000, operatingCost: 168000, grossMargin: 452000 },
   { id: 'ESC-012', date: '24/05/2025', routeId: 'R-002', zone: 'Centro', driver: 'María López', vehicle: 'Móvil 2', estimatedRevenue: 398000, operatingCost: 112000, grossMargin: 286000 },
@@ -142,29 +155,79 @@ const demoScenarios: SimulationDemoScenario[] = [
   { id: 'ESC-001', date: '13/05/2025', routeId: 'R-003', zone: 'Sur', driver: 'Carlos Ruiz', vehicle: 'Móvil 3', estimatedRevenue: 322000, operatingCost: 98000, grossMargin: 224000 }
 ]
 
+const seedSimulationDemoFixtures = async (repository: SimulationDemoRepository = simulationDemoRepository): Promise<void> => {
+  await repository.seed({
+    routes: DEMO_ROUTES.map((route) => ({ ...route })),
+    catalog: {
+      available: DEMO_PRODUCTS.map((product) => ({ ...product })),
+      included: DEMO_PRODUCTS.map((product) => ({ ...product, quantity: DEMO_INCLUDED_QUANTITIES[product.id] ?? 0 }))
+    },
+    scenarios: DEMO_SCENARIOS.map((scenario) => ({ ...scenario }))
+  })
+}
+
 const demoPage = <T>(items: readonly T[], page: number, pageSize: number): { items: T[], page: number, pageSize: number, total: number } => {
   const start = (page - 1) * pageSize
   return { items: items.slice(start, start + pageSize), page, pageSize, total: items.length }
 }
 
-const getSimulationDemoRoutes = (page: number): ReturnType<typeof demoPage<SimulationDemoRoute>> => demoPage(DEMO_ROUTES, page, 5)
+const ensureDemoFixtures = async (repository: SimulationDemoRepository): Promise<NonNullable<Awaited<ReturnType<SimulationDemoRepository['read']>>>> => {
+  let fixtures = await repository.read()
+  if (fixtures === null) {
+    await seedSimulationDemoFixtures(repository)
+    fixtures = await repository.read()
+  }
+  if (fixtures === null) throw new Error('Simulation demo fixtures could not be initialized')
+  return fixtures
+}
 
-const getSimulationDemoCatalog = (): { available: SimulationDemoProduct[], included: Array<SimulationDemoProduct & { quantity: number }> } => ({
-  available: DEMO_PRODUCTS.map((product) => ({ ...product })),
-  included: DEMO_PRODUCTS.map((product) => ({ ...product, quantity: DEMO_INCLUDED_QUANTITIES[product.id] ?? 0 }))
-})
+const getSimulationDemoRoutes = async (page: number, repository: SimulationDemoRepository = simulationDemoRepository): Promise<ReturnType<typeof demoPage<SimulationDemoRoute>>> => {
+  const fixtures = await ensureDemoFixtures(repository)
+  return demoPage(fixtures.routes, page, 5)
+}
 
-const getSimulationDemoScenarios = (page: number): ReturnType<typeof demoPage<SimulationDemoScenario>> => demoPage(demoScenarios, page, 8)
+const getSimulationDemoCatalog = async (repository: SimulationDemoRepository = simulationDemoRepository): Promise<SimulationDemoCatalog> => {
+  const fixtures = await ensureDemoFixtures(repository)
+  return fixtures.catalog
+}
 
-const simulateDemoScenario = (input: SimulationDemoRunInput, now = new Date()): SimulationDemoScenario => {
-  const route = DEMO_ROUTES.find((entry) => entry.id === input.routeId)
+const getSimulationDemoScenarios = async (page: number, repository: SimulationDemoRepository = simulationDemoRepository): Promise<ReturnType<typeof demoPage<SimulationDemoScenario>>> => {
+  const fixtures = await ensureDemoFixtures(repository)
+  return demoPage(fixtures.scenarios, page, 8)
+}
+
+const getSimulationDemoScenarioDetail = async (scenarioId: string, repository: SimulationDemoRepository = simulationDemoRepository): Promise<SimulationDemoScenarioDetail | null> => {
+  const fixtures = await ensureDemoFixtures(repository)
+  const scenario = fixtures.scenarios.find((entry) => entry.id === scenarioId)
+  if (scenario === undefined) return null
+  const persisted = fixtures.scenarioDetails?.[scenarioId]
+  if (persisted !== undefined) return persisted
+
+  const route = fixtures.routes.find((entry) => entry.id === scenario.routeId)
+  if (route === undefined) return null
+  return {
+    ...scenario,
+    orderCount: route.orderCount,
+    fuelLiters: route.fuelLiters,
+    distanceKm: route.distanceKm,
+    durationHours: route.durationHours,
+    parameters: { fuelPricePerLiter: 1250, includeSurplus: true, generalCosts: 25000, hourlyRate: 8000 },
+    products: fixtures.catalog.included.map((product) => ({ ...product }))
+  }
+}
+
+interface SimulationDemoCatalog {
+  available: SimulationDemoProduct[]
+  included: Array<SimulationDemoProduct & { quantity: number }>
+}
+
+const simulateDemoScenario = async (input: SimulationDemoRunInput, now = new Date(), repository: SimulationDemoRepository = simulationDemoRepository): Promise<SimulationDemoScenario> => {
+  const fixtures = await ensureDemoFixtures(repository)
+  const route = fixtures.routes.find((entry) => entry.id === input.routeId)
   if (route === undefined) throw new SimulationServiceError(SIMULATION_ERROR_CODES.INPUT_INVALID, 'Unknown route', 'routeId')
   const estimatedRevenue = input.products.reduce((total, product) => total + product.unitPrice * product.quantity, 0)
   const operatingCost = Math.round(route.fuelLiters * input.parameters.fuelPricePerLiter + route.durationHours * input.parameters.hourlyRate + input.parameters.generalCosts)
-  const nextId = demoScenarios.reduce((highest, entry) => {
-    const parsed = Number.parseInt(entry.id.slice(4), 10)
-    return Math.max(highest, Number.isFinite(parsed) ? parsed : 0)
-  }, 0) + 1
+  const nextId = await repository.allocateScenarioNumber()
   const result: SimulationDemoScenario = {
     id: `ESC-${String(nextId).padStart(3, '0')}`,
     date: new Intl.DateTimeFormat('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Argentina/Buenos_Aires' }).format(now),
@@ -176,11 +239,20 @@ const simulateDemoScenario = (input: SimulationDemoRunInput, now = new Date()): 
     operatingCost,
     grossMargin: Math.round(estimatedRevenue - operatingCost)
   }
-  demoScenarios.unshift(result)
+  const detail: SimulationDemoScenarioDetail = {
+    ...result,
+    orderCount: route.orderCount,
+    fuelLiters: route.fuelLiters,
+    distanceKm: route.distanceKm,
+    durationHours: route.durationHours,
+    parameters: { ...input.parameters },
+    products: input.products.map((product) => ({ ...product }))
+  }
+  await repository.addScenario(result, detail)
   return { ...result }
 }
 
-export { getSimulationDemoCatalog, getSimulationDemoRoutes, getSimulationDemoScenarios, simulateDemoScenario }
+export { getSimulationDemoCatalog, getSimulationDemoRoutes, getSimulationDemoScenarios, getSimulationDemoScenarioDetail, seedSimulationDemoFixtures, simulateDemoScenario }
 
 export class SimulationServiceError extends Error {
   readonly code: SimulationErrorCode
