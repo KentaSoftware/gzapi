@@ -4,15 +4,18 @@ import {
   SIMULATION_DATA_QUALITY,
   SIMULATION_ERROR_CODES,
   type SimulationBaseScenarioResult,
+  type SimulationComparisonInput,
   type SimulationErrorCode
 } from '../interfaces/simulation.interface'
 import {
   simulationBaseScenarioInputSchema,
+  simulationComparisonInputSchema,
   simulationVariantInputSchema
 } from '../schemas/simulation.schema'
 import {
   SimulationServiceError,
   calculateVariant,
+  compareVariants,
   createBaseScenario,
   type SimulationServiceDependencies
 } from '../services/simulation'
@@ -141,5 +144,34 @@ const postCalculateVariant = async (
   }
 }
 
-export { postBaseScenario, postCalculateVariant }
+const postCompare = async (
+  req: Request,
+  res: Response,
+  dependencies: SimulationControllerDependencies
+): Promise<void> => {
+  const actorId = actorIdOf(res)
+  if (actorId === undefined) {
+    sendErrorEnvelope(res, 401, 'AUTHENTICATION_INVALID', 'Authentication credentials are invalid')
+    return
+  }
+
+  const input = simulationComparisonInputSchema.safeParse(req.body)
+  if (!input.success) {
+    sendErrorEnvelope(res, 400, SIMULATION_ERROR_CODES.INPUT_INVALID, 'Comparison input is invalid')
+    return
+  }
+
+  try {
+    const result = await compareVariants(
+      input.data as SimulationComparisonInput,
+      { actorId },
+      dependencies.service
+    )
+    res.status(200).send(result)
+  } catch (error) {
+    handleSimulationFailure(res, error)
+  }
+}
+
+export { postBaseScenario, postCalculateVariant, postCompare }
 export type { SimulationControllerDependencies }

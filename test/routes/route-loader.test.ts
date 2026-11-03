@@ -37,6 +37,14 @@ describe('route loader', () => {
     ])
   })
 
+  it('registers the simulation compare endpoint', () => {
+    const simulationRoute = routeRegistry.find(({ prefix }) => prefix === '/simulation')
+
+    expect(simulationRoute?.router.stack.some(({ route }) => {
+      return route?.path === '/compare' && route.methods.post === true
+    })).to.equal(true)
+  })
+
   it('mounts ping and auth login instead of returning 404', async () => {
     const app = await createApp()
 

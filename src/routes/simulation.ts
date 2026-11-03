@@ -7,7 +7,8 @@ import {
 import { getSimulationConfig, type SimulationConfiguration } from '../config/simulation'
 import {
   postBaseScenario,
-  postCalculateVariant
+  postCalculateVariant,
+  postCompare
 } from '../controllers/simulation'
 import { SIMULATION_ERROR_CODES } from '../interfaces/simulation.interface'
 import { checkPermission } from '../middleware/checkPermission'
@@ -97,6 +98,10 @@ const createSimulationRouter = (
 
   router.post('/base-scenarios/:token/variants/calculate', ...guards('simulation:write'), (req, res) => {
     void postCalculateVariant(req, res, { service: resolveDependencies(req, dependencies).service })
+  })
+
+  router.post('/compare', ...guards('simulation:write'), (req, res) => {
+    void postCompare(req, res, { service: resolveDependencies(req, dependencies).service })
   })
 
   return router
