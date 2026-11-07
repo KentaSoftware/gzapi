@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 import mongoose from 'mongoose'
+import sinon from 'sinon'
 import RoleModel from '../../src/models/role'
 import UserModel from '../../src/models/user'
 import ItemSaleModel from '../../src/models/itemSale'
@@ -9,6 +10,7 @@ import { verified } from '../../src/utils/bcrypt.handle'
 import { seed as seedRoutePlanFixtures } from '../../migrations/route-plan-002-seed-test-data'
 import { createInMemorySimulationDemoRepository } from '../../src/models/simulationDemoFixture'
 import { seedSimulationDemoFixtures } from '../../src/services/simulation'
+import * as simulation from '../../src/services/simulation'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_test'
 const ROUTE_TEST_DB_URI = 'mongodb://127.0.0.1:27017/test_route_plan'
@@ -21,7 +23,7 @@ const PHASE_0_GRANTS = {
 }
 
 const EXPECTED_ROLE_NAMES = ['Administración', 'Preventista', 'Propietario', 'Repartidor', 'admin']
-const PHASE_0_PERMISSIONS = [...new Set(Object.values(PHASE_0_GRANTS).flat())]
+const PHASE_0_PERMISSIONS = [...new Set(Object.values(PHASE_0_GRANTS).flat())].filter((permission) => !permission.startsWith('simulation:'))
 const initialAdminPassword = process.env.ADMIN_PASSWORD
 
 describe('simulation role permission mapping', () => {
@@ -30,6 +32,48 @@ describe('simulation role permission mapping', () => {
     expect(SIMULATION_ROLE_GRANTS.Administración).to.deep.equal(['simulation:read', 'simulation:write'])
     expect(SIMULATION_ROLE_GRANTS.Repartidor).to.deep.equal(['simulation:read'])
     expect(SIMULATION_ROLE_GRANTS.Preventista).to.deep.equal([])
+  })
+})
+
+describe('admin simulation seed permissions (in-memory)', () => {
+  const sandbox = sinon.createSandbox()
+  const grants = ['simulation:read', 'simulation:write']
+
+  afterEach(() => { sandbox.restore() })
+
+  function setup (existingAdmin: boolean): { roles: Map<string, { _id: string, permissions: string[], save: sinon.SinonStub }>, user: { role: string, password: string, save: sinon.SinonStub }, createUser: sinon.SinonStub } {
+    const roles = new Map<string, { _id: string, permissions: string[], save: sinon.SinonStub }>()
+    if (existingAdmin) roles.set('admin', { _id: 'admin-id', permissions: ['read_user', 'custom_admin_perm'], save: sandbox.stub().resolves() })
+    const user = { role: 'admin-id', password: 'existing-password-hash', save: sandbox.stub().resolves() }
+    sandbox.stub(RoleModel, 'findOne').callsFake((query: { name: string }) => Promise.resolve(roles.get(query.name) ?? null) as never)
+    sandbox.stub(RoleModel, 'create').callsFake((async (data: { name: string, permissions: string[] }) => {
+      roles.set(data.name, { _id: `${data.name}-id`, permissions: [...data.permissions], save: sandbox.stub().resolves() })
+      return roles.get(data.name)
+    }) as never)
+    sandbox.stub(UserModel, 'findOne').resolves(user as never)
+    const createUser = sandbox.stub(UserModel, 'create')
+    sandbox.stub(simulation, 'seedSimulationDemoFixtures').resolves()
+    return { roles, user, createUser }
+  }
+
+  it('creates a new admin role with both simulation grants', async () => {
+    const { roles } = setup(false)
+    await seedDatabase({ seedDemoFixtures: async () => {} })
+    expect(roles.get('admin')?.permissions).to.include.members(grants)
+  })
+
+  it('backfills existing admin grants once without changing custom grants or credentials', async () => {
+    const { roles, user, createUser } = setup(true)
+    await seedDatabase({ seedDemoFixtures: async () => {} })
+    const admin = roles.get('admin')
+    expect(admin?.permissions).to.include.members([...grants, 'custom_admin_perm'])
+    expect(admin?.save.callCount).to.equal(1)
+    await seedDatabase({ seedDemoFixtures: async () => {} })
+    expect(admin?.permissions.filter((permission) => grants.includes(permission))).to.have.length(2)
+    expect(admin?.save.callCount).to.equal(1)
+    expect(user.password).to.equal('existing-password-hash')
+    expect(user.save.callCount).to.equal(0)
+    expect(createUser.callCount).to.equal(0)
   })
 })
 
