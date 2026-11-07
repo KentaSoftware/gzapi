@@ -21,10 +21,8 @@ import {
 import { SIMULATION_ERROR_CODES } from '../interfaces/simulation.interface'
 import { checkPermission } from '../middleware/checkPermission'
 import { checkJwt } from '../middleware/session'
-import {
-  SimulationServiceError,
-  type SimulationServiceDependencies
-} from '../services/simulation'
+import type { SimulationServiceDependencies } from '../services/simulation'
+import { createSimulationProductionService } from '../services/simulationProductionProducers'
 import {
   createSimulationRunMongoRepository,
   type SimulationRunRepository
@@ -48,22 +46,13 @@ type InjectedSimulationRouteDependencies = Omit<SimulationRouteDependencies, 'ru
 
 const SIMULATION_DEPENDENCIES_LOCAL = 'simulationRouteDependencies'
 
-const unavailableService = async (): Promise<never> => {
-  throw new SimulationServiceError(
-    SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE,
-    'Simulation producer and token configuration are not available'
-  )
-}
+const productionService = createSimulationProductionService()
 
 const productionDependencies: SimulationRouteDependencies = {
   checkJwt: (req, res, next) => { void checkJwt(req, res, next) },
   checkPermission: (action) => (req, res, next) => { void checkPermission(action)(req, res, next) },
   getConfig: () => getSimulationConfig(),
-  service: {
-    loadSnapshots: unavailableService,
-    issueBaseScenarioToken: unavailableService,
-    verifyBaseScenarioToken: unavailableService
-  },
+  service: productionService,
   runRepository: createSimulationRunMongoRepository(),
   demoRepository: simulationDemoRepository
 }

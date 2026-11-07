@@ -43,13 +43,21 @@ const BASE_PERMISSIONS = [
   'confirm_client_location'
 ]
 
+export const SIMULATION_ROLE_GRANTS = {
+  Propietario: ['simulation:read', 'simulation:write'],
+  Administración: ['simulation:read', 'simulation:write'],
+  Preventista: [],
+  Repartidor: ['simulation:read']
+} as const
+
 const PHASE_0_ROLE_GRANTS = [
   {
     name: 'Propietario',
     permissions: [
       'confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment',
       'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan',
-      'confirm_client_location', 'manage_route_config', 'manage_delivery_zone'
+      'confirm_client_location', 'manage_route_config', 'manage_delivery_zone',
+      ...SIMULATION_ROLE_GRANTS.Propietario
     ]
   },
   {
@@ -57,16 +65,17 @@ const PHASE_0_ROLE_GRANTS = [
     permissions: [
       'confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment',
       'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan',
-      'confirm_client_location', 'manage_route_config', 'manage_delivery_zone'
+      'confirm_client_location', 'manage_route_config', 'manage_delivery_zone',
+      ...SIMULATION_ROLE_GRANTS.Administración
     ]
   },
   {
     name: 'Preventista',
-    permissions: ['confirm_sale_payment']
+    permissions: ['confirm_sale_payment', ...SIMULATION_ROLE_GRANTS.Preventista]
   },
   {
     name: 'Repartidor',
-    permissions: ['read_route_plan']
+    permissions: ['read_route_plan', ...SIMULATION_ROLE_GRANTS.Repartidor]
   }
 ]
 

@@ -4,7 +4,7 @@ import RoleModel from '../../src/models/role'
 import UserModel from '../../src/models/user'
 import ItemSaleModel from '../../src/models/itemSale'
 import ProductModel from '../../src/models/product'
-import { seedDatabase } from '../../src/services/seed'
+import { seedDatabase, SIMULATION_ROLE_GRANTS } from '../../src/services/seed'
 import { verified } from '../../src/utils/bcrypt.handle'
 import { seed as seedRoutePlanFixtures } from '../../migrations/route-plan-002-seed-test-data'
 import { createInMemorySimulationDemoRepository } from '../../src/models/simulationDemoFixture'
@@ -14,15 +14,24 @@ const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_test'
 const ROUTE_TEST_DB_URI = 'mongodb://127.0.0.1:27017/test_route_plan'
 
 const PHASE_0_GRANTS = {
-  Propietario: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan', 'confirm_client_location', 'manage_route_config', 'manage_delivery_zone'],
-  Administración: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan', 'confirm_client_location', 'manage_route_config', 'manage_delivery_zone'],
+  Propietario: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan', 'confirm_client_location', 'manage_route_config', 'manage_delivery_zone', 'simulation:read', 'simulation:write'],
+  Administración: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan', 'confirm_client_location', 'manage_route_config', 'manage_delivery_zone', 'simulation:read', 'simulation:write'],
   Preventista: ['confirm_sale_payment'],
-  Repartidor: ['read_route_plan']
+  Repartidor: ['read_route_plan', 'simulation:read']
 }
 
 const EXPECTED_ROLE_NAMES = ['Administración', 'Preventista', 'Propietario', 'Repartidor', 'admin']
 const PHASE_0_PERMISSIONS = [...new Set(Object.values(PHASE_0_GRANTS).flat())]
 const initialAdminPassword = process.env.ADMIN_PASSWORD
+
+describe('simulation role permission mapping', () => {
+  it('grants read and write to owners and administration, read to delivery, and none to sales', () => {
+    expect(SIMULATION_ROLE_GRANTS.Propietario).to.deep.equal(['simulation:read', 'simulation:write'])
+    expect(SIMULATION_ROLE_GRANTS.Administración).to.deep.equal(['simulation:read', 'simulation:write'])
+    expect(SIMULATION_ROLE_GRANTS.Repartidor).to.deep.equal(['simulation:read'])
+    expect(SIMULATION_ROLE_GRANTS.Preventista).to.deep.equal([])
+  })
+})
 
 const stringAscending = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
 
