@@ -22,7 +22,7 @@
     "migration:stock:repair-projections": "node -r ts-node/register migrations/stock-005-repair-projections.ts",
     "migration:stock:verify": "node -r ts-node/register migrations/stock-006-verify.ts",
     "seed:route-plan:test": "node -r ts-node/register migrations/route-plan-002-seed-test-data.ts",
-    "seed:demo": "node -r ts-node/register migrations/demo-001-seed-data.ts"
+    "seed:demo": "node -r ts-node/register src/services/seed.ts"
   },
   "author": "turo1111",
   "license": "UNLICENSED",

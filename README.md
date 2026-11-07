@@ -229,23 +229,21 @@ ROUTE_PLAN_TEST_PASSWORD=route-plan-local-password npm run seed:route-plan:test
 `vercel-build` only compiles TypeScript. On the first Production API request,
 initialization connects to MongoDB, awaits the existing roles/admin seed, then
 inspects the demo fixture inventory before constructing the application. The
-handler caches successful initialization across warm requests. Local, Preview,
-and test startup do not inspect or write demo fixtures. No activation flag is
-required. A missing fixture that cannot be prepared or written, a fixture
+handler caches successful initialization across warm requests. Demo fixture
+repair runs wherever `seedDatabase()` runs. No activation flag is required. A missing fixture that cannot be prepared or written, a fixture
 identity conflict, or a provider validation failure prevents **all** requests,
 including login, until initialization can retry successfully. Initialization
 errors return a generic response without logging credentials.
 
-The API performs the Production demo-seed gate after the base roles/admin seed and
-before constructing the request application. `vercel-build` is compile-only and
-never connects to MongoDB. Local, Preview, and test API initialization skips demo
-inventory. The manual `seed:demo` command remains available. Existing owned
-documents are not overwritten by startup repair; conflicting fixture ownership
+`seedDatabase()` performs demo inventory after the base roles/admin seed during
+application startup. `vercel-build` is compile-only and never connects to MongoDB.
+The manual `seed:demo` command remains available. Existing owned documents are
+not overwritten by startup or manual repair; conflicting fixture ownership
 fails closed. Inventory checks deterministic IDs and fixture ownership, not the
 contents of existing route/catalog/finance documents. Concurrent insert winners
 are checked for namespace/key ownership.
 
-Client coordinates come from a fixed table in `migrations/demo-001-seed-data.ts`
+Client coordinates come from a fixed table in `src/services/seed.ts`
 (read from Google Maps pins). Route distances, durations, and polylines are
 computed by Google Routes when missing fixtures require preparation; if Routes is
 unavailable, startup fails closed before serving requests.
@@ -258,7 +256,7 @@ Inventory checks every deterministic ID with at most 16 simultaneous Mongo
 reads. Insert-only repair reuses that validated inventory: it skips existing
 owned records and attempts inserts only for missing keys. If another writer
 inserts a missing key first, its namespace/key must pass ownership validation;
-the repair never overwrites it. The manual upsert command remains unchanged.
+the repair never overwrites it. The manual command uses insert-only repair too.
 Writes use bounded concurrency (at most 8 inserts in flight), not transactions:
 a failed write can leave partial owned fixtures. After correcting the cause,
 the next startup retries the same anchor and inserts missing fixtures. The 85
@@ -284,9 +282,9 @@ The planned fixture contains 20 clients across three zones, one pending route
 sale per client, three route snapshots, 85 products, nine brands, seven
 categories, six providers, and six calendar months ending at the service-date
 month with 21 paid sales, seven paid purchases, and 11 dated expenses per month.
-No finance event is dated after the service-date anchor. The default anchor is
-today's UTC calendar date; set `DEMO_SERVICE_DATE=YYYY-MM-DD` to reproduce an
-exact run. Existing fixture IDs and keys remain stable for overlapping months.
+No finance event is dated after the service-date anchor. Automatic startup uses the fixed `2026-10-21` anchor; manual runs default to
+today's UTC calendar date and accept `DEMO_SERVICE_DATE=YYYY-MM-DD` to reproduce
+an exact run. Existing fixture IDs and keys remain stable for overlapping months.
 Monthly reruns never delete older months: finance records accumulate beyond six
 months, so review dashboard date filters accordingly. Candidate addresses are
 listed publicly at https://www.cgcetucuman.org.ar/sucursales-rapipago/ ;
@@ -294,8 +292,8 @@ their continued existence, Google geocoding precision and DRIVE connectivity
 are **not** verified by `--dry-run`. Review provider results before authorizing
 a real run: any unresolvable address blocks all writes.
 
-Required environment variables for a real run are `MONGODB_URI` and
-`GOOGLE_MAPS_SERVER_API_KEY`. The base startup seed must already have created
+When fixtures are missing, automatic startup requires `GOOGLE_MAPS_SERVER_API_KEY`;
+manual runs require `MONGODB_URI` and `GOOGLE_MAPS_SERVER_API_KEY`. The base startup seed must already have created
 the `admin` user, which is used only as the fixture actor. `DEMO_SERVICE_DATE`
 is optional and accepts a real `YYYY-MM-DD` service date.
 
@@ -303,8 +301,8 @@ Writes are sequential, **not atomic**. Provider checks finish before the first
 write, but a database write failure can leave an incomplete owned fixture. To
 recover, correct the failing condition and rerun against the same target with
 the exact same `DEMO_SERVICE_DATE` (set it explicitly before the first real
-run). Deterministic owned upserts fill missing records and update existing
-ones without deleting or matching unrelated records. Inspect the failure and
+run). Insert-only repair fills missing owned records without updating existing
+ones or matching unrelated records. Inspect the failure and
 owned fixture before rerunning; do not assume rollback. If the first run used
 the default date, supply that original UTC date explicitly on the rerun.
 
@@ -329,8 +327,8 @@ vercel env run -e production -- npm run seed:demo -- --confirm-remote
 ```
 
 Do not place MongoDB URIs, Google keys, or other credentials in scripts,
-arguments, logs, documentation, or commits. This command is a one-off
-operator action, separate from automatic Production API initialization.
+arguments, logs, documentation, or commits. This command is a one-off operator action that uses the same insert-only repair
+as automatic application startup.
 
 Fixture credentials:
 

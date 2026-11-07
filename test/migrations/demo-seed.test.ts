@@ -5,12 +5,13 @@ import {
   parseDemoArguments,
   resolveTarget,
   runDemoSeed,
+  seedDatabase,
   selectRoadSafeCandidate,
   upsertFixture,
   validateRoadConnectivity
-} from '../../migrations/demo-001-seed-data'
+} from '../../src/services/seed'
 import { GEOCODING_PRECISION } from '../../src/interfaces/client.interface'
-import type { DemoDatabase, FixtureCollection } from '../../migrations/demo-001-seed-data'
+import type { DemoDatabase, FixtureCollection } from '../../src/services/seed'
 import type { RouteLocation } from '../../src/interfaces/routeOptimization.interface'
 import { Types } from 'mongoose'
 
@@ -62,6 +63,15 @@ describe('demo seed safety seams', () => {
     }),
     route: async () => ({ encodedPolyline: 'offline-route', distanceMeters: 5000, durationSeconds: 900 })
   }
+
+  it('delegates fixture seeding after base seeding through injectable dependencies', async () => {
+    const calls: string[] = []
+    await seedDatabase({
+      seedBase: async () => { calls.push('base') },
+      seedDemoFixtures: async () => { calls.push('fixtures') }
+    })
+    expect(calls).to.deep.equal(['base', 'fixtures'])
+  })
 
   it('bounds concurrent inventory reads while checking every owned fixture', async () => {
     let active = 0
