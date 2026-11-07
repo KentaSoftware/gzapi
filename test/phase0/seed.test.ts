@@ -87,7 +87,7 @@ describe('Phase 0 — role seed idempotency', () => {
     await clearCollections()
 
     await withAdminPassword('', async () => {
-      await seedDatabase()
+      await seedDatabase({ seedDemoFixtures: async () => {} })
       const admin = await UserModel.findOne({ nickname: 'admin' }).lean()
       expect(admin).to.not.equal(null)
       if (admin !== null) {
@@ -101,7 +101,7 @@ describe('Phase 0 — role seed idempotency', () => {
     const explicitPassword = 'phase0-explicit-admin-password'
 
     await withAdminPassword(explicitPassword, async () => {
-      await seedDatabase()
+      await seedDatabase({ seedDemoFixtures: async () => {} })
       const admin = await UserModel.findOne({ nickname: 'admin' }).lean()
       expect(admin).to.not.equal(null)
       if (admin !== null) {
@@ -113,8 +113,8 @@ describe('Phase 0 — role seed idempotency', () => {
   it('S-06a: seed on an empty DB creates admin plus the four business roles exactly once', async () => {
     await clearCollections()
 
-    await seedDatabase()
-    await seedDatabase()
+    await seedDatabase({ seedDemoFixtures: async () => {} })
+    await seedDatabase({ seedDemoFixtures: async () => {} })
 
     const names = await roleNames()
     expect(names).to.deep.equal(EXPECTED_ROLE_NAMES)
@@ -139,8 +139,8 @@ describe('Phase 0 — role seed idempotency', () => {
     await RoleModel.create({ name: 'admin', permissions: ['read_user', 'custom_admin_perm'] })
     await RoleModel.create({ name: 'Propietario', permissions: ['confirm_sale_payment', 'custom_owner_perm'] })
 
-    await seedDatabase()
-    await seedDatabase()
+    await seedDatabase({ seedDemoFixtures: async () => {} })
+    await seedDatabase({ seedDemoFixtures: async () => {} })
 
     const names = await roleNames()
     expect(names).to.deep.equal(EXPECTED_ROLE_NAMES)
@@ -168,17 +168,17 @@ describe('Phase 0 — role seed idempotency', () => {
 
   it('S-06: seed twice on empty and existing DBs is stable and duplicate-free', async () => {
     await clearCollections()
-    await seedDatabase()
+    await seedDatabase({ seedDemoFixtures: async () => {} })
     const emptyFirst = await snapshot()
-    await seedDatabase()
+    await seedDatabase({ seedDemoFixtures: async () => {} })
     const emptySecond = await snapshot()
     expect(emptySecond).to.deep.equal(emptyFirst)
 
     await clearCollections()
     await RoleModel.create({ name: 'Repartidor', permissions: ['read_route_plan', 'legacy_delivery_perm'] })
-    await seedDatabase()
+    await seedDatabase({ seedDemoFixtures: async () => {} })
     const existingFirst = await snapshot()
-    await seedDatabase()
+    await seedDatabase({ seedDemoFixtures: async () => {} })
     const existingSecond = await snapshot()
     expect(existingSecond).to.deep.equal(existingFirst)
 

@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { Types } from 'mongoose'
 import { runProductionStartupSeed } from '../../migrations/demo-002-build-seed'
-import type { DemoDatabase } from '../../migrations/demo-001-seed-data'
+import type { DemoDatabase } from '../../src/services/seed'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
@@ -100,7 +100,7 @@ describe('demo seed production startup', () => {
     const dependencies = {
       database: () => databaseWithAdmin(true),
       inspect: async () => ({ total: 578, missing: 1 }),
-      seed: async (input: Parameters<typeof import('../../migrations/demo-001-seed-data').runDemoSeed>[0]) => {
+      seed: async (input: Parameters<typeof import('../../src/services/seed').runDemoSeed>[0]) => {
         called += 1
         expect(input.insertOnly).to.equal(true)
         expect(input.serviceDate?.toISOString()).to.equal('2026-10-21T00:00:00.000Z')

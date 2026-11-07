@@ -1,6 +1,6 @@
 import { computeMatrix, computeRoute } from '../src/services/routeMatrixProvider'
 import { geocode } from '../src/services/geocodingProvider'
-import { assertDemoAdmin, inspectDemoFixtures, mongoDatabase, resolveServiceDate, resolveTarget, runDemoSeed } from './demo-001-seed-data'
+import { assertDemoAdmin, inspectDemoFixtures, mongoDatabase, resolveServiceDate, resolveTarget, runDemoSeed } from '../src/services/seed'
 
 type Environment = Record<string, string | undefined>
 
