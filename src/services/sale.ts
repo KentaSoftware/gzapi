@@ -242,14 +242,37 @@ const getSale = async (id: Types.ObjectId): Promise<Sale[]> => {
   return response
 }
 
+const sameDelivery = (input: unknown, existing: Sale['delivery'] | null | undefined): boolean => {
+  if (input == null || existing == null) return input === existing
+  const supplied = recordOf(input)
+  if (supplied === null || Object.keys(supplied).some(key => !['status', 'serviceDate', 'deliveredAt', 'notes'].includes(key))) return false
+  if (supplied.status !== existing.status || supplied.notes !== existing.notes) return false
+  for (const key of ['serviceDate', 'deliveredAt'] as const) {
+    const current = existing[key]
+    const value = supplied[key]
+    if (current == null || value == null) {
+      if (current !== value) return false
+    } else {
+      if (!(value instanceof Date) && typeof value !== 'string') return false
+      const timestamp = new Date(value).getTime()
+      if (!Number.isFinite(timestamp) || timestamp !== current.getTime()) return false
+    }
+  }
+  return true
+}
+
 const updateSale = async (id: Types.ObjectId, sale: Partial<Sale>): Promise<Sale | null> => {
-  if (Object.keys(sale).some(key => key === 'delivery' || key.startsWith('delivery.') || key.startsWith('$'))) {
+  if (Object.keys(sale).some(key => key.startsWith('delivery.') || key.startsWith('$'))) {
     throw new SaleInputError('La entrega no se puede modificar desde la edición de venta')
   }
   const existingSale = await SaleModel.findById(id)
   if (existingSale == null) return null
 
-  existingSale.set(sale)
+  if (Object.prototype.hasOwnProperty.call(sale, 'delivery') && !sameDelivery(sale.delivery, existingSale.delivery)) {
+    throw new SaleInputError('La entrega no se puede modificar desde la edición de venta')
+  }
+  const { delivery: _delivery, ...changes } = sale
+  existingSale.set(changes)
   return await existingSale.save()
 }
 
