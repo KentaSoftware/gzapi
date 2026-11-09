@@ -1,7 +1,8 @@
 import type {
   RouteHeuristicInput,
   RouteHeuristicResult,
-  RouteMatrixSegment
+  RouteMatrixSegment,
+  RouteStop
 } from '../interfaces/routeOptimization.interface'
 
 type RouteInvariantCode = 'INVALID_ROUTE_INPUT' | 'ROUTE_MATRIX_INCOMPLETE'
@@ -140,10 +141,18 @@ const twoOpt = (initialRoute: string[], matrix: Map<string, RouteMatrixSegment>)
   return route
 }
 
+const validateClientOrder = (stops: RouteStop[], order: string[]): void => {
+  const ids = new Set(stops.map((stop) => stop.clientId))
+  if (order.length !== ids.size || new Set(order).size !== order.length || order.some((id) => !ids.has(id))) {
+    throw new RouteInvariantError('INVALID_ROUTE_INPUT', 'Client order must be an exact permutation of grouped client identifiers')
+  }
+}
+
 const buildClosedRoute = (input: RouteHeuristicInput): RouteHeuristicResult => {
   validateRouteInput(input)
   const matrix = matrixByPair(input.matrix)
-  const routeIds = twoOpt(nearestNeighborRoute(input, matrix), matrix)
+  if (input.clientOrder !== undefined) validateClientOrder(input.stops, input.clientOrder)
+  const routeIds = input.clientOrder === undefined ? twoOpt(nearestNeighborRoute(input, matrix), matrix) : [input.depot.id, ...input.clientOrder]
   const stopsByClientId = new Map(input.stops.map((stop) => [stop.clientId, stop]))
   const orderedStops = routeIds.slice(1).map((clientId) => {
     const stop = stopsByClientId.get(clientId)
@@ -167,5 +176,6 @@ export {
   buildClosedRoute,
   calculateFuelLiters,
   RouteInvariantError,
+  validateClientOrder,
   validateRouteInput
 }

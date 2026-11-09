@@ -427,6 +427,7 @@ export interface RouteHeuristicInput {
   depot: RouteLocation
   stops: RouteStop[]
   matrix: RouteMatrixSegment[]
+  clientOrder?: string[]
 }
 
 export interface RouteHeuristicResult {
@@ -461,9 +462,12 @@ export interface RoutePreviewRequest extends CandidateQuery {
   saleIds: string[]
   driverId?: string
   vehicleId?: string
+  clientOrder?: string[]
 }
 
 export interface RoutePreview {
+  receipt?: string
+  zoneSnapshot?: RoutePlanZoneSnapshot
   route: {
     depot: RoutePreviewDepot
     stops: RouteStop[]

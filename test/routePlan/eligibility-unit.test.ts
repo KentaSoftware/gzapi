@@ -8,7 +8,7 @@ import RoutingConfigModel from '../../src/models/routingConfig'
 import ItemSaleModel from '../../src/models/itemSale'
 import RoutePlanModel from '../../src/models/routePlan'
 import * as provider from '../../src/services/routeMatrixProvider'
-import { getCandidates, getGlobalCandidates, preview, saveSnapshot, RoutePreviewError } from '../../src/services/routePlan'
+import { getCandidates, getGlobalCandidates, preview, RoutePreviewError } from '../../src/services/routePlan'
 import type { CandidateResult } from '../../src/interfaces/routeOptimization.interface'
 
 describe('route eligibility without database access', () => {
@@ -87,15 +87,13 @@ describe('route eligibility without database access', () => {
     const route = sinon.stub(provider, 'computeRoute').rejects(new Error('unexpected provider call'))
     const write = sinon.stub(RoutePlanModel, 'create').rejects(new Error('unexpected snapshot write'))
     const request = { ...input, saleIds: sales.map((row) => String(row._id)) }
-    for (const run of [async () => await preview(request), async () => await saveSnapshot(request, 'test')]) {
-      try {
-        await run()
-        expect.fail('Expected cancellation rejection')
-      } catch (error) {
-        expect(error).to.be.instanceOf(RoutePreviewError)
-        expect((error as RoutePreviewError).code).to.equal('NO_ELIGIBLE_ORDERS')
-        expect((error as Error).message).to.match(/cancel/i)
-      }
+    try {
+      await preview(request, { actor: 'test' })
+      expect.fail('Expected cancellation rejection')
+    } catch (error) {
+      expect(error).to.be.instanceOf(RoutePreviewError)
+      expect((error as RoutePreviewError).code).to.equal('NO_ELIGIBLE_ORDERS')
+      expect((error as Error).message).to.match(/cancel/i)
     }
     expect(matrix.callCount).to.equal(0)
     expect(route.callCount).to.equal(0)
