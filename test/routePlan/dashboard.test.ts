@@ -41,7 +41,7 @@ describe('Route dashboard aggregation', () => {
       SaleModel.deleteMany({}),
       UserModel.deleteMany({})
     ])
-    const role = await RoleModel.create({ name: 'Authenticated route user', permissions: [] })
+    const role = await RoleModel.create({ name: 'Authenticated route user', permissions: ['read_route_plan'] })
     const user = await UserModel.create({ nickname: 'route-reader', password: 'not-a-real-password', role: role._id })
     userId = user._id
     token = await generateToken(user)
@@ -49,7 +49,7 @@ describe('Route dashboard aggregation', () => {
     zoneId = zone._id
   })
 
-  it('S-02: requires authentication but not route permissions for the dashboard', async () => {
+  it('S-02: requires authentication and route read permission for the dashboard', async () => {
     const unauthenticated = await request(app).get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
     expect(unauthenticated.status).to.equal(401)
 
@@ -64,6 +64,12 @@ describe('Route dashboard aggregation', () => {
       .get('/routePlan/dashboard')
       .set('Authorization', `Bearer ${token}`)
     expect(globalResponse.status).to.equal(200)
+
+    const role = await RoleModel.create({ name: 'User without route access', permissions: [] })
+    const user = await UserModel.create({ nickname: 'no-route-access', password: 'not-a-real-password', role: role._id })
+    const deniedToken = await generateToken(user)
+    const denied = await request(app).get('/routePlan/dashboard').set('Authorization', `Bearer ${deniedToken}`)
+    expect(denied.status).to.equal(403)
   })
 
   it('S-26: reads routes and pending candidates globally across dates and zones', async () => {
