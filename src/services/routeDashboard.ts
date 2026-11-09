@@ -19,6 +19,8 @@ import RoutePlanModel from '../models/routePlan'
 import RoutePlanOperationalModel from '../models/routePlanOperational'
 import SaleModel from '../models/sale'
 import ClientModel from '../models/client'
+import UserModel from '../models/user'
+import VehicleModel from '../models/vehicle'
 import { getCandidates, getGlobalCandidates, getDriverSnapshots } from './routePlan'
 
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
@@ -131,7 +133,7 @@ const routeCard = (snapshot: DashboardSnapshotRead, projection: DashboardProject
       durationSeconds: snapshot.metrics.durationSeconds,
       fuelLiters: typeof snapshot.metrics.fuelLiters === 'number' ? snapshot.metrics.fuelLiters : null
     },
-    assignments: projection?.assignments ?? snapshot.assignments ?? {},
+    assignments: { ...(projection === undefined ? snapshot.assignments : projection.assignments) },
     warnings: [...snapshot.warnings],
     stale: projection?.stale === true
   }
@@ -324,6 +326,20 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
     const statusBySaleId = new Map(sales.map((sale) => [String(sale._id), sale.delivery?.status ?? 'PENDING']))
     const allRoutes = snapshots.map((snapshot) => routeCard(snapshot, projectionBySnapshotId.get(String(snapshot._id)), snapshot.selectedSaleIds.map((saleId) => statusBySaleId.get(saleId) ?? 'PENDING')))
     const routes = input.status === undefined ? allRoutes : allRoutes.filter((route) => route.status === input.status)
+    const driverIds = [...new Set(routes.map((route) => route.assignments.driverId).filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id)))]
+    const vehicleIds = [...new Set(routes.map((route) => route.assignments.vehicleId).filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id)))]
+    const [drivers, vehicles] = await Promise.all([
+      driverIds.length === 0 ? [] : UserModel.find({ _id: { $in: driverIds } }, { _id: 1, nickname: 1 }).lean(),
+      vehicleIds.length === 0 ? [] : VehicleModel.find({ _id: { $in: vehicleIds } }, { _id: 1, code: 1 }).lean()
+    ])
+    const driverNames = new Map(drivers.map((driver) => [String(driver._id), driver.nickname]))
+    const vehicleNames = new Map(vehicles.map((vehicle) => [String(vehicle._id), vehicle.code]))
+    for (const route of routes) {
+      const driverName = driverNames.get(route.assignments.driverId ?? '')
+      const vehicleName = vehicleNames.get(route.assignments.vehicleId ?? '')
+      if (driverName !== undefined) route.assignments.driverName = driverName
+      if (vehicleName !== undefined) route.assignments.vehicleName = vehicleName
+    }
     const oversizedRouteIds = new Set(snapshots.filter((snapshot) => snapshot.stops.length > MAX_DASHBOARD_ROUTE_STOPS || (snapshot.saleReferences?.length ?? 0) > MAX_DASHBOARD_ROUTE_SALE_REFERENCES).map((snapshot) => String(snapshot._id)))
     const totalDistanceMeters = routes.length === 0 ? null : routes.reduce((sum, route) => sum + route.metrics.distanceMeters, 0)
     const estimatedFuelLiters = routes.length === 0 || routes.some((route) => route.metrics.fuelLiters === null)
