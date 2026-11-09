@@ -100,8 +100,9 @@ describe('assigned driver route privacy', () => {
     })
     sinon.stub(ClientModel, 'find').throws(new Error('Unexpected global client read'))
     sinon.stub(SaleModel, 'find').throws(new Error('Unexpected global sale read'))
-    sinon.stub(UserModel, 'find').throws(new Error('Unexpected user list read'))
-    sinon.stub(VehicleModel, 'find').throws(new Error('Unexpected vehicle list read'))
+    const emptyLabels: unknown = { lean: async () => [] }
+    sinon.stub(UserModel, 'find').returns(emptyLabels as never)
+    sinon.stub(VehicleModel, 'find').returns(emptyLabels as never)
   })
   afterEach(() => { sinon.restore() })
 

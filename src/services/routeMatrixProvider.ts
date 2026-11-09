@@ -328,22 +328,24 @@ const normalizeMatrix = (elements: unknown, origins: RouteLocation[], destinatio
     const origin = origins[originIndex]
     const destination = destinations[destinationIndex]
     const key = `${origin.id}\u0000${destination.id}`
-    const seconds = durationSeconds(duration)
     if (origin.id === destination.id) {
       recordRejection(rejectionCounts, 'SELF_PAIR')
       continue
     }
-    if (condition !== 'ROUTE_EXISTS') {
+    const statusOk = status === undefined || (typeof status === 'object' && status !== null && ((status as { code?: unknown }).code === undefined || (status as { code?: unknown }).code === 0))
+    if (condition !== 'ROUTE_EXISTS' || !statusOk) {
       recordRejection(rejectionCounts, 'OTHER')
       recordRejectedPair(rejectedPairs, originIndex, destinationIndex, 'OTHER')
       continue
     }
-    const meters = distanceMetersValue(distanceMeters)
+    const coLocated = origin.latitude === destination.latitude && origin.longitude === destination.longitude
+    const meters = distanceMeters === undefined && coLocated ? 0 : distanceMetersValue(distanceMeters)
     if (meters === undefined) {
       recordRejection(rejectionCounts, 'INVALID_DISTANCE')
       recordRejectedPair(rejectedPairs, originIndex, destinationIndex, 'INVALID_DISTANCE')
       continue
     }
+    const seconds = duration === undefined && coLocated ? 0 : durationSeconds(duration)
     if (seconds === undefined) {
       recordRejection(rejectionCounts, 'INVALID_DURATION')
       recordRejectedPair(rejectedPairs, originIndex, destinationIndex, 'INVALID_DURATION')

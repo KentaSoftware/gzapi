@@ -165,6 +165,11 @@ export interface RouteOperationalAssignment {
   vehicleId?: string
 }
 
+export interface RouteDashboardAssignment extends RouteOperationalAssignment {
+  driverName?: string
+  vehicleName?: string
+}
+
 export interface RouteOperationalHistoryEntry {
   status: RouteOperationalStatus
   driverId?: string
@@ -356,7 +361,7 @@ export interface RouteDashboardCard {
     durationSeconds: number
     fuelLiters: number | null
   }
-  assignments: RouteOperationalAssignment
+  assignments: RouteDashboardAssignment
   warnings: string[]
   stale: boolean
   depot?: RoutingDepot

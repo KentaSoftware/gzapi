@@ -21,7 +21,7 @@ describe('route admin seed grants', () => {
     const createUser = sinon.stub(UserModel, 'create').resolves(createdUser as never)
     sinon.stub(simulation, 'seedSimulationDemoFixtures').resolves()
     await seedDatabase({ seedDemoFixtures: async () => {} })
-    expect(roles.get('admin')?.permissions).to.include.members(['read_route_plan', 'create_route_plan', 'manage_route_config', 'manage_delivery_zone'])
+    expect(roles.get('admin')?.permissions).to.include.members(['read_route_plan', 'create_route_plan', 'manage_route_config', 'manage_delivery_zone', 'confirm_client_location'])
     expect(createUser.calledOnce).to.equal(true)
     expect((createUser.firstCall.args[0] as { role: string }).role).to.equal('admin')
   })
@@ -41,7 +41,7 @@ describe('route admin seed grants', () => {
     sinon.stub(simulation, 'seedSimulationDemoFixtures').resolves()
     await seedDatabase({ seedDemoFixtures: async () => {} })
     await seedDatabase({ seedDemoFixtures: async () => {} })
-    for (const permission of ['read_route_plan', 'create_route_plan', 'manage_route_config', 'manage_delivery_zone', 'custom_grant']) {
+    for (const permission of ['read_route_plan', 'create_route_plan', 'manage_route_config', 'manage_delivery_zone', 'confirm_client_location', 'custom_grant']) {
       expect(admin.permissions.filter((value) => value === permission)).to.have.length(1)
     }
     expect(user.password).to.equal('existing-hash')
