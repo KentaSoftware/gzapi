@@ -41,6 +41,8 @@ const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const STALE_ROUTE_WARNING = 'STALE_ROUTE_PLAN_REQUIRES_REPLANNING'
 const MAX_CANDIDATE_READS = 1000
 const MAX_SNAPSHOT_LIST_READS = 100
+const CANCELLED_SALE_PATTERN = /^\s*cancelado\s*$/i
+const hasValidCoordinates = (latitude: unknown, longitude: unknown): latitude is number => typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
 
 type RoutePreviewErrorCode = 'NO_ELIGIBLE_ORDERS' | 'CLIENT_LOCATION_MISSING' | 'CLIENT_LOCATION_AMBIGUOUS' | 'ROUTE_TECHNICAL_LIMIT_EXCEEDED' | 'ROUTE_MATRIX_INCOMPLETE' | 'ROUTING_PROVIDER_UNAVAILABLE' | 'ROUTING_PROVIDER_QUOTA_EXCEEDED' | 'INVALID_ROUTE_INPUT' | 'INVALID_CONFIGURATION' | 'ROUTE_ASSIGNMENT_REQUIRED'
 
@@ -127,7 +129,7 @@ interface CandidateQueryResult {
 }
 
 const queryGlobalCandidates = async (maxResults?: number): Promise<CandidateQueryResult> => {
-  const salesQuery = SaleModel.find({ 'delivery.status': 'PENDING' }).sort({ _id: 1 })
+  const salesQuery = SaleModel.find({ 'delivery.status': 'PENDING', estado: { $not: CANCELLED_SALE_PATTERN } }).sort({ _id: 1 })
   const sales = await (maxResults === undefined ? salesQuery : salesQuery.limit(maxResults + 1)).lean()
   const boundedSales = maxResults === undefined || sales.length <= maxResults ? sales : sales.slice(0, maxResults)
   const clientIds = boundedSales
@@ -143,7 +145,7 @@ const queryGlobalCandidates = async (maxResults?: number): Promise<CandidateQuer
     const client = sale.idCliente === undefined ? undefined : clientsById.get(String(sale.idCliente))
     if (client === undefined) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.INVALID_CLIENT_REFERENCE))
     else if (client.isActive !== true) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_INACTIVE, client))
-    else if (client.address === undefined || client.address.trim() === '' || client.lat === undefined || client.lng === undefined) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client))
+    else if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client))
     else if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_UNCONFIRMED, client))
     else eligible.push(candidateEntry(sale._id, client))
   }
@@ -158,6 +160,7 @@ const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery, 
   const { start, end } = serviceDateRange(serviceDate)
   const salesQuery = SaleModel.find({
     'delivery.status': 'PENDING',
+    estado: { $not: CANCELLED_SALE_PATTERN },
     'delivery.serviceDate': { $gte: start, $lt: end }
   })
     .sort({ _id: 1 })
@@ -182,7 +185,7 @@ const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery, 
       blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_INACTIVE, client))
     } else if (client.deliveryZoneId === undefined || !requestedZoneId.equals(client.deliveryZoneId)) {
       blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_ZONE_MISMATCH, client))
-    } else if (client.address === undefined || client.address.trim() === '' || client.lat === undefined || client.lng === undefined) {
+    } else if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) {
       blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client))
     } else if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) {
       blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_UNCONFIRMED, client))
@@ -292,8 +295,6 @@ const updateRoutingConfig = async (input: RoutingConfigUpdateInput, updatedBy: s
   }
 }
 
-const hasValidCoordinates = (latitude: unknown, longitude: unknown): latitude is number => typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
-
 const previewErrorForClient = (client: Client | undefined): RoutePreviewError | undefined => {
   if (client === undefined || client.isActive !== true) return new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for route planning')
   if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) return new RoutePreviewError('CLIENT_LOCATION_MISSING', 'A selected client is missing a confirmed location')
@@ -338,6 +339,9 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
   const selectedObjectIds = saleIds.map((saleId) => new Types.ObjectId(saleId))
   const sales = await SaleModel.find({ _id: { $in: selectedObjectIds } }).sort({ _id: 1 }).lean()
   if (sales.length !== saleIds.length) throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for route planning')
+  if (sales.some((sale) => typeof sale.estado === 'string' && CANCELLED_SALE_PATTERN.test(sale.estado))) {
+    throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Cancelled sales are not eligible for route planning')
+  }
 
   const clientIds = sales
     .map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente))
