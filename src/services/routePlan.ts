@@ -1,4 +1,5 @@
 import { fromZonedTime } from 'date-fns-tz'
+import { createHash, randomBytes } from 'crypto'
 import { Types } from 'mongoose'
 import { Client, GEOCODING_STATUS } from '../interfaces/client.interface'
 import {
@@ -26,10 +27,11 @@ import ClientModel from '../models/client'
 import DeliveryZoneModel from '../models/deliveryZone'
 import RoutingConfigModel from '../models/routingConfig'
 import RoutePlanModel from '../models/routePlan'
+import RoutePlanPreviewReceiptModel from '../models/routePlanPreviewReceipt'
 import RoutePlanOperationalModel from '../models/routePlanOperational'
 import SaleModel from '../models/sale'
 import ItemSaleModel from '../models/itemSale'
-import { buildClosedRoute, RouteInvariantError } from './routeHeuristic'
+import { buildClosedRoute, RouteInvariantError, validateClientOrder } from './routeHeuristic'
 import { computeMatrix, computeRoute, RouteProviderError, type RouteMatrixDiagnostic } from './routeMatrixProvider'
 import { calculateFuelLiters as calculateAssignedFuelLiters, resolveAssignedConsumption } from './routeFuel'
 import { calculateStopEstimates } from './routeSchedule'
@@ -45,13 +47,14 @@ const MAX_SNAPSHOT_LIST_READS = 100
 const CANCELLED_SALE_PATTERN = /^\s*cancelado\s*$/i
 const hasValidCoordinates = (latitude: unknown, longitude: unknown): latitude is number => typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
 
-type RoutePreviewErrorCode = 'NO_ELIGIBLE_ORDERS' | 'CLIENT_LOCATION_MISSING' | 'CLIENT_LOCATION_AMBIGUOUS' | 'ROUTE_TECHNICAL_LIMIT_EXCEEDED' | 'ROUTE_MATRIX_INCOMPLETE' | 'ROUTING_PROVIDER_UNAVAILABLE' | 'ROUTING_PROVIDER_QUOTA_EXCEEDED' | 'INVALID_ROUTE_INPUT' | 'INVALID_CONFIGURATION' | 'ROUTE_ASSIGNMENT_REQUIRED'
+type RoutePreviewErrorCode = 'NO_ELIGIBLE_ORDERS' | 'CLIENT_LOCATION_MISSING' | 'CLIENT_LOCATION_AMBIGUOUS' | 'ROUTE_TECHNICAL_LIMIT_EXCEEDED' | 'ROUTE_MATRIX_INCOMPLETE' | 'ROUTING_PROVIDER_UNAVAILABLE' | 'ROUTING_PROVIDER_QUOTA_EXCEEDED' | 'INVALID_ROUTE_INPUT' | 'INVALID_CONFIGURATION' | 'ROUTE_ASSIGNMENT_REQUIRED' | 'PREVIEW_RECEIPT_CONFLICT'
 
 interface RoutePlanRequestContext {
   correlationId?: string
   maxResults?: number
   truncated?: boolean
   driverId?: string
+  actor?: string
 }
 
 interface RoutePlanEvent {
@@ -393,6 +396,9 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
     ...(config.depot.address === undefined ? {} : { address: config.depot.address })
   }
   const stops = [...stopsByClient.values()]
+  if (input.clientOrder !== undefined) {
+    try { validateClientOrder(stops, input.clientOrder) } catch (error) { throw previewProviderError(error) }
+  }
   if (typeof config.maxStops === 'number' && Number.isFinite(config.maxStops) && stops.length > config.maxStops) {
     throw new RoutePreviewError('ROUTE_TECHNICAL_LIMIT_EXCEEDED', `Route preview exceeds the configured maximum of ${config.maxStops} stops`)
   }
@@ -412,7 +418,7 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
       logRoutePlanEvent({ event: 'route_plan_provider_failed', correlationId: context.correlationId, latencyMs: Date.now() - matrixStart, provider: config.provider, providerOperation: 'matrix', algorithmVersion: config.algorithm, ruleVersion: CANDIDATE_RULE_VERSION, routingConfigRevision: config.revision, resultCode: errorCode(mapped), diagnostic: providerDiagnostic(mapped) })
       throw error
     }
-    const heuristic = buildClosedRoute({ depot, stops, matrix: matrix.segments })
+    const heuristic = buildClosedRoute({ depot, stops, matrix: matrix.segments, clientOrder: input.clientOrder })
     const intermediates = heuristic.orderedStops.map((stop) => {
       const client = clientsById.get(stop.clientId)
       return { id: stop.clientId, name: client?.nombreCompleto ?? stop.clientId, latitude: stop.latitude, longitude: stop.longitude }
@@ -474,6 +480,7 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
     }
     routeForSchedule.stopEstimates = calculateStopEstimates(routeForSchedule, calculatedAt, timezone)
     return {
+      zoneSnapshot: { code: zone.code, normalizedName: zone.normalizedName, name: zone.name },
       route: { depot, stops: heuristic.orderedStops, segments: heuristic.segments, encodedPolyline: finalRoute.encodedPolyline },
       metrics: routeForSchedule.metrics,
       assignments: routeForSchedule.assignments,
@@ -496,9 +503,28 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
 const preview = async (input: RoutePreviewRequest, context: RoutePlanRequestContext = {}): Promise<RoutePreview> => {
   const start = Date.now()
   try {
+    if (context.actor === undefined || context.actor === '') throw new RoutePreviewError('INVALID_ROUTE_INPUT', 'Authenticated actor is required')
     const result = await previewRoute(input, context)
+    if (result.zoneSnapshot === undefined) throw new RoutePreviewError('INVALID_CONFIGURATION', 'Preview zone is missing')
+    const token = randomBytes(32).toString('hex')
+    const now = Date.now()
+    const slotFilter = { _id: context.actor, $or: [{ claimUntil: { $exists: false } }, { claimUntil: { $lte: new Date(now) } }] }
+    const update = { $set: { actor: context.actor, tokenHash: receiptHash(token), expiresAt: new Date(now + 10 * 60 * 1000), purgeAt: new Date(now + 10 * 60 * 1000 + 30000), snapshotId: new Types.ObjectId(), snapshot: buildSnapshot(input, result, result.zoneSnapshot, context.actor), input }, $unset: { claimId: 1, claimUntil: 1 } }
+    try {
+      await RoutePlanPreviewReceiptModel.findOneAndUpdate(slotFilter, update, { upsert: true, new: true }).lean()
+    } catch (error) {
+      if (!isDuplicateKey(error)) throw error
+      // An initial concurrent upsert may have inserted the slot. Retry once;
+      // an active claim still conflicts on the actor's unique _id.
+      try {
+        await RoutePlanPreviewReceiptModel.findOneAndUpdate(slotFilter, update, { upsert: true, new: true }).lean()
+      } catch (retryError) {
+        if (isDuplicateKey(retryError)) throw receiptConflict()
+        throw retryError
+      }
+    }
     logRoutePlanEvent({ event: 'route_plan_preview_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, provider: result.algorithmProvider, algorithmVersion: result.algorithmVersion, ruleVersion: result.ruleVersion, routingConfigRevision: result.routingConfigRevision, resultCode: 'SUCCESS' })
-    return result
+    return { ...result, receipt: token }
   } catch (error) {
     const mapped = previewProviderError(error)
     logRoutePlanEvent({ event: 'route_plan_preview_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: CANDIDATE_RULE_VERSION, resultCode: errorCode(mapped), diagnostic: providerDiagnostic(mapped) })
@@ -506,65 +532,127 @@ const preview = async (input: RoutePreviewRequest, context: RoutePlanRequestCont
   }
 }
 
-const saveSnapshot = async (input: RoutePreviewRequest, createdBy: string, context: RoutePlanRequestContext = {}): Promise<RoutePlan> => {
-  const start = Date.now()
+const buildSnapshot = (input: RoutePreviewRequest, result: RoutePreview, zone: { code: string, normalizedName: string, name: string }, createdBy: string): RoutePlan => {
+  const stopSequenceByClientId = new Map(result.route.stops.map((stop, index) => [stop.clientId, index + 1]))
+  const snapshot: RoutePlan = {
+    snapshotVersion: 1,
+    planningDate: serviceDateRange(input.serviceDate).start,
+    zoneSnapshot: {
+      code: zone.code,
+      normalizedName: zone.normalizedName,
+      name: zone.name
+    },
+    selectedSaleIds: [...input.saleIds],
+    depot: {
+      name: result.route.depot.name,
+      latitude: result.route.depot.latitude,
+      longitude: result.route.depot.longitude,
+      ...(result.route.depot.address === undefined ? {} : { address: result.route.depot.address })
+    },
+    stops: result.route.stops.map((stop, index) => ({
+      clientId: stop.clientId,
+      saleIds: [...stop.saleIds],
+      sequence: index + 1,
+      latitude: stop.latitude,
+      longitude: stop.longitude
+    })),
+    segments: result.route.segments.map((segment) => ({
+      fromStopSequence: segment.fromId === 'deposito_1' ? 0 : stopSequenceByClientId.get(segment.fromId) as number,
+      toStopSequence: segment.toId === 'deposito_1' ? 0 : stopSequenceByClientId.get(segment.toId) as number,
+      distanceMeters: segment.distanceMeters,
+      durationSeconds: segment.durationSeconds
+    })),
+    metrics: { ...result.metrics, fuelLiters: result.metrics.fuelLiters ?? undefined },
+    assignments: result.assignments,
+    fuelAssumptions: result.fuelAssumptions,
+    scheduleAssumptions: result.scheduleAssumptions,
+    stopEstimates: result.stopEstimates,
+    saleReferences: result.saleReferences,
+    algorithm: {
+      name: result.algorithmVersion,
+      version: result.algorithmVersion,
+      provider: result.algorithmProvider
+    },
+    routingConfigRevision: result.routingConfigRevision,
+    ruleVersion: result.ruleVersion,
+    encodedPolyline: result.route.encodedPolyline,
+    warnings: result.warnings,
+    audit: { createdBy, createdAt: new Date() }
+  }
+  return snapshot
+}
+
+const receiptHash = (token: string): string => createHash('sha256').update(token).digest('hex')
+const receiptConflict = (): RoutePreviewError => new RoutePreviewError('PREVIEW_RECEIPT_CONFLICT', 'Preview receipt is invalid, expired, already used, or no longer fresh')
+const isDuplicateKey = (error: unknown): boolean => typeof error === 'object' && error !== null && 'code' in error && error.code === 11000
+
+const assertReceiptFresh = async (input: RoutePreviewRequest, snapshot: RoutePlan): Promise<void> => {
+  const { start, end } = serviceDateRange(input.serviceDate)
+  const sales = await SaleModel.find({ _id: { $in: input.saleIds.map((id) => new Types.ObjectId(id)) } }).sort({ _id: 1 }).lean()
+  if (sales.length !== input.saleIds.length) throw receiptConflict()
+  const stops = new Map(snapshot.stops.map((stop) => [stop.clientId, stop]))
+  for (const sale of sales) {
+    const stop = stops.get(String(sale.idCliente))
+    const reference = snapshot.saleReferences?.find((item) => item.saleId === String(sale._id))
+    const updatedAt = (sale as unknown as { updatedAt?: Date }).updatedAt?.getTime() ?? null
+    if (stop === undefined || !stop.saleIds.includes(String(sale._id)) || CANCELLED_SALE_PATTERN.test(sale.estado) || sale.delivery?.status !== 'PENDING' || sale.delivery.serviceDate === undefined || sale.delivery.serviceDate < start || sale.delivery.serviceDate >= end || reference?.versionAtSave !== updatedAt) throw receiptConflict()
+  }
+  const clients = await ClientModel.find({ _id: { $in: [...stops.keys()] } }).lean()
+  if (clients.length !== stops.size) throw receiptConflict()
+  for (const client of clients) {
+    const stop = stops.get(String(client._id))
+    if (stop === undefined || previewErrorForClient(client) !== undefined || String(client.deliveryZoneId) !== input.deliveryZoneId || client.lat !== stop.latitude || client.lng !== stop.longitude) throw receiptConflict()
+  }
+  const zone = await DeliveryZoneModel.findOne({ _id: input.deliveryZoneId, active: true }).lean()
+  if (zone === null || zone.code !== snapshot.zoneSnapshot.code || zone.name !== snapshot.zoneSnapshot.name || zone.normalizedName !== snapshot.zoneSnapshot.normalizedName) throw receiptConflict()
+  const config = await RoutingConfigModel.findOne({ key: 'deposito_1', enabled: true }).lean()
+  if (config === null || config.revision !== snapshot.routingConfigRevision) throw receiptConflict()
+  const vehicle = input.vehicleId === undefined ? null : await getVehicleById(input.vehicleId)
+  if (resolveAssignedConsumption(vehicle) !== snapshot.fuelAssumptions?.consumptionLitersPer100Km || (vehicle?.code ?? null) !== snapshot.fuelAssumptions?.vehicleCode) throw receiptConflict()
+}
+
+const saveSnapshot = async (input: { receipt: string }, createdBy: string, context: RoutePlanRequestContext = {}): Promise<RoutePlan> => {
+  if (typeof input.receipt !== 'string' || !/^[a-f0-9]{64}$/.test(input.receipt) || createdBy === '') throw receiptConflict()
+  const now = new Date()
+  const claimId = randomBytes(16).toString('hex')
+  const id = createdBy
+  const tokenHash = receiptHash(input.receipt)
+  const receipt = await RoutePlanPreviewReceiptModel.findOneAndUpdate({ _id: id, actor: createdBy, tokenHash, expiresAt: { $gt: now }, $or: [{ claimUntil: { $exists: false } }, { claimUntil: { $lte: now } }] }, { $set: { claimId, claimUntil: new Date(now.getTime() + 30000) } }, { new: true }).lean()
+  if (receipt === null) throw receiptConflict()
   try {
-    const result = await preview(input, context)
-    const zone = await DeliveryZoneModel.findOne({ _id: input.deliveryZoneId, active: true }).lean()
-    if (zone === null) throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'The requested delivery zone is not active')
-    const stopSequenceByClientId = new Map(result.route.stops.map((stop, index) => [stop.clientId, index + 1]))
-    const snapshot: RoutePlan = {
-      snapshotVersion: 1,
-      planningDate: serviceDateRange(input.serviceDate).start,
-      zoneSnapshot: {
-        code: zone.code,
-        normalizedName: zone.normalizedName,
-        name: zone.name
-      },
-      selectedSaleIds: [...input.saleIds],
-      depot: {
-        name: result.route.depot.name,
-        latitude: result.route.depot.latitude,
-        longitude: result.route.depot.longitude,
-        ...(result.route.depot.address === undefined ? {} : { address: result.route.depot.address })
-      },
-      stops: result.route.stops.map((stop, index) => ({
-        clientId: stop.clientId,
-        saleIds: [...stop.saleIds],
-        sequence: index + 1,
-        latitude: stop.latitude,
-        longitude: stop.longitude
-      })),
-      segments: result.route.segments.map((segment) => ({
-        fromStopSequence: segment.fromId === 'deposito_1' ? 0 : stopSequenceByClientId.get(segment.fromId) as number,
-        toStopSequence: segment.toId === 'deposito_1' ? 0 : stopSequenceByClientId.get(segment.toId) as number,
-        distanceMeters: segment.distanceMeters,
-        durationSeconds: segment.durationSeconds
-      })),
-      metrics: { ...result.metrics, fuelLiters: result.metrics.fuelLiters ?? undefined },
-      assignments: result.assignments,
-      fuelAssumptions: result.fuelAssumptions,
-      scheduleAssumptions: result.scheduleAssumptions,
-      stopEstimates: result.stopEstimates,
-      saleReferences: result.saleReferences,
-      algorithm: {
-        name: result.algorithmVersion,
-        version: result.algorithmVersion,
-        provider: result.algorithmProvider
-      },
-      routingConfigRevision: result.routingConfigRevision,
-      ruleVersion: result.ruleVersion,
-      encodedPolyline: result.route.encodedPolyline,
-      warnings: result.warnings,
-      audit: { createdBy, createdAt: new Date() }
-    }
-    const saved = await RoutePlanModel.create(snapshot)
-    logRoutePlanEvent({ event: 'route_plan_snapshot_saved', correlationId: context.correlationId, latencyMs: Date.now() - start, provider: result.algorithmProvider, algorithmVersion: result.algorithmVersion, ruleVersion: result.ruleVersion, routingConfigRevision: result.routingConfigRevision, resultCode: 'SUCCESS' })
+    if (await RoutePlanModel.findById(receipt.snapshotId).lean() !== null) throw receiptConflict()
+    await assertReceiptFresh(receipt.input, receipt.snapshot)
+    const checkedAt = new Date()
+    const renewed = await RoutePlanPreviewReceiptModel.updateOne(
+      { _id: id, actor: createdBy, tokenHash, claimId, claimUntil: { $gt: checkedAt }, expiresAt: { $gt: checkedAt } },
+      { $set: { claimUntil: new Date(checkedAt.getTime() + 30000) } }
+    )
+    if (renewed.matchedCount !== 1) throw receiptConflict()
+    const saved = await RoutePlanModel.create({ ...receipt.snapshot, _id: receipt.snapshotId })
+    await RoutePlanPreviewReceiptModel.updateOne({ _id: id, tokenHash, claimId }, { $unset: { claimId: 1, claimUntil: 1 } })
+    logRoutePlanEvent({ event: 'route_plan_snapshot_saved', correlationId: context.correlationId, latencyMs: Date.now() - now.getTime(), resultCode: 'SUCCESS' })
     return saved
   } catch (error) {
-    logRoutePlanEvent({ event: 'route_plan_snapshot_save_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: CANDIDATE_RULE_VERSION, resultCode: errorCode(previewProviderError(error)) })
+    await RoutePlanPreviewReceiptModel.updateOne({ _id: id, tokenHash, claimId }, { $unset: { claimId: 1, claimUntil: 1 } })
+    if (isDuplicateKey(error)) throw receiptConflict()
     throw error
   }
+}
+
+// Transitional legacy saves recalculate with provider calls and cannot guarantee
+// the reviewed route. They neither issue nor consume receipts, and retain the old
+// non-idempotent save behavior. The shared preview endpoint has no client-version
+// marker: a legacy preview can still replace the actor's unclaimed receipt.
+// Retire this path after migration; rollback before then breaks legacy clients,
+// while rolling back receipt support breaks newer clients.
+const saveLegacySnapshot = async (input: RoutePreviewRequest, createdBy: string, context: RoutePlanRequestContext = {}): Promise<RoutePlan> => {
+  if (typeof createdBy !== 'string' || createdBy === '') throw new RoutePreviewError('INVALID_ROUTE_INPUT', 'Authenticated actor is required')
+  const start = Date.now()
+  const calculated = await previewRoute(input, { ...context, actor: createdBy })
+  if (calculated.zoneSnapshot === undefined) throw new RoutePreviewError('INVALID_CONFIGURATION', 'Preview zone is missing')
+  const saved = await RoutePlanModel.create(buildSnapshot(input, calculated, calculated.zoneSnapshot, createdBy))
+  logRoutePlanEvent({ event: 'route_plan_snapshot_saved', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: 'SUCCESS' })
+  return saved
 }
 
 type CurrentSaleRead = Parameters<typeof detectStaleness>[1]
@@ -707,4 +795,4 @@ const getSnapshot = async (id: string, context: RoutePlanRequestContext = {}): P
   }
 }
 
-export { CANDIDATE_RULE_VERSION, MAX_CANDIDATE_READS, MAX_SNAPSHOT_LIST_READS, getCandidates, getGlobalCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, getDriverSnapshots, RoutePreviewError, logRoutePlanEvent }
+export { CANDIDATE_RULE_VERSION, MAX_CANDIDATE_READS, MAX_SNAPSHOT_LIST_READS, getCandidates, getGlobalCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, saveLegacySnapshot, listSnapshots, getSnapshot, getDriverSnapshots, RoutePreviewError, logRoutePlanEvent }

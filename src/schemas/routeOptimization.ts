@@ -15,7 +15,7 @@ const isCivilDate = (value: string): boolean => {
 
 const candidateQuerySchema = z.object({
   serviceDate: z.string().refine(isCivilDate, 'serviceDate must be a civil date'),
-  deliveryZoneId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'deliveryZoneId must be an ObjectId')
+  deliveryZoneId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'deliveryZoneId must be an ObjectId').transform((id) => id.toLowerCase())
 }).strict()
 
 const dashboardQuerySchema = z.object({
@@ -28,10 +28,14 @@ const dashboardQuerySchema = z.object({
   }
 })
 
-const routePreviewRequestSchema = candidateQuerySchema.extend({
-  saleIds: z.array(z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'saleIds must contain ObjectIds')).min(1),
+const routeRequestFields = {
+  saleIds: z.array(z.string().trim().regex(/^[a-fA-F0-9]{24}$/, 'saleIds must contain ObjectIds').transform((id) => id.toLowerCase())).min(1),
   driverId: z.string().trim().min(1).optional(),
   vehicleId: z.string().trim().min(1).optional()
+}
+const routePreviewRequestSchema = candidateQuerySchema.extend({
+  ...routeRequestFields,
+  clientOrder: z.array(z.string().trim().regex(/^[a-fA-F0-9]{24}$/).transform((id) => id.toLowerCase())).optional()
 }).superRefine((input, context) => {
   if (new Set(input.saleIds).size !== input.saleIds.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'saleIds must not contain duplicates', path: ['saleIds'] })
@@ -39,6 +43,16 @@ const routePreviewRequestSchema = candidateQuerySchema.extend({
   if (input.driverId === undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'driverId is required before preview or save', path: ['driverId'] })
   if (input.vehicleId === undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'vehicleId is required before preview or save', path: ['vehicleId'] })
 })
+
+const legacyRouteSaveRequestSchema = candidateQuerySchema.extend(routeRequestFields).superRefine((input, context) => {
+  if (new Set(input.saleIds).size !== input.saleIds.length) context.addIssue({ code: z.ZodIssueCode.custom, message: 'saleIds must not contain duplicates', path: ['saleIds'] })
+  if (input.driverId === undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'driverId is required before preview or save', path: ['driverId'] })
+  if (input.vehicleId === undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'vehicleId is required before preview or save', path: ['vehicleId'] })
+})
+const routeSaveRequestSchema = z.union([
+  z.object({ receipt: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  legacyRouteSaveRequestSchema
+])
 
 const coordinateSchema = z.number().finite()
 const latitudeSchema = z.number().finite().min(-90).max(90)
@@ -283,6 +297,8 @@ export {
   deliveryZoneQuerySchema,
   deliveryZoneUpdateSchema,
   routePreviewRequestSchema,
+  legacyRouteSaveRequestSchema,
+  routeSaveRequestSchema,
   routePlanAlgorithmSchema,
   routePlanAuditSchema,
   routePlanMetricsSchema,

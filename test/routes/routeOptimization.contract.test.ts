@@ -5,6 +5,45 @@ import RoutingConfigModel from '../../src/models/routingConfig'
 import SaleModel from '../../src/models/sale'
 import { isRouteOptimizationEnabled } from '../../src/config/phase0'
 import { routePlanSnapshotSchema, saleDeliverySchema } from '../../src/schemas/routeOptimization'
+import express from 'express'
+import request from 'supertest'
+import sinon from 'sinon'
+import { saveRoutePlan } from '../../src/controllers/routePlan'
+import * as routePlanService from '../../src/services/routePlan'
+
+describe('route save transition controller', () => {
+  const app = express().use(express.json()).use((req, res, next) => { res.locals.userId = 'actor'; next() }).post('/', (req, res) => { void saveRoutePlan(req, res) })
+  const legacy = { serviceDate: '2026-11-08', deliveryZoneId: '507f1f77bcf86cd799439011', saleIds: ['507f1f77bcf86cd799439012'], driverId: 'driver', vehicleId: 'vehicle' }
+  afterEach(() => sinon.restore())
+
+  it('dispatches strict legacy and receipt payloads without leaking internal receipts', async () => {
+    const oldSnapshot = { metrics: { distanceMeters: 42 } }
+    const newSnapshot = { metrics: { distanceMeters: 77 } }
+    const legacySave = sinon.stub(routePlanService, 'saveLegacySnapshot').resolves(oldSnapshot as never)
+    const receiptSave = sinon.stub(routePlanService, 'saveSnapshot').resolves(newSnapshot as never)
+    const oldResult = await request(app).post('/').send(legacy)
+    expect(oldResult.status).to.equal(201)
+    expect(oldResult.body).to.deep.equal({ metrics: { distanceMeters: 42 } })
+    expect(legacySave.firstCall.args[1]).to.equal('actor')
+    const newResult = await request(app).post('/').send({ receipt: 'a'.repeat(64) })
+    expect(newResult.status).to.equal(201)
+    expect(newResult.body.metrics.distanceMeters).to.equal(77)
+    expect(receiptSave.firstCall.args[1]).to.equal('actor')
+    expect((await request(app).post('/').send({ ...legacy, receipt: 'invalid' })).status).to.equal(400)
+    expect((await request(app).post('/').send({ ...legacy, metrics: {} })).status).to.equal(400)
+    expect(legacySave.callCount).to.equal(1)
+    expect(receiptSave.callCount).to.equal(1)
+  })
+
+  it('returns the legacy assignment error for each missing assignment', async () => {
+    for (const body of [{ ...legacy, driverId: undefined }, { ...legacy, vehicleId: undefined }]) {
+      const response = await request(app).post('/').send(body)
+      expect(response.status).to.equal(422)
+      expect(JSON.stringify(response.body)).to.contain('ROUTE_ASSIGNMENT_REQUIRED')
+    }
+    expect((await request(app).post('/').send({ ...legacy, receipt: 'invalid', driverId: undefined })).status).to.equal(400)
+  })
+})
 
 describe('Route optimization data contracts', () => {
   const originalRouteOptimizationFlag = process.env.ROUTE_OPTIMIZATION_ENABLED

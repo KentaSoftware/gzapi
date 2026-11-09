@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
-import { getAssignmentOptions, getCandidates, getRoutingConfig, getSnapshot, listSnapshots, logRoutePlanEvent, preview, RoutePreviewError, saveSnapshot, updateRoutingConfig } from '../services/routePlan'
-import { candidateQuerySchema, dashboardQuerySchema, routeOperationalUpdateSchema, routePreviewRequestSchema, routingConfigUpdateSchema } from '../schemas/routeOptimization'
+import { getAssignmentOptions, getCandidates, getRoutingConfig, getSnapshot, listSnapshots, logRoutePlanEvent, preview, RoutePreviewError, saveLegacySnapshot, saveSnapshot, updateRoutingConfig } from '../services/routePlan'
+import { candidateQuerySchema, dashboardQuerySchema, legacyRouteSaveRequestSchema, routeOperationalUpdateSchema, routePreviewRequestSchema, routeSaveRequestSchema, routingConfigUpdateSchema } from '../schemas/routeOptimization'
 import { handleHttp, sendErrorEnvelope } from '../utils/error.handle'
 import { getDashboard } from '../services/routeDashboard'
 import type { RouteOperationalStatus } from '../interfaces/routeOptimization.interface'
@@ -85,16 +85,18 @@ const previewRoute = async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    res.send(await preview(input.data, { correlationId: res.locals.correlationId }))
+    res.send(await preview(input.data, { correlationId: res.locals.correlationId, actor: res.locals.userId }))
   } catch (error) {
     if (error instanceof RoutePreviewError) {
-      const status = error.code === 'ROUTING_PROVIDER_QUOTA_EXCEEDED'
-        ? 429
-        : error.code === 'ROUTING_PROVIDER_UNAVAILABLE'
-          ? 503
-          : error.code === 'INVALID_ROUTE_INPUT'
-            ? 400
-            : 422
+      const status = error.code === 'PREVIEW_RECEIPT_CONFLICT'
+        ? 409
+        : error.code === 'ROUTING_PROVIDER_QUOTA_EXCEEDED'
+          ? 429
+          : error.code === 'ROUTING_PROVIDER_UNAVAILABLE'
+            ? 503
+            : error.code === 'INVALID_ROUTE_INPUT'
+              ? 400
+              : 422
       sendErrorEnvelope(res, status, error.code, error.message)
       return
     }
@@ -103,11 +105,13 @@ const previewRoute = async (req: Request, res: Response): Promise<void> => {
 }
 
 const saveRoutePlan = async (req: Request, res: Response): Promise<void> => {
-  const input = routePreviewRequestSchema.safeParse(req.body)
+  const input = routeSaveRequestSchema.safeParse(req.body)
   if (!input.success) {
     logRoutePlanEvent({ event: 'route_plan_snapshot_save_failed', correlationId: res.locals.correlationId, latencyMs: 0, resultCode: 'INVALID_ROUTE_INPUT' })
-    const assignmentIssues = input.error.issues.filter((issue) => issue.path[0] === 'driverId' || issue.path[0] === 'vehicleId')
-    if (assignmentIssues.length > 0) {
+    const legacy = legacyRouteSaveRequestSchema.safeParse(req.body)
+    const issues = legacy.success ? [] : legacy.error.issues
+    const assignmentIssues = issues.filter((issue) => issue.path[0] === 'driverId' || issue.path[0] === 'vehicleId')
+    if (assignmentIssues.length > 0 && !issues.some((issue) => issue.code === 'unrecognized_keys')) {
       sendErrorEnvelope(res, 422, 'ROUTE_ASSIGNMENT_REQUIRED', assignmentIssues.map((issue) => issue.message).join('; '))
     } else {
       sendErrorEnvelope(res, 400, 'INVALID_ROUTE_INPUT', 'Route plan input is invalid')
@@ -116,16 +120,22 @@ const saveRoutePlan = async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    res.status(201).send(await saveSnapshot(input.data, res.locals.userId, { correlationId: res.locals.correlationId }))
+    const context = { correlationId: res.locals.correlationId }
+    const saved = 'receipt' in input.data
+      ? await saveSnapshot(input.data, res.locals.userId, context)
+      : await saveLegacySnapshot(input.data, res.locals.userId, context)
+    res.status(201).send(saved)
   } catch (error) {
     if (error instanceof RoutePreviewError) {
-      const status = error.code === 'ROUTING_PROVIDER_QUOTA_EXCEEDED'
-        ? 429
-        : error.code === 'ROUTING_PROVIDER_UNAVAILABLE'
-          ? 503
-          : error.code === 'INVALID_ROUTE_INPUT'
-            ? 400
-            : 422
+      const status = error.code === 'PREVIEW_RECEIPT_CONFLICT'
+        ? 409
+        : error.code === 'ROUTING_PROVIDER_QUOTA_EXCEEDED'
+          ? 429
+          : error.code === 'ROUTING_PROVIDER_UNAVAILABLE'
+            ? 503
+            : error.code === 'INVALID_ROUTE_INPUT'
+              ? 400
+              : 422
       sendErrorEnvelope(res, status, error.code, error.message)
       return
     }
