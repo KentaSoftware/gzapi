@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import { deleteSaleService, getSale, getSales, getSalesLimit, insertSale, qtySale, updateSale } from '../services/sale'
+import { deleteSaleService, getSale, getSales, getSalesLimit, insertSale, prepareSale, qtySale, SaleInputError, updateSale } from '../services/sale'
 import { emitSocket } from '../socket'
 import { handleHttp } from '../utils/error.handle'
 import { JwtPayload } from 'jsonwebtoken'
@@ -59,7 +59,8 @@ const tryCommitSaleStock = async (saleId: string, lines: any[], actorId: string)
 
 const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
-    const response = await insertSale({ ...body, user: new Types.ObjectId(user.id) })
+    const sale = await prepareSale(body, new Types.ObjectId(user.id))
+    const response = await insertSale(sale)
     await Promise.all(
       body.itemsSale.map(async (item: any) => await insertItemSale({ idProducto: item._id, total: item.total, cantidad: item.cantidad, idVenta: response._id, estado: true, precioUnitario: item.precio }))
     )
@@ -70,16 +71,19 @@ const postItem = async ({ body, user }: RequestExt, res: Response): Promise<void
     })
     res.send(response)
   } catch (e) {
+    if (e instanceof SaleInputError) { res.status(400).send({ error: e.message }); return }
     handleHttp(res, 'ERROR_CREATE_SALE_WITH_ITEMS', e)
   }
 }
 
 const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Promise<void> => {
   try {
+    if (!Array.isArray(body) || body.length === 0) throw new SaleInputError('Debe incluir al menos una venta válida')
+    const sales = await Promise.all(body.map(async (item: unknown) => await prepareSale(item, new Types.ObjectId(user.id))))
     const created = await Promise.all(
-      body.map(async (item: any) => {
+      sales.map(async (item: Sale) => {
         // Ejecutar insertSale y esperar a que termine antes de continuar con insertItemSale
-        const response = await insertSale({ ...item, user: new Types.ObjectId(user.id) })
+        const response = await insertSale(item)
 
         // Anidar Promise.all para itemsSale
         await Promise.all(
@@ -110,6 +114,7 @@ const postMultipleItem = async ({ body, user }: RequestExt, res: Response): Prom
     })
     res.send('Ventas guardadas')
   } catch (e) {
+    if (e instanceof SaleInputError) { res.status(400).send({ error: e.message }); return }
     handleHttp(res, 'ERROR_CREATE_MULTIPLE_SALES', e)
   }
 }
@@ -203,6 +208,7 @@ const updateItem = async ({ params, body }: RequestExt, res: Response): Promise<
     })
     res.send(response)
   } catch (e) {
+    if (e instanceof SaleInputError) { res.status(400).send({ error: e.message }); return }
     handleHttp(res, 'ERROR_UPDATE_SALE_WITH_ITEMS', e)
   }
 }
