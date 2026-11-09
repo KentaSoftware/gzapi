@@ -51,8 +51,8 @@ describe('Route plan API contract', () => {
       VehicleModel.deleteMany({})
     ])
 
-    const readRole = await RoleModel.create({ name: 'Authenticated API route user', permissions: [] })
-    const createRole = await RoleModel.create({ name: 'Authenticated API route creator', permissions: [] })
+    const readRole = await RoleModel.create({ name: 'Authenticated API route user', permissions: ['read_route_plan'] })
+    const createRole = await RoleModel.create({ name: 'Authenticated API route creator', permissions: ['create_route_plan'] })
     const readUser = await UserModel.create({ nickname: 'api-route-reader', password: 'not-a-real-password', role: readRole._id })
     const createUser = await UserModel.create({ nickname: 'api-route-creator', password: 'not-a-real-password', role: createRole._id })
     readUserId = readUser._id
@@ -123,7 +123,7 @@ describe('Route plan API contract', () => {
     const forbidden = await request(app)
       .get(`/routePlan/dashboard?serviceDate=${SERVICE_DATE}&zoneCode=NORTE`)
       .set('Authorization', `Bearer ${await generateToken(forbiddenUser)}`)
-    expect(forbidden.status).to.equal(200)
+    expect(forbidden.status).to.equal(403)
   })
 
   it('TC-033: returns bounded selected-route detail and preserves dashboard limit warnings', async () => {
@@ -222,8 +222,8 @@ describe('Route plan API contract', () => {
     const forbiddenOptions = await request(app)
       .get('/routePlan/assignment-options')
       .set('Authorization', `Bearer ${await generateToken(forbiddenUser)}`)
-    expect(forbiddenOptions.status).to.equal(200)
-    const options = await request(app).get('/routePlan/assignment-options').set('Authorization', `Bearer ${readToken}`)
+    expect(forbiddenOptions.status).to.equal(403)
+    const options = await request(app).get('/routePlan/assignment-options').set('Authorization', `Bearer ${createToken}`)
     expect(options.status).to.equal(200)
     expect(options.body).to.have.keys(['drivers', 'vehicles'])
     expect(options.body.drivers.some((driver: { nickname: string, isActive: boolean }) => driver.nickname === 'available-driver' && driver.isActive)).to.equal(true)

@@ -13,6 +13,7 @@ import {
   type RouteLocation,
   type RoutePreviewDepot,
   type RoutePlan,
+  type RoutePlanOperational,
   type RoutePlanReadState,
   type RouteAssignmentOptions,
   type RoutePreview,
@@ -50,6 +51,7 @@ interface RoutePlanRequestContext {
   correlationId?: string
   maxResults?: number
   truncated?: boolean
+  driverId?: string
 }
 
 interface RoutePlanEvent {
@@ -652,10 +654,29 @@ const withReadState = async (snapshot: RoutePlan): Promise<RoutePlan> => ({
   ...(await readState(snapshot))
 })
 
+interface DriverSnapshot {
+  snapshot: RoutePlan & { _id: Types.ObjectId }
+  projection?: RoutePlanOperational
+}
+
+// Read authorization and snapshot in the same database operation.
+const getDriverSnapshots = async (driverId: string, filter: Record<string, unknown>, sort: Record<string, 1 | -1>, limit: number): Promise<DriverSnapshot[]> => {
+  const matches = await RoutePlanModel.aggregate<RoutePlan & { _id: Types.ObjectId, operational: RoutePlanOperational[] }>([
+    { $match: filter },
+    { $lookup: { from: RoutePlanOperationalModel.collection.name, let: { snapshotId: { $toString: '$_id' } }, pipeline: [{ $match: { $expr: { $eq: ['$snapshotId', '$$snapshotId'] } } }], as: 'operational' } },
+    { $match: { $expr: { $eq: [{ $cond: [{ $gt: [{ $size: '$operational' }, 0] }, { $arrayElemAt: ['$operational.assignments.driverId', 0] }, '$assignments.driverId'] }, driverId] } } },
+    { $sort: sort },
+    { $limit: limit }
+  ])
+  return matches.map(({ operational, ...snapshot }) => ({ snapshot, projection: operational[0] }))
+}
+
 const listSnapshots = async (context: RoutePlanRequestContext = {}): Promise<RoutePlan[]> => {
   const start = Date.now()
   try {
-    const snapshotRead = await RoutePlanModel.find({}).sort({ createdAt: -1, _id: -1 }).limit(MAX_SNAPSHOT_LIST_READS + 1).lean()
+    const snapshotRead = context.driverId === undefined
+      ? await RoutePlanModel.find({}).sort({ createdAt: -1, _id: -1 }).limit(MAX_SNAPSHOT_LIST_READS + 1).lean()
+      : (await getDriverSnapshots(context.driverId, {}, { createdAt: -1, _id: -1 }, MAX_SNAPSHOT_LIST_READS + 1)).map((entry) => entry.snapshot)
     const truncated = snapshotRead.length > MAX_SNAPSHOT_LIST_READS
     const snapshots = truncated ? snapshotRead.slice(0, MAX_SNAPSHOT_LIST_READS) : snapshotRead
     const readStates = await readStatesForSnapshots(snapshots)
@@ -674,7 +695,9 @@ const listSnapshots = async (context: RoutePlanRequestContext = {}): Promise<Rou
 const getSnapshot = async (id: string, context: RoutePlanRequestContext = {}): Promise<RoutePlan | null> => {
   const start = Date.now()
   try {
-    const snapshot = await RoutePlanModel.findById(id).lean()
+    const snapshot = context.driverId === undefined
+      ? await RoutePlanModel.findById(id).lean()
+      : (await getDriverSnapshots(context.driverId, { _id: new Types.ObjectId(id) }, { _id: 1 }, 1))[0]?.snapshot ?? null
     const snapshotWithReadState = snapshot === null ? null : await withReadState(snapshot)
     logRoutePlanEvent({ event: 'route_plan_snapshot_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: snapshot === null ? 'ROUTE_PLAN_NOT_FOUND' : 'SUCCESS' })
     return snapshotWithReadState
@@ -684,4 +707,4 @@ const getSnapshot = async (id: string, context: RoutePlanRequestContext = {}): P
   }
 }
 
-export { CANDIDATE_RULE_VERSION, MAX_CANDIDATE_READS, MAX_SNAPSHOT_LIST_READS, getCandidates, getGlobalCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, RoutePreviewError, logRoutePlanEvent }
+export { CANDIDATE_RULE_VERSION, MAX_CANDIDATE_READS, MAX_SNAPSHOT_LIST_READS, getCandidates, getGlobalCandidates, getAssignmentOptions, getRoutingConfig, updateRoutingConfig, preview, saveSnapshot, listSnapshots, getSnapshot, getDriverSnapshots, RoutePreviewError, logRoutePlanEvent }

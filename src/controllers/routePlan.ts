@@ -6,6 +6,11 @@ import { getDashboard } from '../services/routeDashboard'
 import type { RouteOperationalStatus } from '../interfaces/routeOptimization.interface'
 import { assign, createProjection, OperationalProjectionError } from '../services/routePlanOperational'
 
+const driverScope = (req: Request, res: Response): string | undefined => {
+  const user = (req as Request & { user?: { role?: { name?: string } } }).user
+  return user?.role?.name === 'Repartidor' ? String(res.locals.userId ?? '') : undefined
+}
+
 const logRouteControllerEvent = (operation: string, res: Response, startedAt: number, outcome: string, routeSnapshotId?: string): void => {
   console.log(JSON.stringify({
     event: 'route_operation_observed',
@@ -30,7 +35,7 @@ const getRouteDashboard = async (req: Request, res: Response): Promise<void> => 
     return
   }
   try {
-    res.send(await getDashboard({ ...input.data, status: input.data.status as RouteOperationalStatus | undefined }, { correlationId: res.locals.correlationId, actor: res.locals.userId }))
+    res.send(await getDashboard({ ...input.data, status: input.data.status as RouteOperationalStatus | undefined }, { correlationId: res.locals.correlationId, actor: res.locals.userId, driverId: driverScope(req, res) }))
   } catch (error) {
     handleHttp(res, 'ERROR_GET_ROUTE_DASHBOARD', error)
   }
@@ -156,9 +161,9 @@ const patchRouteConfig = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
-const getRoutePlans = async (_req: Request, res: Response): Promise<void> => {
+const getRoutePlans = async (req: Request, res: Response): Promise<void> => {
   try {
-    res.send(await listSnapshots({ correlationId: res.locals.correlationId }))
+    res.send(await listSnapshots({ correlationId: res.locals.correlationId, driverId: driverScope(req, res) }))
   } catch (error) {
     handleHttp(res, 'ERROR_GET_ROUTE_PLANS', error)
   }
@@ -172,7 +177,7 @@ const getRoutePlanById = async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    const routePlan = await getSnapshot(req.params.id, { correlationId: res.locals.correlationId })
+    const routePlan = await getSnapshot(req.params.id, { correlationId: res.locals.correlationId, driverId: driverScope(req, res) })
     if (routePlan === null) {
       sendErrorEnvelope(res, 404, 'ROUTE_PLAN_NOT_FOUND', 'Route plan was not found')
       return

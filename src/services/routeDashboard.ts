@@ -19,7 +19,7 @@ import RoutePlanModel from '../models/routePlan'
 import RoutePlanOperationalModel from '../models/routePlanOperational'
 import SaleModel from '../models/sale'
 import ClientModel from '../models/client'
-import { getCandidates, getGlobalCandidates } from './routePlan'
+import { getCandidates, getGlobalCandidates, getDriverSnapshots } from './routePlan'
 
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const MAX_DASHBOARD_SNAPSHOTS = 1000
@@ -87,6 +87,7 @@ interface DashboardProjectionRead {
 interface DashboardRequestContext {
   correlationId?: string
   actor?: string
+  driverId?: string
   maxResults?: number
   truncated?: boolean
 }
@@ -259,9 +260,22 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
     let mapLocations: RouteMapLocation[]
     let mapLocationsTruncated = false
     let snapshotRead: DashboardSnapshotRead[]
+    let joinedProjections: DashboardProjectionRead[] | undefined
     let zoneNotFound = false
 
-    if (isScopedDashboardQuery(input)) {
+    if (context.driverId !== undefined) {
+      const filter: Record<string, unknown> = {}
+      if (isScopedDashboardQuery(input)) {
+        const { start, end } = serviceDateRange(input.serviceDate)
+        filter.planningDate = { $gte: start, $lt: end }
+        filter['zoneSnapshot.code'] = input.zoneCode
+      }
+      candidates = emptyCandidates
+      mapLocations = []
+      const joined = await getDriverSnapshots(context.driverId, filter, { planningDate: 1, _id: 1 }, MAX_DASHBOARD_SNAPSHOTS + 1)
+      snapshotRead = joined.map((entry) => entry.snapshot)
+      joinedProjections = joined.flatMap((entry) => entry.projection === undefined ? [] : [entry.projection])
+    } else if (isScopedDashboardQuery(input)) {
       const { start, end } = serviceDateRange(input.serviceDate)
       const zone = await DeliveryZoneModel.findOne({ code: input.zoneCode, active: true }).lean()
       zoneNotFound = zone === null
@@ -300,9 +314,9 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
     const snapshots = snapshotsTruncated ? snapshotRead.slice(0, MAX_DASHBOARD_SNAPSHOTS) : snapshotRead
     const enrichedCandidates = enrichCandidatesWithRouteDistances(candidates, snapshots)
     const snapshotIds = snapshots.map((snapshot) => String(snapshot._id))
-    const projections = snapshotIds.length === 0
+    const projections = joinedProjections ?? (snapshotIds.length === 0
       ? []
-      : await RoutePlanOperationalModel.find({ snapshotId: { $in: snapshotIds } }).lean()
+      : await RoutePlanOperationalModel.find({ snapshotId: { $in: snapshotIds } }).lean())
     const projectionBySnapshotId = new Map(projections.map((projection) => [projection.snapshotId, projection]))
     const saleIds = [...new Set(snapshots.flatMap((snapshot) => snapshot.selectedSaleIds))]
     const validSaleIds = saleIds.filter((id) => Types.ObjectId.isValid(id))
