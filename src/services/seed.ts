@@ -40,7 +40,8 @@ const BASE_PERMISSIONS = [
   'read_log',
   'catalog_read', 'catalog_write',
   'read_cashflow', 'configure_cashflow',
-  'confirm_client_location'
+  'confirm_client_location',
+  'read_route_plan', 'create_route_plan', 'manage_route_config', 'manage_delivery_zone'
 ]
 
 export const SIMULATION_ROLE_GRANTS = {
