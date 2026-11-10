@@ -61,6 +61,19 @@ const getClientSearch = async (input: string): Promise<Client[]> => {
   return response
 }
 
+const getSaleClientOptions = async (input: string): Promise<Array<{ id: string, name: string, address?: string }>> => {
+  const literal = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const clients = await ClientModel.find(
+    { isActive: true, nombreCompleto: new RegExp(`^${literal}`, 'i') },
+    { _id: 1, nombreCompleto: 1, address: 1 }
+  ).sort({ nombreCompleto: 1, _id: 1 }).limit(20).maxTimeMS(5000).lean()
+  return clients.map((client) => ({
+    id: String(client._id),
+    name: client.nombreCompleto,
+    ...(typeof client.address === 'string' ? { address: client.address } : {})
+  }))
+}
+
 const getClient = async (id: Types.ObjectId): Promise<any> => {
   const response = await ClientModel.aggregate([
     { $match: { _id: { $eq: id } } },
@@ -136,6 +149,7 @@ export {
   geocodeClient,
   getClient,
   getClients,
+  getSaleClientOptions,
   insertClient,
   updateClient,
   getClientSearch

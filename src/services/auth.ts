@@ -1,5 +1,6 @@
 import { Auth, AuthWithToken, User } from '../interfaces/auth.interface'
 import UserModel from '../models/user'
+import RoleModel from '../models/role'
 import { encrypt, verified } from '../utils/bcrypt.handle'
 import { generateToken } from '../utils/jwt.handle'
 
@@ -29,4 +30,33 @@ const loginUser = async ({ nickname, password }: Auth): Promise<Partial<AuthWith
   return data
 }
 
-export { registerNewUser, loginUser }
+interface CurrentRole {
+  id: string
+  name: string
+}
+
+interface CurrentSession {
+  id: string
+  nickname: string
+  role: CurrentRole
+  permissions: string[]
+  isAdmin: boolean
+}
+
+const getCurrentSession = async (id: string): Promise<CurrentSession | null> => {
+  const user = await UserModel.findById(id).select('nickname role isActive').maxTimeMS(5000).lean()
+  if (user == null || !user.isActive || user.role == null) return null
+
+  const role = await RoleModel.findById(user.role).select('name permissions isActive').maxTimeMS(5000).lean()
+  if (role == null || !role.isActive) return null
+
+  return {
+    id: user._id.toString(),
+    nickname: user.nickname,
+    role: { id: role._id.toString(), name: role.name },
+    permissions: role.permissions ?? [],
+    isAdmin: role.name === 'admin'
+  }
+}
+
+export { registerNewUser, loginUser, getCurrentSession }

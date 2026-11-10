@@ -10,6 +10,7 @@ import {
   getClient,
   getClients,
   getClientSearch,
+  getSaleClientOptions,
   insertClient,
   updateClient
 } from '../services/client'
@@ -76,6 +77,24 @@ const deleteItem = (_: Request, res: Response): void => {
   }
 }
 
+const getSaleOptions = async (req: Request, res: Response): Promise<void> => {
+  const input = req.query.q
+  if (input !== undefined && (typeof input !== 'string' || input.length > 100)) {
+    sendErrorEnvelope(res, 400, 'INVALID_CLIENT_SEARCH', 'Client search must be a string of at most 100 characters')
+    return
+  }
+  const query = (input ?? '').trim()
+  if (query.length < 2) {
+    res.send({ clients: [] })
+    return
+  }
+  try {
+    res.send({ clients: await getSaleClientOptions(query) })
+  } catch {
+    sendErrorEnvelope(res, 500, 'CLIENT_SEARCH_UNAVAILABLE', 'Client search is unavailable')
+  }
+}
+
 const clientObjectId = (id: string): Types.ObjectId | undefined => {
   if (!Types.ObjectId.isValid(id)) return undefined
   return new Types.ObjectId(id)
@@ -131,4 +150,4 @@ const confirmLocationItem = async ({ params, body }: RequestExt, res: Response):
   }
 }
 
-export { confirmLocationItem, deleteItem, geocodeItem, getItem, getItems, uptdateItem, postItem }
+export { confirmLocationItem, deleteItem, geocodeItem, getItem, getItems, getSaleOptions, uptdateItem, postItem }

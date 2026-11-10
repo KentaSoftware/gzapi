@@ -5,6 +5,7 @@ import { sign } from 'jsonwebtoken'
 import sinon from 'sinon'
 import request from 'supertest'
 import UserModel from '../../src/models/user'
+import RoleModel from '../../src/models/role'
 import RoutePlanModel from '../../src/models/routePlan'
 import RoutePlanOperationalModel from '../../src/models/routePlanOperational'
 import ClientModel from '../../src/models/client'
@@ -12,16 +13,74 @@ import SaleModel from '../../src/models/sale'
 import VehicleModel from '../../src/models/vehicle'
 import { router } from '../../src/routes/routePlan'
 
+describe('current database route authorization', () => {
+  const app = express().use(express.json()).use('/routePlan', router)
+  const initialState = mongoose.connection.readyState
+  const id = '507f1f77bcf86cd799439011'
+  let role: { name: string, isActive: boolean, permissions: string[] } | null
+  let active = true
+  const token = (name: string, permissions: string[]): string => sign({ id, role: { name, permissions } }, process.env.JWT_SECRET ?? 'NOT_TOKEN_ENV')
+
+  before(() => { mongoose.connection.readyState = 1 })
+  after(() => { mongoose.connection.readyState = initialState })
+  beforeEach(() => {
+    active = true
+    role = { name: 'Repartidor', isActive: true, permissions: ['read_route_plan', 'create_route_plan'] }
+    const userQuery: unknown = { maxTimeMS: () => ({ lean: async () => ({ isActive: active, role: id }) }) }
+    const roleQuery: unknown = { maxTimeMS: () => ({ lean: async () => role }) }
+    sinon.stub(UserModel, 'findById').returns(userQuery as never)
+    sinon.stub(RoleModel, 'findById').returns(roleQuery as never)
+  })
+  afterEach(() => { sinon.restore() })
+
+  it('restricts current drivers despite a privileged stale token', async () => {
+    const auth = `Bearer ${token('admin', ['create_route_plan'])}`
+    expect((await request(app).post('/routePlan/preview').set('Authorization', auth).send({})).status).to.equal(403)
+    const aggregate = sinon.stub(RoutePlanModel, 'aggregate').resolves([] as never)
+    expect((await request(app).get('/routePlan').set('Authorization', auth)).status).to.equal(200)
+    expect(JSON.stringify(aggregate.firstCall.args[0])).to.include(id)
+  })
+
+  it('does not restrict a promoted admin with a stale driver token', async () => {
+    role = { name: 'admin', isActive: true, permissions: [] }
+    const auth = `Bearer ${token('Repartidor', [])}`
+    expect((await request(app).post('/routePlan/preview').set('Authorization', auth).send({})).status).to.equal(400)
+    const query: unknown = { sort: () => ({ limit: () => ({ lean: async () => [] }) }) }
+    const find = sinon.stub(RoutePlanModel, 'find').returns(query as never)
+    expect((await request(app).get('/routePlan').set('Authorization', auth)).status).to.equal(200)
+    expect(find.calledOnce).to.equal(true)
+  })
+
+  it('uses current grants and fails closed for inactive actors or failed lookups', async () => {
+    role = { name: 'Employee', isActive: true, permissions: [] }
+    const auth = `Bearer ${token('Employee', ['create_route_plan'])}`
+    expect((await request(app).post('/routePlan/preview').set('Authorization', auth).send({})).status).to.equal(403)
+    role.permissions = ['create_route_plan']
+    expect((await request(app).post('/routePlan/preview').set('Authorization', `Bearer ${token('Employee', [])}`).send({})).status).to.equal(400)
+    active = false
+    expect((await request(app).post('/routePlan/preview').set('Authorization', auth).send({})).status).to.equal(403)
+    active = true
+    ;(RoleModel.findById as sinon.SinonStub).throws(new Error('lookup failure'))
+    expect((await request(app).post('/routePlan/preview').set('Authorization', auth).send({})).status).to.equal(403)
+  })
+})
+
 describe('route plan permission boundaries', () => {
   const app = express().use(express.json()).use('/routePlan', router)
   const readyState = mongoose.connection.readyState
-  const token = (permissions: string[]): string => sign({ id: '507f1f77bcf86cd799439011', role: { name: 'Custom', permissions } }, process.env.JWT_SECRET ?? 'NOT_TOKEN_ENV')
+  let permissions: string[] = []
+  const token = (grants: string[]): string => {
+    permissions = grants
+    return sign({ id: '507f1f77bcf86cd799439011', role: { name: 'Custom', permissions: grants } }, process.env.JWT_SECRET ?? 'NOT_TOKEN_ENV')
+  }
 
   before(() => { mongoose.connection.readyState = 1 })
   after(() => { mongoose.connection.readyState = readyState })
   beforeEach(() => {
-    const query: unknown = { maxTimeMS: () => ({ lean: async () => ({ isActive: true }) }) }
+    const query: unknown = { maxTimeMS: () => ({ lean: async () => ({ isActive: true, role: 'role' }) }) }
     sinon.stub(UserModel, 'findById').returns(query as never)
+    const roleQuery: unknown = { maxTimeMS: () => ({ lean: async () => ({ name: 'Custom', isActive: true, permissions }) }) }
+    sinon.stub(RoleModel, 'findById').returns(roleQuery as never)
   })
   afterEach(() => { sinon.restore() })
 
@@ -63,7 +122,11 @@ describe('assigned driver route privacy', () => {
   const driverB = '507f1f77bcf86cd799439012'
   const first = '507f1f77bcf86cd799439021'
   const second = '507f1f77bcf86cd799439022'
-  const token = (id: string, name = 'Repartidor'): string => sign({ id, role: { name, permissions: ['read_route_plan'] } }, process.env.JWT_SECRET ?? 'NOT_TOKEN_ENV')
+  let roleName = 'Repartidor'
+  const token = (id: string, name = 'Repartidor'): string => {
+    roleName = name
+    return sign({ id, role: { name, permissions: ['read_route_plan'] } }, process.env.JWT_SECRET ?? 'NOT_TOKEN_ENV')
+  }
   const snapshots = [
     { _id: first, assignments: { driverId: driverA }, zoneSnapshot: { code: 'NORTE' }, selectedSaleIds: ['sale-a'], stops: [{ clientId: 'client-a', saleIds: ['sale-a'], sequence: 1, latitude: 1, longitude: 1 }], metrics: { distanceMeters: 100, durationSeconds: 10, fuelLiters: 1 }, warnings: [] },
     { _id: second, assignments: { driverId: driverA }, zoneSnapshot: { code: 'SUR' }, selectedSaleIds: ['sale-b'], stops: [{ clientId: 'client-b', saleIds: ['sale-b'], sequence: 1, latitude: 2, longitude: 2 }], metrics: { distanceMeters: 900, durationSeconds: 90, fuelLiters: 9 }, warnings: [] }
@@ -73,8 +136,11 @@ describe('assigned driver route privacy', () => {
   before(() => { mongoose.connection.readyState = 1 })
   after(() => { mongoose.connection.readyState = readyState })
   beforeEach(() => {
-    const active: unknown = { maxTimeMS: () => ({ lean: async () => ({ isActive: true }) }) }
+    roleName = 'Repartidor'
+    const active: unknown = { maxTimeMS: () => ({ lean: async () => ({ isActive: true, role: 'role' }) }) }
     sinon.stub(UserModel, 'findById').returns(active as never)
+    const roleQuery: unknown = { maxTimeMS: () => ({ lean: async () => ({ name: roleName, isActive: true, permissions: ['read_route_plan'] }) }) }
+    sinon.stub(RoleModel, 'findById').returns(roleQuery as never)
     sinon.stub(RoutePlanModel, 'aggregate').callsFake((pipeline: unknown) => {
       const text = JSON.stringify(pipeline)
       const driver = text.includes(driverA) ? driverA : driverB
@@ -156,7 +222,9 @@ describe('assigned driver route privacy', () => {
   })
 
   it('preserves the unscoped payload for a properly granted non-driver', async () => {
-    const emptyQuery: unknown = { lean: async () => [], sort: () => ({ limit: () => ({ lean: async () => [] }) }) }
+    const emptyCursor = { async * [Symbol.asyncIterator] () {} }
+    const sorted = { lean: () => ({ cursor: () => emptyCursor }), limit: () => ({ lean: async () => [] }) }
+    const emptyQuery: unknown = { lean: async () => [], sort: () => sorted }
     ;(SaleModel.find as sinon.SinonStub).returns(emptyQuery)
     ;(ClientModel.find as sinon.SinonStub).returns(emptyQuery)
     const response = await request(app).get('/routePlan/dashboard').set('Authorization', `Bearer ${token(driverA, 'Administración')}`)

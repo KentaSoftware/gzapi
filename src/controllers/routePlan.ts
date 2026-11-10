@@ -5,10 +5,16 @@ import { handleHttp, sendErrorEnvelope } from '../utils/error.handle'
 import { getDashboard } from '../services/routeDashboard'
 import type { RouteOperationalStatus } from '../interfaces/routeOptimization.interface'
 import { assign, createProjection, OperationalProjectionError } from '../services/routePlanOperational'
+import { AssignmentConflictError, AssignmentSafetyError } from '../services/routeAssignment'
 
-const driverScope = (req: Request, res: Response): string | undefined => {
-  const user = (req as Request & { user?: { role?: { name?: string } } }).user
-  return user?.role?.name === 'Repartidor' ? String(res.locals.userId ?? '') : undefined
+const handleAssignmentError = (res: Response, error: unknown): boolean => {
+  if (error instanceof AssignmentConflictError) { sendErrorEnvelope(res, 409, 'ROUTE_SALE_ALREADY_ASSIGNED', error.message); return true }
+  if (error instanceof AssignmentSafetyError) { sendErrorEnvelope(res, 503, 'ROUTE_ASSIGNMENT_UNAVAILABLE', 'Route assignment safety verification is unavailable'); return true }
+  return false
+}
+
+const driverScope = (res: Response): string | undefined => {
+  return res.locals.authorizationRole === 'Repartidor' ? String(res.locals.userId ?? '') : undefined
 }
 
 const logRouteControllerEvent = (operation: string, res: Response, startedAt: number, outcome: string, routeSnapshotId?: string): void => {
@@ -35,8 +41,9 @@ const getRouteDashboard = async (req: Request, res: Response): Promise<void> => 
     return
   }
   try {
-    res.send(await getDashboard({ ...input.data, status: input.data.status as RouteOperationalStatus | undefined }, { correlationId: res.locals.correlationId, actor: res.locals.userId, driverId: driverScope(req, res) }))
+    res.send(await getDashboard({ ...input.data, status: input.data.status as RouteOperationalStatus | undefined }, { correlationId: res.locals.correlationId, actor: res.locals.userId, driverId: driverScope(res) }))
   } catch (error) {
+    if (handleAssignmentError(res, error)) return
     handleHttp(res, 'ERROR_GET_ROUTE_DASHBOARD', error)
   }
 }
@@ -56,6 +63,7 @@ const getCandidateItems = async (req: Request, res: Response): Promise<void> => 
   try {
     res.send(await getCandidates(input.data, { correlationId: res.locals.correlationId }))
   } catch (error) {
+    if (handleAssignmentError(res, error)) return
     handleHttp(res, 'ERROR_GET_ROUTE_CANDIDATES', error)
   }
 }
@@ -87,6 +95,7 @@ const previewRoute = async (req: Request, res: Response): Promise<void> => {
   try {
     res.send(await preview(input.data, { correlationId: res.locals.correlationId, actor: res.locals.userId }))
   } catch (error) {
+    if (handleAssignmentError(res, error)) return
     if (error instanceof RoutePreviewError) {
       const status = error.code === 'PREVIEW_RECEIPT_CONFLICT'
         ? 409
@@ -126,6 +135,7 @@ const saveRoutePlan = async (req: Request, res: Response): Promise<void> => {
       : await saveLegacySnapshot(input.data, res.locals.userId, context)
     res.status(201).send(saved)
   } catch (error) {
+    if (handleAssignmentError(res, error)) return
     if (error instanceof RoutePreviewError) {
       const status = error.code === 'PREVIEW_RECEIPT_CONFLICT'
         ? 409
@@ -171,9 +181,9 @@ const patchRouteConfig = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
-const getRoutePlans = async (req: Request, res: Response): Promise<void> => {
+const getRoutePlans = async (_req: Request, res: Response): Promise<void> => {
   try {
-    res.send(await listSnapshots({ correlationId: res.locals.correlationId, driverId: driverScope(req, res) }))
+    res.send(await listSnapshots({ correlationId: res.locals.correlationId, driverId: driverScope(res) }))
   } catch (error) {
     handleHttp(res, 'ERROR_GET_ROUTE_PLANS', error)
   }
@@ -187,7 +197,7 @@ const getRoutePlanById = async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    const routePlan = await getSnapshot(req.params.id, { correlationId: res.locals.correlationId, driverId: driverScope(req, res) })
+    const routePlan = await getSnapshot(req.params.id, { correlationId: res.locals.correlationId, driverId: driverScope(res) })
     if (routePlan === null) {
       sendErrorEnvelope(res, 404, 'ROUTE_PLAN_NOT_FOUND', 'Route plan was not found')
       return

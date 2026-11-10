@@ -261,6 +261,7 @@ export interface RoutePlan {
   planningDate: Date
   zoneSnapshot: RoutePlanZoneSnapshot
   selectedSaleIds: string[]
+  reservedSaleIds?: string[]
   depot: RoutingDepot
   stops: RoutePlanStop[]
   segments: RoutePlanSegment[]

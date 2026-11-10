@@ -16,9 +16,9 @@ import {
 const router = Router()
 
 // Sale lifecycle — gated by sale access (confirm_sale_payment) plus ownership.
-router.post('/sales/:saleId/payment', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void confirmSalePayment(req, res) })
-router.post('/sales/:saleId/delivery', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void recordSaleDelivery(req, res) })
-router.post('/sales/:saleId/cancellation', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment')(req, res, next) }, (req, res) => { void recordSaleCancellation(req, res) })
+router.post('/sales/:saleId/payment', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment', { currentRole: true })(req, res, next) }, (req, res) => { void confirmSalePayment(req, res) })
+router.post('/sales/:saleId/delivery', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment', { currentRole: true })(req, res, next) }, (req, res) => { void recordSaleDelivery(req, res) })
+router.post('/sales/:saleId/cancellation', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('confirm_sale_payment', { currentRole: true })(req, res, next) }, (req, res) => { void recordSaleCancellation(req, res) })
 
 // Sale money movement and physical adjustment.
 router.post('/sales/:saleId/refunds', (req, res, next) => { void checkJwt(req, res, next) }, requireContractsEnabled, (req, res, next) => { void checkPermission('refund_sale')(req, res, next) }, (req, res) => { void recordSaleRefund(req, res) })

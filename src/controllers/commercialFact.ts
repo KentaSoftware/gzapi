@@ -88,13 +88,10 @@ const contextOf = (user: AuthenticatedUser | undefined, correlationId: string | 
   correlationId
 })
 
-const roleNameOf = (user: AuthenticatedUser | undefined): string | undefined => user?.role?.name
-
 // FR-041/FR-042: Propietario/Administración may act on any sale; a Preventista
 // may only act on a sale they created.
-const computeAccessible = (user: AuthenticatedUser | undefined, saleUser: unknown): boolean => {
-  const roleName = roleNameOf(user)
-  if (roleName === 'Propietario' || roleName === 'Administración') return true
+const computeAccessible = (user: AuthenticatedUser | undefined, saleUser: unknown, roleName: unknown): boolean => {
+  if (roleName === 'admin' || roleName === 'Propietario' || roleName === 'Administración') return true
   if (saleUser === null || saleUser === undefined) return false
   return String(saleUser) === String(user?.id ?? '')
 }
@@ -154,7 +151,7 @@ const confirmSalePayment = async (req: RequestExt, res: Response): Promise<void>
   if (validated === undefined) return
 
   const [sale] = await getSale(new Types.ObjectId(saleId))
-  const accessible = computeAccessible(req.user, sale === undefined ? undefined : sale.user)
+  const accessible = computeAccessible(req.user, sale === undefined ? undefined : sale.user, res.locals.authorizationRole)
 
   try {
     const result = await service.confirmSalePayment(
@@ -260,7 +257,7 @@ const recordSaleDelivery = async (req: RequestExt, res: Response): Promise<void>
   if (validated === undefined) return
 
   const [sale] = await getSale(new Types.ObjectId(saleId))
-  const accessible = computeAccessible(req.user, sale === undefined ? undefined : sale.user)
+  const accessible = computeAccessible(req.user, sale === undefined ? undefined : sale.user, res.locals.authorizationRole)
   if (!accessible) {
     sendErrorEnvelope(res, 403, 'SALE_PAYMENT_FORBIDDEN', 'Caller lacks access to this sale', correlationId)
     return
@@ -286,7 +283,7 @@ const recordSaleCancellation = async (req: RequestExt, res: Response): Promise<v
   if (validated === undefined) return
 
   const [sale] = await getSale(new Types.ObjectId(saleId))
-  const accessible = computeAccessible(req.user, sale === undefined ? undefined : sale.user)
+  const accessible = computeAccessible(req.user, sale === undefined ? undefined : sale.user, res.locals.authorizationRole)
   if (!accessible) {
     sendErrorEnvelope(res, 403, 'SALE_PAYMENT_FORBIDDEN', 'Caller lacks access to this sale', correlationId)
     return
