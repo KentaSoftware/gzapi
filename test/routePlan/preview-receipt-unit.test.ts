@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { Types } from 'mongoose'
+import { mongo, Types } from 'mongoose'
 import { routeSaveRequestSchema } from '../../src/schemas/routeOptimization'
 import ReceiptModel from '../../src/models/routePlanPreviewReceipt'
 import RoutePlanModel from '../../src/models/routePlan'
@@ -12,6 +12,7 @@ import ConfigModel from '../../src/models/routingConfig'
 import * as provider from '../../src/services/routeMatrixProvider'
 import * as vehicles from '../../src/services/vehicle'
 import { preview, saveSnapshot, saveLegacySnapshot } from '../../src/services/routePlan'
+import { assignmentGuard } from '../../src/services/routeAssignment'
 
 describe('route preview receipt contract', () => {
   it('accepts only an opaque receipt and rejects legacy or arbitrary preview data', () => {
@@ -40,6 +41,9 @@ describe('route receipt service without database access', () => {
   }
 
   beforeEach(() => {
+    sinon.stub(assignmentGuard, 'readIndexes').resolves([{ name: 'routeplan_reserved_sale_ids_unique', key: { reservedSaleIds: 1 }, unique: true, sparse: true }])
+    sinon.stub(assignmentGuard, 'readCollectionOptions').resolves({})
+    sinon.stub(assignmentGuard, 'readAssignedSnapshots').resolves([])
     sale.estado = 'Creado'
     stored = {}
     saved = null
@@ -93,6 +97,49 @@ describe('route receipt service without database access', () => {
     sinon.stub(RoutePlanModel, 'create').callsFake(async (value: unknown) => { saved = value as Record<string, unknown>; return value as never })
   })
   afterEach(() => sinon.restore())
+
+  it('accepts an undated pending sale and reserves it on both save paths', async () => {
+    const previous = sale.delivery.serviceDate
+    try {
+      delete (sale.delivery as { serviceDate?: Date }).serviceDate
+      const reviewed = await preview(input, { actor: 'actor' })
+      const result = await saveSnapshot({ receipt: reviewed.receipt as string }, 'actor')
+      expect(result.reservedSaleIds).to.deep.equal(input.saleIds)
+      saved = null
+      expect((await saveLegacySnapshot(legacy, 'actor')).reservedSaleIds).to.deep.equal(input.saleIds)
+    } finally { sale.delivery.serviceDate = previous }
+  })
+
+  it('fails closed on missing index and rejects historical assignment on both paths', async () => {
+    const reviewed = await preview(input, { actor: 'actor' })
+    ;(assignmentGuard.readIndexes as sinon.SinonStub).resolves([])
+    for (const action of [async () => await saveSnapshot({ receipt: reviewed.receipt as string }, 'actor'), async () => await saveLegacySnapshot(legacy, 'actor')]) {
+      try { await action(); expect.fail('missing index') } catch (error) { expect((error as Error).name).to.equal('AssignmentSafetyError') }
+    }
+    ;(assignmentGuard.readIndexes as sinon.SinonStub).resolves([{ name: 'routeplan_reserved_sale_ids_unique', key: { reservedSaleIds: 1 }, unique: true, sparse: true }])
+    ;(assignmentGuard.readAssignedSnapshots as sinon.SinonStub).resolves([{ selectedSaleIds: input.saleIds }])
+    for (const action of [async () => await saveSnapshot({ receipt: reviewed.receipt as string }, 'actor'), async () => await saveLegacySnapshot(legacy, 'actor')]) {
+      try { await action(); expect.fail('assigned') } catch (error) { expect((error as Error).name).to.equal('AssignmentConflictError') }
+    }
+    expect((RoutePlanModel.create as sinon.SinonStub).callCount).to.equal(0)
+  })
+
+  it('maps reservation index races but preserves unrelated duplicate errors', async () => {
+    const reviewed = await preview(input, { actor: 'actor' })
+    const create = RoutePlanModel.create as sinon.SinonStub
+    create.onFirstCall().rejects(new mongo.MongoServerError({ message: 'duplicate', code: 11000, keyPattern: { reservedSaleIds: 1 } }))
+    create.onSecondCall().rejects(new mongo.MongoServerError({ message: 'other duplicate', code: 11000, keyPattern: { _id: 1 } }))
+    try { await saveSnapshot({ receipt: reviewed.receipt as string }, 'actor'); expect.fail('expected conflict') } catch (error) { expect((error as Error).name).to.equal('AssignmentConflictError') }
+    try { await saveLegacySnapshot(legacy, 'actor'); expect.fail('expected error') } catch (error) { expect((error as Error).message).to.equal('other duplicate') }
+  })
+
+  it('maps only receipt snapshot _id collisions to receipt conflict', async () => {
+    const reviewed = await preview(input, { actor: 'actor' })
+    const error = new mongo.MongoServerError({ code: 11000, message: 'E11000 duplicate key error collection: test.routeplans index: _id_ dup key: { _id: ObjectId("a") }' })
+    ;(RoutePlanModel.create as sinon.SinonStub).rejects(error)
+    try { await saveSnapshot({ receipt: reviewed.receipt as string }, 'actor'); expect.fail('expected receipt conflict') } catch (caught) { expect((caught as { code?: string }).code).to.equal('PREVIEW_RECEIPT_CONFLICT') }
+    try { await saveLegacySnapshot(legacy, 'actor'); expect.fail('expected original error') } catch (caught) { expect(caught).to.equal(error) }
+  })
 
   it('accepts only the exact legacy shape or receipt, never mixed fields', () => {
     expect(routeSaveRequestSchema.safeParse(legacy).success).to.equal(true)

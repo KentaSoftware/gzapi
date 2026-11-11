@@ -9,10 +9,7 @@ const SaleDeliverySchema = new Schema<SaleDelivery>(
       required: true
     },
     serviceDate: {
-      type: Date,
-      required: function (this: SaleDelivery): boolean {
-        return this.status === SALE_DELIVERY_STATUS.PENDING
-      }
+      type: Date
     },
     deliveredAt: {
       type: Date,

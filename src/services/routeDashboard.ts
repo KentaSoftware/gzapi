@@ -185,33 +185,32 @@ const enrichCandidatesWithRouteDistances = (candidates: CandidateResult, snapsho
   }
 }
 
-const getMapLocations = async (zoneId: unknown, serviceDate: string, candidates: CandidateResult): Promise<RouteMapLocation[]> => {
-  const { start, end } = serviceDateRange(serviceDate)
-  const clients = await ClientModel.find({ isActive: true, deliveryZoneId: zoneId }).lean()
-  const sales = await SaleModel.find(
-    { 'delivery.status': 'PENDING', 'delivery.serviceDate': { $gte: start, $lt: end } },
-    { _id: 1, idCliente: 1 }
-  ).lean()
-  const pendingClientIds = new Set(sales.map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente)).filter((id): id is string => id !== undefined))
+const getMapLocations = async (zoneId: unknown, candidates: CandidateResult): Promise<RouteMapLocation[]> => {
+  return await readMapLocations({ isActive: true, deliveryZoneId: zoneId }, candidates)
+}
+
+const readMapLocations = async (filter: Record<string, unknown>, candidates: CandidateResult): Promise<RouteMapLocation[]> => {
   const eligibleClientIds = new Set(candidates.eligible.map((candidate) => candidate.clientId).filter((id): id is string => id !== undefined))
   const blockedClientIds = new Set(candidates.blocked.map((candidate) => candidate.clientId).filter((id): id is string => id !== undefined))
-
-  return clients
-    .filter((client) => Number.isFinite(client.lat) && Number.isFinite(client.lng))
-    .map((client): RouteMapLocation => {
+  const locations: RouteMapLocation[] = []
+  const cursor = ClientModel.find(filter).sort({ _id: 1 }).lean().cursor({ batchSize: 500 })
+  for await (const client of cursor) {
+    if (Number.isFinite(client.lat) && Number.isFinite(client.lng)) {
       const clientId = String(client._id)
-      const status = eligibleClientIds.has(clientId) || (pendingClientIds.has(clientId) && !blockedClientIds.has(clientId))
+      const status = eligibleClientIds.has(clientId)
         ? ROUTE_MAP_LOCATION_STATUS.ORDER
         : blockedClientIds.has(clientId) ? ROUTE_MAP_LOCATION_STATUS.EXCLUDED : ROUTE_MAP_LOCATION_STATUS.NO_ORDER
-      return {
+      locations.push({
         clientId,
         displayName: client.nombreCompleto,
         ...(client.address === undefined || client.address.trim() === '' ? {} : { addressSummary: client.address }),
         latitude: client.lat as number,
         longitude: client.lng as number,
         status
-      }
-    })
+      })
+    }
+  }
+  return locations
 }
 
 interface GlobalMapLocationsRead {
@@ -220,34 +219,7 @@ interface GlobalMapLocationsRead {
 }
 
 const getGlobalMapLocations = async (candidates: CandidateResult): Promise<GlobalMapLocationsRead> => {
-  const clientsRead = await ClientModel.find({ isActive: true }).sort({ _id: 1 }).limit(MAX_DASHBOARD_MAP_LOCATIONS + 1).lean()
-  const truncated = clientsRead.length > MAX_DASHBOARD_MAP_LOCATIONS
-  const clients = truncated ? clientsRead.slice(0, MAX_DASHBOARD_MAP_LOCATIONS) : clientsRead
-  const sales = await SaleModel.find({ 'delivery.status': 'PENDING' }, { _id: 1, idCliente: 1 }).sort({ _id: 1 }).limit(MAX_DASHBOARD_CANDIDATES).lean()
-  const pendingClientIds = new Set(sales.map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente)).filter((id): id is string => id !== undefined))
-  const eligibleClientIds = new Set(candidates.eligible.map((candidate) => candidate.clientId).filter((id): id is string => id !== undefined))
-  const blockedClientIds = new Set(candidates.blocked.map((candidate) => candidate.clientId).filter((id): id is string => id !== undefined))
-
-  const locations = clients
-    .filter((client) => Number.isFinite(client.lat) && Number.isFinite(client.lng))
-    .map((client): RouteMapLocation => {
-      const clientId = String(client._id)
-      const status = eligibleClientIds.has(clientId) || (pendingClientIds.has(clientId) && !blockedClientIds.has(clientId))
-        ? ROUTE_MAP_LOCATION_STATUS.ORDER
-        : blockedClientIds.has(clientId)
-          ? ROUTE_MAP_LOCATION_STATUS.EXCLUDED
-          : ROUTE_MAP_LOCATION_STATUS.NO_ORDER
-      return {
-        clientId,
-        displayName: client.nombreCompleto,
-        ...(client.address === undefined || client.address.trim() === '' ? {} : { addressSummary: client.address }),
-        latitude: client.lat as number,
-        longitude: client.lng as number,
-        status
-      }
-    })
-
-  return { locations, truncated }
+  return { locations: await readMapLocations({ isActive: true }, candidates), truncated: false }
 }
 
 const isScopedDashboardQuery = (input: RouteDashboardQuery): input is RouteDashboardScopedQuery =>
@@ -282,7 +254,7 @@ const getDashboardRead = async (input: RouteDashboardQuery, context: DashboardRe
       const zone = await DeliveryZoneModel.findOne({ code: input.zoneCode, active: true }).lean()
       zoneNotFound = zone === null
       candidates = zone === null ? emptyCandidates : await getCandidates({ serviceDate: input.serviceDate, deliveryZoneId: String(zone._id) }, candidateContext)
-      mapLocations = zone === null ? [] : await getMapLocations(zone._id, input.serviceDate, candidates)
+      mapLocations = zone === null ? [] : await getMapLocations(zone._id, candidates)
       if (zone === null) {
         snapshotRead = []
       } else {

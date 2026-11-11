@@ -64,14 +64,6 @@ const saleDeliverySchema = z.object({
   deliveredAt: z.date().optional(),
   notes: z.string().trim().optional()
 }).superRefine((delivery, context) => {
-  if (delivery.status === SALE_DELIVERY_STATUS.PENDING && delivery.serviceDate === undefined) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'PENDING delivery requires serviceDate',
-      path: ['serviceDate']
-    })
-  }
-
   if (delivery.status === SALE_DELIVERY_STATUS.DELIVERED && delivery.deliveredAt === undefined) {
     context.addIssue({
       code: z.ZodIssueCode.custom,

@@ -32,6 +32,7 @@ const routePlanSchema = new Schema<RoutePlan>(
       name: { type: String, required: true, immutable: true }
     },
     selectedSaleIds: { type: [String], required: true, immutable: true },
+    reservedSaleIds: { type: [String], default: undefined, immutable: true },
     depot: {
       name: { type: String, required: true, immutable: true },
       latitude: { type: Number, required: true, immutable: true },

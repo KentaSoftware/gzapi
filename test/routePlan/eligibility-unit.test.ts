@@ -10,6 +10,7 @@ import RoutePlanModel from '../../src/models/routePlan'
 import * as provider from '../../src/services/routeMatrixProvider'
 import { getCandidates, getGlobalCandidates, preview, RoutePreviewError } from '../../src/services/routePlan'
 import type { CandidateResult } from '../../src/interfaces/routeOptimization.interface'
+import { assignmentGuard } from '../../src/services/routeAssignment'
 
 describe('route eligibility without database access', () => {
   const zone = new Types.ObjectId()
@@ -24,7 +25,10 @@ describe('route eligibility without database access', () => {
     const result = {
       sort: () => result,
       limit: (value: number) => { limit = value; return result },
-      lean: async () => Array.isArray(rows) ? rows.slice(0, limit) : rows
+      lean: () => ({
+        then: async (resolve: (value: unknown) => unknown) => await Promise.resolve(Array.isArray(rows) ? rows.slice(0, limit) : rows).then(resolve),
+        cursor: () => ({ async * [Symbol.asyncIterator] () { for (const row of rows as unknown[]) yield row } })
+      })
     }
     return result
   }
@@ -37,6 +41,7 @@ describe('route eligibility without database access', () => {
   })
 
   beforeEach(() => {
+    sinon.stub(assignmentGuard, 'readAssignedSnapshots').resolves([])
     sales = []
     clients = [{ _id: clientId, nombreCompleto: 'Client', address: 'Address', isActive: true, deliveryZoneId: zone, lat: 0, lng: 0, geocoding: { status: 'CONFIRMED' } }]
     sinon.stub(SaleModel, 'find').callsFake((filter: unknown) => {
@@ -50,6 +55,32 @@ describe('route eligibility without database access', () => {
     sinon.stub(ItemSaleModel, 'find').callsFake(() => query([]) as never)
   })
   afterEach(() => { sinon.restore() })
+
+  it('processes over 1000 pending sales in bounded batches including late historical assignments and other zones', async () => {
+    const otherZone = new Types.ObjectId()
+    const otherClient = new Types.ObjectId()
+    clients.push({ ...clients[0], _id: otherClient, deliveryZoneId: otherZone })
+    sales = Array.from({ length: 1205 }, (_, i) => sale('Creado', { idCliente: i % 2 === 0 ? clientId : otherClient, delivery: { status: 'PENDING' } }))
+    const assigned = new Set([String(sales[4]._id), String(sales[1204]._id)])
+    const lookup = assignmentGuard.readAssignedSnapshots as sinon.SinonStub
+    lookup.callsFake(async (ids: string[]) => ids.filter((id) => assigned.has(id)).map((id) => ({ selectedSaleIds: [id] })))
+    const result = await getCandidates(input)
+    expect(result.eligible).to.have.length(601)
+    expect(result.blocked).to.have.length(602)
+    expect(result.eligible.map((row) => row.saleId)).not.to.include(String(sales[1204]._id))
+    expect(lookup.callCount).to.be.greaterThan(1)
+    expect(Math.max(...lookup.args.map(([ids]) => (ids as string[]).length))).to.be.at.most(500)
+    const clientReads = (ClientModel.find as sinon.SinonStub).args.map(([filter]) => (filter as { _id: { $in: unknown[] } })._id.$in.length)
+    expect(Math.max(...clientReads)).to.be.at.most(500)
+  })
+
+  it('removes historical assignments from undated candidates without a delivery date filter', async () => {
+    sales = [sale('Creado', { delivery: { status: 'PENDING' } }), sale('Creado', { delivery: { status: 'PENDING', serviceDate: new Date('2024-01-01') } })]
+    ;(assignmentGuard.readAssignedSnapshots as sinon.SinonStub).resolves([{ selectedSaleIds: [String(sales[0]._id)] }])
+    const result = await getCandidates(input)
+    expect(result.eligible.map((entry) => entry.saleId)).to.deep.equal([String(sales[1]._id)])
+    expect((SaleModel.find as sinon.SinonStub).firstCall.args[0]).not.to.have.property('delivery.serviceDate')
+  })
 
   for (const scoped of [false, true]) {
     const candidates = async (): Promise<CandidateResult> => scoped ? await getCandidates(input) : await getGlobalCandidates()

@@ -19,14 +19,15 @@ const authenticate = (req: Request, res: Response, next: NextFunction): void => 
 }
 
 const authorize = (permission: string): ((req: Request, res: Response, next: NextFunction) => void) => {
-  const middleware = checkPermission(permission)
+  const middleware = checkPermission(permission, { currentRole: true })
   return (req: Request, res: Response, next: NextFunction): void => {
-    const user = (req as Request & { user?: { role?: { name?: string } } }).user
-    if (user?.role?.name === 'Repartidor' && permission !== 'read_route_plan') {
-      sendErrorEnvelope(res, 403, 'PERMISSION_DENIED', 'Permission is denied')
-      return
-    }
-    void middleware(req, res, next)
+    void middleware(req, res, () => {
+      if (res.locals.authorizationRole === 'Repartidor' && permission !== 'read_route_plan') {
+        sendErrorEnvelope(res, 403, 'PERMISSION_DENIED', 'Permission is denied')
+        return
+      }
+      next()
+    })
   }
 }
 

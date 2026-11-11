@@ -2,6 +2,7 @@ import { fromZonedTime } from 'date-fns-tz'
 import { createHash, randomBytes } from 'crypto'
 import { Types } from 'mongoose'
 import { Client, GEOCODING_STATUS } from '../interfaces/client.interface'
+import type { Sale } from '../interfaces/sale.interface'
 import {
   CANDIDATE_BLOCK_REASONS,
   DEFAULT_ROUTE_ALGORITHM,
@@ -38,6 +39,7 @@ import { calculateStopEstimates } from './routeSchedule'
 import { getVehicleById, listSelectableVehicles } from './vehicle'
 import { getAllUsers } from './user'
 import { detectStaleness } from './routeStaleness'
+import { assignmentGuard, assertAssignmentIndex, AssignmentConflictError, AssignmentSafetyError, isDuplicateIndexError, throwAssignmentWriteError, unassignedCandidates, validateAssignmentSelection } from './routeAssignment'
 
 const CANDIDATE_RULE_VERSION = 'candidate-eligibility-v1'
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
@@ -133,82 +135,49 @@ interface CandidateQueryResult {
   truncated: boolean
 }
 
-const queryGlobalCandidates = async (maxResults?: number): Promise<CandidateQueryResult> => {
-  const salesQuery = SaleModel.find({ 'delivery.status': 'PENDING', estado: { $not: CANCELLED_SALE_PATTERN } }).sort({ _id: 1 })
-  const sales = await (maxResults === undefined ? salesQuery : salesQuery.limit(maxResults + 1)).lean()
-  const boundedSales = maxResults === undefined || sales.length <= maxResults ? sales : sales.slice(0, maxResults)
-  const clientIds = boundedSales
-    .map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente))
-    .filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id))
-    .map((id) => new Types.ObjectId(id))
-  const clients = await ClientModel.find({ _id: { $in: clientIds } }).lean()
-  const clientsById = new Map(clients.map((client) => [String(client._id), client]))
+const CANDIDATE_BATCH_SIZE = 500
+
+// The API intentionally returns all candidates. Only intermediate Mongo reads
+// are bounded; the response itself grows with the number of matching sales.
+const queryCandidateBatches = async (deliveryZoneId?: string): Promise<CandidateQueryResult> => {
+  const requestedZoneId = deliveryZoneId === undefined ? undefined : new Types.ObjectId(deliveryZoneId)
   const eligible: CandidateEntry[] = []
   const blocked: BlockedCandidateEntry[] = []
-
-  for (const sale of boundedSales) {
-    const client = sale.idCliente === undefined ? undefined : clientsById.get(String(sale.idCliente))
-    if (client === undefined) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.INVALID_CLIENT_REFERENCE))
-    else if (client.isActive !== true) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_INACTIVE, client))
-    else if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client))
-    else if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_UNCONFIRMED, client))
-    else eligible.push(candidateEntry(sale._id, client))
-  }
-
-  return {
-    result: { eligible, blocked, ruleVersion: CANDIDATE_RULE_VERSION },
-    truncated: maxResults !== undefined && sales.length > maxResults
-  }
-}
-
-const queryCandidates = async ({ serviceDate, deliveryZoneId }: CandidateQuery, maxResults?: number): Promise<CandidateQueryResult> => {
-  const { start, end } = serviceDateRange(serviceDate)
-  const salesQuery = SaleModel.find({
-    'delivery.status': 'PENDING',
-    estado: { $not: CANCELLED_SALE_PATTERN },
-    'delivery.serviceDate': { $gte: start, $lt: end }
-  })
-    .sort({ _id: 1 })
-  const sales = await (maxResults === undefined ? salesQuery : salesQuery.limit(maxResults + 1)).lean()
-  const boundedSales = maxResults === undefined || sales.length <= maxResults ? sales : sales.slice(0, maxResults)
-
-  const clientIds = boundedSales
-    .map((sale) => sale.idCliente === undefined ? undefined : String(sale.idCliente))
-    .filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id))
-    .map((id) => new Types.ObjectId(id))
-  const clients = await ClientModel.find({ _id: { $in: clientIds } }).lean()
-  const clientsById = new Map(clients.map((client) => [String(client._id), client]))
-  const requestedZoneId = new Types.ObjectId(deliveryZoneId)
-  const eligible: CandidateEntry[] = []
-  const blocked: BlockedCandidateEntry[] = []
-
-  for (const sale of boundedSales) {
-    const client = sale.idCliente === undefined ? undefined : clientsById.get(String(sale.idCliente))
-    if (client === undefined) {
-      blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.INVALID_CLIENT_REFERENCE))
-    } else if (client.isActive !== true) {
-      blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_INACTIVE, client))
-    } else if (client.deliveryZoneId === undefined || !requestedZoneId.equals(client.deliveryZoneId)) {
-      blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_ZONE_MISMATCH, client))
-    } else if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) {
-      blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client))
-    } else if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) {
-      blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_UNCONFIRMED, client))
-    } else {
-      eligible.push(candidateEntry(sale._id, client))
+  const processBatch = async (sales: Array<Pick<Sale, '_id' | 'idCliente'>>): Promise<void> => {
+    const unassigned = await unassignedCandidates(assignmentGuard, sales.map((sale) => ({ saleId: String(sale._id), sale })))
+    const clientIds = [...new Set(unassigned.map(({ sale }) => sale.idCliente === undefined ? undefined : String(sale.idCliente)).filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id)))].map((id) => new Types.ObjectId(id))
+    const clients = clientIds.length === 0 ? [] : await ClientModel.find({ _id: { $in: clientIds } }).lean()
+    const clientsById = new Map(clients.map((client) => [String(client._id), client]))
+    for (const { sale } of unassigned) {
+      const client = sale.idCliente === undefined ? undefined : clientsById.get(String(sale.idCliente))
+      if (client === undefined) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.INVALID_CLIENT_REFERENCE))
+      else if (client.isActive !== true) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_INACTIVE, client))
+      else if (requestedZoneId !== undefined && (client.deliveryZoneId === undefined || !requestedZoneId.equals(client.deliveryZoneId))) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_ZONE_MISMATCH, client))
+      else if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client))
+      else if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_UNCONFIRMED, client))
+      else eligible.push(candidateEntry(sale._id, client))
     }
   }
-
+  const cursor = SaleModel.find({ 'delivery.status': 'PENDING', estado: { $not: CANCELLED_SALE_PATTERN } }, { _id: 1, idCliente: 1 }).sort({ _id: 1 }).lean().cursor({ batchSize: CANDIDATE_BATCH_SIZE })
+  let batch: Array<Pick<Sale, '_id' | 'idCliente'>> = []
+  for await (const sale of cursor) {
+    batch.push(sale)
+    if (batch.length === CANDIDATE_BATCH_SIZE) {
+      await processBatch(batch)
+      batch = []
+    }
+  }
+  if (batch.length > 0) await processBatch(batch)
   return {
     result: { eligible, blocked, ruleVersion: CANDIDATE_RULE_VERSION },
-    truncated: maxResults !== undefined && sales.length > maxResults
+    truncated: false
   }
 }
 
 const getCandidates = async (input: CandidateQuery, context: RoutePlanRequestContext = {}): Promise<CandidateResult> => {
   const start = Date.now()
   try {
-    const queryResult = await queryCandidates(input, context.maxResults)
+    const queryResult = await queryCandidates(input)
     context.truncated = queryResult.truncated
     logRoutePlanEvent({ event: 'route_plan_candidates_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: queryResult.result.ruleVersion, resultCode: 'SUCCESS' })
     return queryResult.result
@@ -221,7 +190,7 @@ const getCandidates = async (input: CandidateQuery, context: RoutePlanRequestCon
 const getGlobalCandidates = async (context: RoutePlanRequestContext = {}): Promise<CandidateResult> => {
   const start = Date.now()
   try {
-    const queryResult = await queryGlobalCandidates(context.maxResults)
+    const queryResult = await queryGlobalCandidates()
     context.truncated = queryResult.truncated
     logRoutePlanEvent({ event: 'route_plan_candidates_read_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: queryResult.result.ruleVersion, resultCode: 'SUCCESS' })
     return queryResult.result
@@ -328,11 +297,12 @@ const providerDiagnostic = (error: unknown): RouteMatrixDiagnostic | undefined =
 const errorCode = (error: unknown): string => error instanceof RoutePreviewError ? error.code : 'INTERNAL_ERROR'
 
 const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanRequestContext): Promise<RoutePreview> => {
-  const { serviceDate, deliveryZoneId, saleIds, driverId, vehicleId } = input
+  const { deliveryZoneId, saleIds, driverId, vehicleId } = input
   if (driverId === undefined && vehicleId === undefined) throw new RoutePreviewError('ROUTE_ASSIGNMENT_REQUIRED', 'driverId and vehicleId are required before preview or save')
   if (driverId === undefined) throw new RoutePreviewError('ROUTE_ASSIGNMENT_REQUIRED', 'driverId is required before preview or save')
   if (vehicleId === undefined) throw new RoutePreviewError('ROUTE_ASSIGNMENT_REQUIRED', 'vehicleId is required before preview or save')
-  const { start, end } = serviceDateRange(serviceDate)
+  if (saleIds.length === 0 || saleIds.some((id) => !/^[a-f0-9]{24}$/.test(id)) || new Set(saleIds).size !== saleIds.length) throw new RoutePreviewError('INVALID_ROUTE_INPUT', 'Invalid sale selection')
+  if ((await unassignedCandidates(assignmentGuard, saleIds.map((saleId) => ({ saleId })))).length !== saleIds.length) throw new AssignmentConflictError()
   const zone = await DeliveryZoneModel.findOne({ _id: deliveryZoneId, active: true }).lean()
   if (zone === null) throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'The requested delivery zone is not active')
 
@@ -369,7 +339,7 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
   }
 
   for (const sale of sales) {
-    if (sale.delivery?.status !== 'PENDING' || sale.delivery.serviceDate === undefined || sale.delivery.serviceDate < start || sale.delivery.serviceDate >= end || sale.idCliente === undefined) {
+    if (sale.delivery?.status !== 'PENDING' || sale.idCliente === undefined) {
       throw new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for route planning')
     }
     const client = clientsById.get(String(sale.idCliente))
@@ -526,6 +496,7 @@ const preview = async (input: RoutePreviewRequest, context: RoutePlanRequestCont
     logRoutePlanEvent({ event: 'route_plan_preview_completed', correlationId: context.correlationId, latencyMs: Date.now() - start, provider: result.algorithmProvider, algorithmVersion: result.algorithmVersion, ruleVersion: result.ruleVersion, routingConfigRevision: result.routingConfigRevision, resultCode: 'SUCCESS' })
     return { ...result, receipt: token }
   } catch (error) {
+    if (error instanceof AssignmentConflictError || error instanceof AssignmentSafetyError) throw error
     const mapped = previewProviderError(error)
     logRoutePlanEvent({ event: 'route_plan_preview_failed', correlationId: context.correlationId, latencyMs: Date.now() - start, ruleVersion: CANDIDATE_RULE_VERSION, resultCode: errorCode(mapped), diagnostic: providerDiagnostic(mapped) })
     throw error
@@ -587,7 +558,7 @@ const receiptConflict = (): RoutePreviewError => new RoutePreviewError('PREVIEW_
 const isDuplicateKey = (error: unknown): boolean => typeof error === 'object' && error !== null && 'code' in error && error.code === 11000
 
 const assertReceiptFresh = async (input: RoutePreviewRequest, snapshot: RoutePlan): Promise<void> => {
-  const { start, end } = serviceDateRange(input.serviceDate)
+  if (input.saleIds.length !== snapshot.selectedSaleIds.length || input.saleIds.some((id, index) => id !== snapshot.selectedSaleIds[index])) throw receiptConflict()
   const sales = await SaleModel.find({ _id: { $in: input.saleIds.map((id) => new Types.ObjectId(id)) } }).sort({ _id: 1 }).lean()
   if (sales.length !== input.saleIds.length) throw receiptConflict()
   const stops = new Map(snapshot.stops.map((stop) => [stop.clientId, stop]))
@@ -595,7 +566,7 @@ const assertReceiptFresh = async (input: RoutePreviewRequest, snapshot: RoutePla
     const stop = stops.get(String(sale.idCliente))
     const reference = snapshot.saleReferences?.find((item) => item.saleId === String(sale._id))
     const updatedAt = (sale as unknown as { updatedAt?: Date }).updatedAt?.getTime() ?? null
-    if (stop === undefined || !stop.saleIds.includes(String(sale._id)) || CANCELLED_SALE_PATTERN.test(sale.estado) || sale.delivery?.status !== 'PENDING' || sale.delivery.serviceDate === undefined || sale.delivery.serviceDate < start || sale.delivery.serviceDate >= end || reference?.versionAtSave !== updatedAt) throw receiptConflict()
+    if (stop === undefined || !stop.saleIds.includes(String(sale._id)) || CANCELLED_SALE_PATTERN.test(sale.estado) || sale.delivery?.status !== 'PENDING' || reference?.versionAtSave !== updatedAt) throw receiptConflict()
   }
   const clients = await ClientModel.find({ _id: { $in: [...stops.keys()] } }).lean()
   if (clients.length !== stops.size) throw receiptConflict()
@@ -611,6 +582,17 @@ const assertReceiptFresh = async (input: RoutePreviewRequest, snapshot: RoutePla
   if (resolveAssignedConsumption(vehicle) !== snapshot.fuelAssumptions?.consumptionLitersPer100Km || (vehicle?.code ?? null) !== snapshot.fuelAssumptions?.vehicleCode) throw receiptConflict()
 }
 
+const queryGlobalCandidates = async (): Promise<CandidateQueryResult> => await queryCandidateBatches()
+const queryCandidates = async ({ deliveryZoneId }: CandidateQuery): Promise<CandidateQueryResult> => await queryCandidateBatches(deliveryZoneId)
+
+const reserveSnapshot = async (snapshot: RoutePlan): Promise<RoutePlan> => {
+  validateAssignmentSelection(snapshot.selectedSaleIds, snapshot.stops)
+  await assertAssignmentIndex(assignmentGuard)
+  const selected = snapshot.selectedSaleIds.map((saleId) => ({ saleId }))
+  if ((await unassignedCandidates(assignmentGuard, selected)).length !== selected.length) throw new AssignmentConflictError()
+  return { ...snapshot, reservedSaleIds: [...snapshot.selectedSaleIds] }
+}
+
 const saveSnapshot = async (input: { receipt: string }, createdBy: string, context: RoutePlanRequestContext = {}): Promise<RoutePlan> => {
   if (typeof input.receipt !== 'string' || !/^[a-f0-9]{64}$/.test(input.receipt) || createdBy === '') throw receiptConflict()
   const now = new Date()
@@ -622,20 +604,26 @@ const saveSnapshot = async (input: { receipt: string }, createdBy: string, conte
   try {
     if (await RoutePlanModel.findById(receipt.snapshotId).lean() !== null) throw receiptConflict()
     await assertReceiptFresh(receipt.input, receipt.snapshot)
+    const snapshot = await reserveSnapshot(receipt.snapshot)
     const checkedAt = new Date()
     const renewed = await RoutePlanPreviewReceiptModel.updateOne(
       { _id: id, actor: createdBy, tokenHash, claimId, claimUntil: { $gt: checkedAt }, expiresAt: { $gt: checkedAt } },
       { $set: { claimUntil: new Date(checkedAt.getTime() + 30000) } }
     )
     if (renewed.matchedCount !== 1) throw receiptConflict()
-    const saved = await RoutePlanModel.create({ ...receipt.snapshot, _id: receipt.snapshotId })
+    let saved: RoutePlan
+    try {
+      saved = await RoutePlanModel.create({ ...snapshot, _id: receipt.snapshotId })
+    } catch (error) {
+      if (isDuplicateIndexError(error, '_id', '_id_')) throw receiptConflict()
+      throw error
+    }
     await RoutePlanPreviewReceiptModel.updateOne({ _id: id, tokenHash, claimId }, { $unset: { claimId: 1, claimUntil: 1 } })
     logRoutePlanEvent({ event: 'route_plan_snapshot_saved', correlationId: context.correlationId, latencyMs: Date.now() - now.getTime(), resultCode: 'SUCCESS' })
     return saved
   } catch (error) {
     await RoutePlanPreviewReceiptModel.updateOne({ _id: id, tokenHash, claimId }, { $unset: { claimId: 1, claimUntil: 1 } })
-    if (isDuplicateKey(error)) throw receiptConflict()
-    throw error
+    throwAssignmentWriteError(error)
   }
 }
 
@@ -650,7 +638,9 @@ const saveLegacySnapshot = async (input: RoutePreviewRequest, createdBy: string,
   const start = Date.now()
   const calculated = await previewRoute(input, { ...context, actor: createdBy })
   if (calculated.zoneSnapshot === undefined) throw new RoutePreviewError('INVALID_CONFIGURATION', 'Preview zone is missing')
-  const saved = await RoutePlanModel.create(buildSnapshot(input, calculated, calculated.zoneSnapshot, createdBy))
+  const snapshot = await reserveSnapshot(buildSnapshot(input, calculated, calculated.zoneSnapshot, createdBy))
+  let saved: RoutePlan
+  try { saved = await RoutePlanModel.create(snapshot) } catch (error) { throwAssignmentWriteError(error) }
   logRoutePlanEvent({ event: 'route_plan_snapshot_saved', correlationId: context.correlationId, latencyMs: Date.now() - start, resultCode: 'SUCCESS' })
   return saved
 }
