@@ -29,7 +29,7 @@ import {
 } from '../services/simulationRunRepository'
 import { sendErrorEnvelope } from '../utils/error.handle'
 import { simulationDemoRepository, type SimulationDemoRepository } from '../models/simulationDemoFixture'
-import { listRouteCatalog, listRouteOptions, createRealRouteScenario, getRealRouteScenario, RealRouteScenarioError } from '../services/routeSimulation'
+import { listRouteCatalog, listRouteOptions, createRealRouteScenario, getRealRouteScenario, listRealRouteScenarios, RealRouteScenarioError } from '../services/routeSimulation'
 import { realRouteScenarioInputSchema } from '../schemas/simulation.schema'
 
 interface SimulationRouteDependencies {
@@ -41,6 +41,7 @@ interface SimulationRouteDependencies {
   demoRepository: SimulationDemoRepository
   routeOptions: typeof listRouteOptions
   routeCatalog: typeof listRouteCatalog
+  routeScenarioList: typeof listRealRouteScenarios
 }
 
 type InjectedSimulationRouteDependencies = Omit<SimulationRouteDependencies, 'runRepository' | 'demoRepository' | 'routeOptions' | 'routeCatalog'> & {
@@ -48,6 +49,7 @@ type InjectedSimulationRouteDependencies = Omit<SimulationRouteDependencies, 'ru
   demoRepository?: SimulationDemoRepository
   routeOptions?: typeof listRouteOptions
   routeCatalog?: typeof listRouteCatalog
+  routeScenarioList?: typeof listRealRouteScenarios
 }
 
 const SIMULATION_DEPENDENCIES_LOCAL = 'simulationRouteDependencies'
@@ -62,7 +64,8 @@ const productionDependencies: SimulationRouteDependencies = {
   runRepository: createSimulationRunMongoRepository(),
   demoRepository: simulationDemoRepository,
   routeOptions: listRouteOptions,
-  routeCatalog: listRouteCatalog
+  routeCatalog: listRouteCatalog,
+  routeScenarioList: listRealRouteScenarios
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -191,6 +194,31 @@ const createSimulationRouter = (
         return
       }
       sendErrorEnvelope(res, 503, SIMULATION_ERROR_CODES.REPOSITORY_ERROR, 'Scenario repository is unavailable')
+    })
+  })
+
+  router.get('/route-scenarios', ...guards('simulation:read', true), (req, res) => {
+    const role: unknown = res.locals.authorizationRole
+    const actor: unknown = res.locals.userId
+    if (typeof actor !== 'string' || actor.trim() === '') {
+      sendErrorEnvelope(res, 401, 'AUTHENTICATION_INVALID', 'Authentication credentials are invalid')
+      return
+    }
+    if (typeof role !== 'string' || role.trim() === '') {
+      sendErrorEnvelope(res, 403, 'PERMISSION_DENIED', 'Permission is denied')
+      return
+    }
+    const rawPage: unknown = req.query.page
+    const page = rawPage === undefined ? 1 : typeof rawPage === 'string' && /^[1-9]\d*$/.test(rawPage) ? Number(rawPage) : Number.NaN
+    if (!Number.isSafeInteger(page) || page < 1) {
+      sendErrorEnvelope(res, 400, SIMULATION_ERROR_CODES.INPUT_INVALID, 'Scenario history page is invalid')
+      return
+    }
+    const scope = role === 'Repartidor' ? { kind: 'driver' as const, userId: actor } : { kind: 'global' as const }
+    void resolveDependencies(req, dependencies).routeScenarioList(page, scope).then((history) => {
+      res.send(history)
+    }).catch(() => {
+      sendErrorEnvelope(res, 503, SIMULATION_ERROR_CODES.REPOSITORY_ERROR, 'Scenario history is unavailable')
     })
   })
 

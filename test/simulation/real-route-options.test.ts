@@ -7,6 +7,8 @@ import { listRouteOptions } from '../../src/services/routeSimulation'
 import * as routePlan from '../../src/services/routePlan'
 import RoutePlanModel from '../../src/models/routePlan'
 import { Types } from 'mongoose'
+import UserModel from '../../src/models/user'
+import VehicleModel from '../../src/models/vehicle'
 
 describe('simulation real route options', () => {
   it('requires authentication and simulation read permission before listing', async () => {
@@ -54,7 +56,7 @@ describe('simulation real route options', () => {
   })
 
   it('returns effective assignment and saved metrics without staleness writes', async () => {
-    const snapshot = { _id: 'actual-id', planningDate: new Date('2026-01-01'), zoneSnapshot: { code: 'z', name: 'Zone', normalizedName: 'zone' }, metrics: { distanceMeters: 500, durationSeconds: 60, stopCount: 1 }, assignments: { driverId: 'old', vehicleId: 'old' } }
+    const snapshot = { _id: 'actual-id', planningDate: new Date('2026-01-01'), zoneSnapshot: { code: 'z', name: 'Zone', normalizedName: 'zone' }, selectedSaleIds: ['sale-1', 'sale-2'], metrics: { distanceMeters: 500, durationSeconds: 60, stopCount: 1 }, assignments: { driverId: 'old', vehicleId: 'old' } }
     const aggregate = sinon.stub(RoutePlanModel, 'aggregate').resolves([{ ...snapshot, operational: [{ assignments: { driverId: 'new', vehicleId: 'new' } }] }])
     const driver = sinon.stub(routePlan, 'getDriverSnapshots').resolves([{ snapshot, projection: { assignments: { driverId: 'new', vehicleId: 'new' } } }] as never)
     try {
@@ -63,6 +65,7 @@ describe('simulation real route options', () => {
       expect(global.items[0]).to.include({ _id: 'actual-id' })
       expect(global.items[0].metrics).to.deep.equal(snapshot.metrics)
       expect(global.items[0].zoneSnapshot).to.deep.equal(snapshot.zoneSnapshot)
+      expect(global.items[0].orderCount).to.equal(2)
       expect(global.items[0].assignments).to.deep.equal({ driverId: 'new', vehicleId: 'new' })
       expect(scoped).to.deep.equal(global)
       expect(driver.firstCall.args[0]).to.equal('new')
@@ -70,6 +73,28 @@ describe('simulation real route options', () => {
     } finally {
       sinon.restore()
     }
+  })
+
+  it('returns display labels for the current effective driver and vehicle assignments', async () => {
+    const driverId = new Types.ObjectId('000000000000000000000101')
+    const vehicleId = new Types.ObjectId('000000000000000000000102')
+    const snapshot = {
+      _id: new Types.ObjectId('000000000000000000000103'),
+      planningDate: new Date('2026-01-01'),
+      zoneSnapshot: { code: 'z', name: 'Zone', normalizedName: 'zone' },
+      selectedSaleIds: ['sale-1'],
+      metrics: { distanceMeters: 500, durationSeconds: 60, stopCount: 1, fuelLiters: 2 },
+      assignments: { driverId: String(driverId), vehicleId: String(vehicleId) }
+    }
+    sinon.stub(RoutePlanModel, 'aggregate').resolves([{ ...snapshot, operational: [] }] as never)
+    const driverQuery = { lean: async () => [{ _id: driverId, nickname: 'Driver Name' }] }
+    const vehicleQuery = { lean: async () => [{ _id: vehicleId, code: 'Truck 1' }] }
+    sinon.stub(UserModel, 'find').returns(driverQuery as never)
+    sinon.stub(VehicleModel, 'find').returns(vehicleQuery as never)
+
+    const result = await listRouteOptions()
+
+    expect(result.items[0]).to.include({ driver: 'Driver Name', vehicle: 'Truck 1', orderCount: 1 })
   })
 
   it('paginates over more than 100 driver-visible snapshots using the last ID', async () => {

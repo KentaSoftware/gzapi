@@ -2,6 +2,7 @@ import { Schema, model } from 'mongoose'
 
 const routeSimulationSchema = new Schema({
   routeId: { type: String, required: true, immutable: true },
+  routeSnapshot: { type: Schema.Types.Mixed, required: false, immutable: true },
   routeMetrics: { type: Schema.Types.Mixed, required: true, immutable: true },
   parameters: { type: Schema.Types.Mixed, required: true, immutable: true },
   products: { type: [Schema.Types.Mixed], required: true, immutable: true },

@@ -146,4 +146,36 @@ describe('real route scenario HTTP', () => {
       expect((await request(app).post('/simulation/route-scenarios').set('Authorization', 'Bearer valid').send(input)).status).to.equal(503)
     } finally { app.locals.simulationRouteDependencies.getConfig = config }
   })
+
+  it('lists authorized paginated real-route history through the current-role feature-flag guards', async () => {
+    const pages: number[] = []
+    const appDependencies = app.locals.simulationRouteDependencies as Record<string, unknown>
+    const previousList = appDependencies.routeScenarioList
+    appDependencies.routeScenarioList = async (page: number, scope: unknown) => {
+      expect(scope).to.deep.equal(page === 1 ? { kind: 'global' } : { kind: 'driver', userId: actor })
+      pages.push(page)
+      return { items: [], page, pageSize: 8, total: 0 }
+    }
+    try {
+      const invalidPage = await request(app).get('/simulation/route-scenarios?page=0').set('Authorization', 'Bearer valid')
+      expect(invalidPage.status).to.equal(400)
+      expect((await request(app).get('/simulation/route-scenarios?page=1&page=2').set('Authorization', 'Bearer valid')).status).to.equal(400)
+      const response = await request(app).get('/simulation/route-scenarios?page=2').set('Authorization', 'Bearer valid')
+      expect(response.status).to.equal(200)
+      expect(response.body).to.deep.equal({ items: [], page: 2, pageSize: 8, total: 0 })
+      const globalResponse = await request(app).get('/simulation/route-scenarios?page=1').set('Authorization', 'Bearer valid').set('x-role', 'admin')
+      expect(globalResponse.status).to.equal(200)
+      expect(pages).to.deep.equal([2, 1])
+      expect((await request(app).get('/simulation/route-scenarios?page=1').set('Authorization', 'Bearer valid').set('x-inactive', 'yes')).status).to.equal(403)
+
+      const config = app.locals.simulationRouteDependencies.getConfig
+      app.locals.simulationRouteDependencies.getConfig = () => ({ enabled: false })
+      try {
+        expect((await request(app).get('/simulation/route-scenarios?page=1').set('Authorization', 'Bearer valid')).status).to.equal(503)
+      } finally { app.locals.simulationRouteDependencies.getConfig = config }
+    } finally {
+      if (previousList === undefined) delete appDependencies.routeScenarioList
+      else appDependencies.routeScenarioList = previousList
+    }
+  })
 })
