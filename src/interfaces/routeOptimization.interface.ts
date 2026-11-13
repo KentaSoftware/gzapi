@@ -292,6 +292,14 @@ export const CANDIDATE_BLOCK_REASONS = {
 
 export type CandidateBlockReason = (typeof CANDIDATE_BLOCK_REASONS)[keyof typeof CANDIDATE_BLOCK_REASONS]
 
+export const CANDIDATE_LOCATION_ISSUES = {
+  COORDINATES_MISSING: 'COORDINATES_MISSING',
+  COORDINATES_INVALID: 'COORDINATES_INVALID',
+  UNCONFIRMED: 'UNCONFIRMED'
+} as const
+
+export type CandidateLocationIssue = (typeof CANDIDATE_LOCATION_ISSUES)[keyof typeof CANDIDATE_LOCATION_ISSUES]
+
 export interface CandidateQuery {
   serviceDate: string
   deliveryZoneId: string
@@ -302,6 +310,8 @@ export interface CandidateEntry {
   clientId?: string
   displayName?: string
   addressSummary?: string
+  zoneName?: string
+  locationIssue?: CandidateLocationIssue
   latitude?: number
   longitude?: number
   distanceMeters?: number

@@ -46,7 +46,8 @@ const ClientSchema = new Schema<Client>(
     },
     deliveryZoneId: { type: Schema.Types.ObjectId, ref: 'deliveryZone' },
     isActive: { type: Boolean },
-    geocoding: { type: geocodingSchema }
+    geocoding: { type: geocodingSchema },
+    locationRevision: { type: Number, default: 0, min: 0 }
   },
   {
     timestamps: true,

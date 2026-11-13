@@ -5,9 +5,12 @@ import { JwtPayload } from 'jsonwebtoken'
 import { emitSocket } from '../socket'
 import {
   ClientNotFoundError,
+  ClientLocationConflictError,
+  ClientLocationInputError,
   confirmLocation,
   geocodeClient,
   getClient,
+  getLocationSnapshot,
   getClients,
   getClientSearch,
   getSaleClientOptions,
@@ -55,6 +58,14 @@ const uptdateItem = async ({ params, body }: Request, res: Response): Promise<vo
     })
     res.send(response)
   } catch (e) {
+    if (e instanceof ClientLocationConflictError) {
+      sendErrorEnvelope(res, 409, 'CLIENT_LOCATION_CONFLICT', e.message)
+      return
+    }
+    if (e instanceof ClientNotFoundError) {
+      sendErrorEnvelope(res, 404, 'CLIENT_NOT_FOUND', e.message)
+      return
+    }
     handleHttp(res, 'ERROR_UPDATE_CLIENT', e)
   }
 }
@@ -67,6 +78,10 @@ const postItem = async ({ body }: Request, res: Response): Promise<void> => {
     })
     res.send(response)
   } catch (e) {
+    if (e instanceof ClientLocationInputError) {
+      sendErrorEnvelope(res, 400, 'INVALID_LOCATION_INPUT', e.message)
+      return
+    }
     handleHttp(res, 'ERROR_CREATE_CLIENT', e)
   }
 }
@@ -133,6 +148,25 @@ const clientObjectId = (id: string): Types.ObjectId | undefined => {
   return new Types.ObjectId(id)
 }
 
+const getLocationSnapshotItem = async ({ params }: RequestExt, res: Response): Promise<void> => {
+  const id = clientObjectId(params.id)
+  if (id === undefined) {
+    sendErrorEnvelope(res, 400, 'INVALID_LOCATION_INPUT', 'Location input is invalid')
+    return
+  }
+  try {
+    const snapshot = await getLocationSnapshot(id)
+    res.set('Cache-Control', 'no-store')
+    res.send(snapshot)
+  } catch (error: unknown) {
+    if (error instanceof ClientNotFoundError) {
+      sendErrorEnvelope(res, 404, 'CLIENT_NOT_FOUND', 'Client was not found')
+      return
+    }
+    handleHttp(res, 'ERROR_GET_CLIENT_LOCATION', error)
+  }
+}
+
 const geocodeItem = async ({ params, body }: RequestExt, res: Response): Promise<void> => {
   const id = clientObjectId(params.id)
   const request = geocodeRequestSchema.safeParse(body)
@@ -179,8 +213,12 @@ const confirmLocationItem = async ({ params, body }: RequestExt, res: Response):
       sendErrorEnvelope(res, 404, 'CLIENT_NOT_FOUND', 'Client was not found')
       return
     }
+    if (error instanceof ClientLocationConflictError) {
+      sendErrorEnvelope(res, 409, 'CLIENT_LOCATION_CONFLICT', error.message)
+      return
+    }
     handleHttp(res, 'ERROR_CONFIRM_CLIENT_LOCATION', error)
   }
 }
 
-export { confirmLocationItem, deleteItem, geocodeItem, getItem, getItems, getSaleOptions, uptdateItem, postItem }
+export { confirmLocationItem, deleteItem, geocodeItem, getItem, getItems, getLocationSnapshotItem, getSaleOptions, uptdateItem, postItem }

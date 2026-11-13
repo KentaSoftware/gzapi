@@ -226,6 +226,7 @@ interface DemoArguments {
 interface WriteResult {
   upsertedCount: number
   modifiedCount: number
+  matchedCount?: number
 }
 
 export interface FixtureCollection {
@@ -240,6 +241,8 @@ export interface FixtureCollection {
 interface FixtureUpdate {
   $set?: Record<string, unknown>
   $setOnInsert: Record<string, unknown>
+  $unset?: Record<string, number>
+  $inc?: Record<string, number>
 }
 
 export interface DemoDatabase {
@@ -516,6 +519,33 @@ export const upsertFixture = async (
   return result.upsertedCount > 0 ? FIXTURE_OUTCOME.INSERTED : FIXTURE_OUTCOME.UPDATED
 }
 
+const upsertClientFixture = async (
+  collection: FixtureCollection, key: string, id: Types.ObjectId,
+  payload: Record<string, unknown>, now: Date
+): Promise<FixtureOutcome> => {
+  const existing = asRecord(await collection.findOne({ _id: id }))
+  if (existing === undefined) return await insertMissingFixture(collection, key, id, payload, now)
+  assertOwned(existing, key)
+  const revision = existing.locationRevision ?? 0
+  const changed = ['lat', 'lng'].some((field) => (existing[field] ?? null) !== (payload[field] ?? null))
+  const filter = {
+    _id: id,
+    fixtureNamespace: FIXTURE_NAMESPACE,
+    fixtureKey: key,
+    lat: existing.lat ?? null,
+    lng: existing.lng ?? null,
+    ...(revision === 0 ? { $or: [{ locationRevision: 0 }, { locationRevision: { $exists: false } }] } : { locationRevision: revision })
+  }
+  const { createdAt: _createdAt, ...fields } = payload
+  const result = await collection.updateOne(filter, {
+    $set: { ...fields, updatedAt: now },
+    $setOnInsert: {},
+    ...(changed ? { $unset: { geocoding: 1 }, $inc: { locationRevision: 1 } } : {})
+  }, { upsert: false })
+  if (result.matchedCount !== 1) throw new Error(`Demo client location changed concurrently for ${key}`)
+  return FIXTURE_OUTCOME.UPDATED
+}
+
 const createSummary = (): DemoSummary => ({ inserted: 0, updated: 0, collections: {} })
 
 const recordOutcome = (summary: DemoSummary, collection: string, outcome: FixtureOutcome): void => {
@@ -569,7 +599,9 @@ const seedPreparedData = async (
       const collection = database.collection(collectionName)
       recordOutcome(summary, collectionName, await (insertOnly
         ? insertMissingFixture(collection, key, id, payload, now)
-        : upsertFixture(collection, key, id, payload, now)))
+        : collectionName === 'clients'
+          ? upsertClientFixture(collection, key, id, payload, now)
+          : upsertFixture(collection, key, id, payload, now)))
     })
   }
 
@@ -725,7 +757,7 @@ export const mongoDatabase = (): DemoDatabase => {
         findOne: async (filter) => await collection.findOne(filter as Document, { session }),
         updateOne: async (filter, update, options) => {
           const result = await collection.updateOne(filter as Document, update as unknown as UpdateFilter<Document>, { ...options, session })
-          return { upsertedCount: result.upsertedCount, modifiedCount: result.modifiedCount }
+          return { upsertedCount: result.upsertedCount, modifiedCount: result.modifiedCount, matchedCount: result.matchedCount }
         }
       }
     },

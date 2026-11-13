@@ -51,10 +51,39 @@ describe('route eligibility without database access', () => {
     })
     sinon.stub(ClientModel, 'find').callsFake(() => query(clients) as never)
     sinon.stub(DeliveryZoneModel, 'findOne').callsFake(() => query({ name: 'Zone' }) as never)
+    sinon.stub(DeliveryZoneModel, 'find').callsFake(() => query([{ _id: zone, name: 'North' }]) as never)
     sinon.stub(RoutingConfigModel, 'findOne').callsFake(() => query({ depot: { name: 'Depot', latitude: 0, longitude: 0 }, provider: 'test', algorithm: 'test', revision: 1 }) as never)
     sinon.stub(ItemSaleModel, 'find').callsFake(() => query([]) as never)
   })
   afterEach(() => { sinon.restore() })
+
+  it('routes confirmed manual coordinates without an address and reports zone names for all candidates', async () => {
+    const otherClient = new Types.ObjectId()
+    sales = [sale('Creado'), sale('Creado', { idCliente: otherClient })]
+    clients = [
+      { ...clients[0], address: undefined, geocoding: { status: 'CONFIRMED', source: 'MANUAL' } },
+      { ...clients[0], _id: otherClient, lat: undefined, address: undefined }
+    ]
+    const zones = DeliveryZoneModel.find as sinon.SinonStub
+    const result = await getGlobalCandidates()
+    expect(result.eligible[0]).to.include({ zoneName: 'North', latitude: 0, longitude: 0 })
+    expect(result.blocked[0]).to.include({ zoneName: 'North', locationIssue: 'COORDINATES_MISSING' })
+    expect(zones.calledOnce).to.equal(true)
+  })
+
+  it('distinguishes missing, invalid and unconfirmed coordinates even when zone mismatch blocks first', async () => {
+    sales = [sale('Creado')]
+    const otherZone = new Types.ObjectId()
+    clients[0].deliveryZoneId = otherZone
+    for (const [lat, lng, status, issue] of [[undefined, 0, 'CONFIRMED', 'COORDINATES_MISSING'], [91, 0, 'CONFIRMED', 'COORDINATES_INVALID'], [0, 0, 'PENDING', 'UNCONFIRMED']] as const) {
+      clients[0].lat = lat
+      clients[0].lng = lng
+      clients[0].geocoding = { status }
+      const result = await getCandidates(input)
+      expect(result.blocked[0].reasons).to.deep.equal(['CLIENT_ZONE_MISMATCH'])
+      expect(result.blocked[0].locationIssue).to.equal(issue)
+    }
+  })
 
   it('processes over 1000 pending sales in bounded batches including late historical assignments and other zones', async () => {
     const otherZone = new Types.ObjectId()
