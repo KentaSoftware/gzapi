@@ -155,7 +155,7 @@ describe('demo seed safety seams', () => {
     expect(records.get('products')?.get('existing')).to.equal(existing)
   })
 
-  it('inserts valid fictional products and clients with stable references and no locations', async () => {
+  it('inserts valid fictional products and clients with supplied coordinates and stable references', async () => {
     records.clear()
     const now = new Date('2026-10-21T00:00:00.000Z')
     await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
@@ -177,22 +177,39 @@ describe('demo seed safety seams', () => {
     for (const client of clients) {
       expect(new ClientModel(client).validateSync()).to.equal(undefined)
       expect(client.isActive).to.equal(true)
-      expect(client.lat).to.equal(undefined)
-      expect(client.lng).to.equal(undefined)
       expect(client.geocoding).to.equal(undefined)
       expect(String(client.nombreCompleto)).not.to.match(/demo|mock|\bgz\b/i)
     }
     for (const zone of zones) expect(clients.filter((client) => String(client.deliveryZoneId) === String(zone._id))).to.have.length(3)
+    const expected = [
+      ['MOLLAR', [[-26.948112, -65.704691], [-26.941400, -65.714023], [-26.936928, -65.702852]]],
+      ['TAFI_DEL_VALLE', [[-26.857519, -65.698231], [-26.845241, -65.709813], [-26.848587, -65.689600]]],
+      ['SANTA_LUCIA', [[-27.098616, -65.513067], [-27.100511, -65.515926], [-27.105863, -65.517718]]],
+      ['SOLDADO_MALDONADO', [[-27.147658, -65.561876], [-27.145107, -65.567734], [-27.142619, -65.567160]]]
+    ] as const
+    for (const [code, coordinates] of expected) {
+      const zone = zones.find((entry) => entry.code === code) as Record<string, unknown>
+      const zonedClients = clients.filter((client) => String(client.deliveryZoneId) === String(zone._id))
+        .sort((a, b) => Number(String(a.fixtureKey).split(':')[1]) - Number(String(b.fixtureKey).split(':')[1]))
+      expect(zonedClients.map(({ lat, lng }) => [lat, lng])).to.deep.equal(coordinates)
+    }
     const snapshot = JSON.stringify({ products, clients })
     writes = 0
     await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
     expect(writes).to.equal(0)
     expect(JSON.stringify({ products: [...(records.get('products')?.values() ?? [])], clients: [...(records.get('clients')?.values() ?? [])] })).to.equal(snapshot)
     products[0].descripcion = 'Operator edit'
+    clients[1].lat = 1
+    clients[1].lng = 2
+    const config = [...(records.get('routingconfigs')?.values() ?? [])][0]
+    const depot = config.depot as Record<string, unknown>
+    depot.latitude = 3
     const missing = clients[0]
     records.get('clients')?.delete(String(missing._id))
     await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
     expect(products[0].descripcion).to.equal('Operator edit')
+    expect(clients[1]).to.include({ lat: 1, lng: 2 })
+    expect(depot.latitude).to.equal(3)
     expect(records.get('clients')?.get(String(missing._id))).to.deep.equal(missing)
   })
 
@@ -361,14 +378,14 @@ describe('demo seed safety seams', () => {
     }
   })
 
-  it('preserves the original Unicode depot address in the routing fixture', async () => {
+  it('uses the supplied depot coordinates without asserting an address or validation', async () => {
     records.clear()
     await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
     const config = [...(records.get('routingconfigs')?.values() ?? [])][0]
-    const depot = config.depot as { address: string, geocoding: { formattedAddress: string } }
-    const expected = 'Av. Mate de Luna 4357, San Miguel de Tucumán, Tucumán, Argentina'
-    expect(depot.address).to.equal(expected)
-    expect(depot.geocoding.formattedAddress).to.equal(expected)
+    const depot = config.depot as Record<string, unknown>
+    expect(depot).to.include({ latitude: -27.347969, longitude: -65.586886 })
+    expect(depot.address).to.equal(undefined)
+    expect(depot.geocoding).to.equal(undefined)
   })
 
   it('retains existing zone values while inserting only the new fourth fixture', async () => {

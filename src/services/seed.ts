@@ -5,11 +5,7 @@ import { createHash } from 'crypto'
 import mongoose, { Types } from 'mongoose'
 import type { Document, UpdateFilter } from 'mongodb'
 import { STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
-import {
-  GEOCODING_PRECISION,
-  GEOCODING_SOURCE,
-  GEOCODING_STATUS
-} from '../interfaces/client.interface'
+import { GEOCODING_PRECISION } from '../interfaces/client.interface'
 import {
   DEFAULT_ROUTE_ALGORITHM,
   ROUTING_CONFIG_KEYS,
@@ -155,18 +151,14 @@ const FIXTURE_OUTCOME = {
 
 type FixtureOutcome = (typeof FIXTURE_OUTCOME)[keyof typeof FIXTURE_OUTCOME]
 
-// The retained depot fixture uses the existing, fixed demo coordinates.
+// Retained for the legacy dry-run address inventory; not a claim about the depot coordinates.
 const DEMO_ADDRESS_SPECS = [{
   key: 'depot',
   name: 'Depósito',
   address: 'Av. Mate de Luna 4357, San Miguel de Tucumán, Tucumán, Argentina'
 }]
 
-const MANUAL_DEMO_COORDINATES: Record<string, { lat: number, lng: number }> = {
-  depot: { lat: -26.8193761, lng: -65.2589428 }
-}
-
-type DemoAddressKey = (typeof DEMO_ADDRESS_SPECS)[number]['key']
+const DEPOT_COORDINATES = { latitude: -27.347969, longitude: -65.586886 } as const
 
 const DEMO_ZONES = [
   { key: 'centro', code: 'MOLLAR', name: 'Mollar' },
@@ -211,6 +203,14 @@ const CLIENT_FIXTURES = [
   ['Almacén Trébol de Cobre', 'soldado-maldonado'], ['Despensa Patio del Viento', 'soldado-maldonado'], ['Kiosco Río de Papel', 'soldado-maldonado']
 ] as const
 
+// User-supplied points in the same order as the client fixtures in each stable zone.
+const CLIENT_COORDINATES = {
+  centro: [[-26.948112, -65.704691], [-26.941400, -65.714023], [-26.936928, -65.702852]],
+  oeste: [[-26.857519, -65.698231], [-26.845241, -65.709813], [-26.848587, -65.689600]],
+  sur: [[-27.098616, -65.513067], [-27.100511, -65.515926], [-27.105863, -65.517718]],
+  'soldado-maldonado': [[-27.147658, -65.561876], [-27.145107, -65.567734], [-27.142619, -65.567160]]
+} as const
+
 interface DemoTarget {
   uri: string
   database: string
@@ -251,14 +251,6 @@ interface DemoProviders {
   geocoder: (input: { address: string }) => Promise<GeocodingCandidate[]>
   matrix: (input: RouteMatrixRequest) => Promise<RouteMatrix>
   route: typeof computeRoute
-}
-
-interface GeocodedLocation extends RouteLocation {
-  key: DemoAddressKey
-  requestedAddress: string
-  formattedAddress: string
-  placeId: string
-  precision: GeocodingCandidate['precision']
 }
 
 interface DemoSummary {
@@ -559,22 +551,6 @@ export const assertDemoAdmin = async (database: DemoDatabase): Promise<void> => 
   await readAdminId(database)
 }
 
-const manualLocation = (spec: (typeof DEMO_ADDRESS_SPECS)[number]): GeocodedLocation => {
-  const coordinates = MANUAL_DEMO_COORDINATES[spec.key]
-  if (coordinates === undefined) throw new Error(`Missing manual demo coordinates for ${spec.key}`)
-  return {
-    id: spec.key,
-    key: spec.key,
-    name: spec.name,
-    latitude: coordinates.lat,
-    longitude: coordinates.lng,
-    requestedAddress: spec.address,
-    formattedAddress: spec.address,
-    placeId: `manual:${spec.key}`,
-    precision: GEOCODING_PRECISION.APPROXIMATE
-  }
-}
-
 const SEED_WRITE_CONCURRENCY = 8
 
 const seedPreparedData = async (
@@ -633,12 +609,18 @@ const seedPreparedData = async (
       }, now, adminId))
     })
   }
+  const zoneClientCounts: Record<string, number> = {}
   for (const [index, [name, zone]] of CLIENT_FIXTURES.entries()) {
     const key = `fixture-client:${index + 1}`
+    const zoneIndex = zoneClientCounts[zone] ?? 0
+    const [lat, lng] = CLIENT_COORDINATES[zone][zoneIndex]
+    zoneClientCounts[zone] = zoneIndex + 1
     write('clients', key, fixtureObjectId(key), {
       nombreCompleto: name,
       deliveryZoneId: fixtureObjectId(`zone:${zone}`),
-      isActive: true
+      isActive: true,
+      lat,
+      lng
     })
   }
 
@@ -650,23 +632,13 @@ const seedPreparedData = async (
     active: true
   })
 
-  const depot = manualLocation(DEMO_ADDRESS_SPECS[0])
   write('routingconfigs', 'routing-config:depot', fixtureObjectId('routing-config:depot'), {
     key: ROUTING_CONFIG_KEYS.DEPOSITO_1,
     enabled: true,
     revision: 1,
     depot: {
-      name: depot.name,
-      latitude: depot.latitude,
-      longitude: depot.longitude,
-      address: depot.formattedAddress,
-      geocoding: {
-        status: GEOCODING_STATUS.CONFIRMED,
-        source: GEOCODING_SOURCE.MANUAL,
-        formattedAddress: depot.formattedAddress,
-        placeId: depot.placeId,
-        precision: depot.precision
-      }
+      name: DEMO_ADDRESS_SPECS[0].name,
+      ...DEPOT_COORDINATES
     },
     fuelConsumptionLitersPer100Km: ROUTE_FUEL_CONSUMPTION,
     maxStops: ROUTE_MAX_STOPS,
