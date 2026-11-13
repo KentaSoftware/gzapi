@@ -16,7 +16,6 @@ import {
   selectableVehicleSchema
 } from '../../src/schemas/routeOptimization'
 import { routePlanOperationalSchema as routePlanOperationalMongooseSchema } from '../../src/models/routePlanOperational'
-import { runRouteDepotAddressBackfill } from '../../migrations/route-plan-003-backfill-depot-address'
 
 describe('Route dashboard contracts', () => {
   it('accepts optional depot addresses while retaining legacy depot payloads', () => {
@@ -25,29 +24,6 @@ describe('Route dashboard contracts', () => {
 
     expect(routingDepotSchema.safeParse(legacyDepot).success).to.equal(true)
     expect(routingDepotSchema.safeParse(addressedDepot).success).to.equal(true)
-  })
-
-  it('backfills only missing routing-config depot addresses and is idempotent', async () => {
-    const updates: Array<{ filter: Record<string, unknown>, update: Record<string, unknown> }> = []
-    const database = {
-      getCollection: (name: string) => {
-        expect(name).to.equal('routingconfigs')
-        return {
-          updateMany: async (filter: Record<string, unknown>, update: Record<string, unknown>) => {
-            updates.push({ filter, update })
-          }
-        }
-      }
-    }
-
-    await runRouteDepotAddressBackfill(database)
-    await runRouteDepotAddressBackfill(database)
-
-    expect(updates).to.have.length(2)
-    expect(updates[0]).to.deep.equal({
-      filter: { key: 'deposito_1', 'depot.address': { $exists: false } },
-      update: { $set: { 'depot.address': 'Depósito de prueba, San Miguel de Tucumán, Tucumán' } }
-    })
   })
 
   it('S-21: exposes the approved operational statuses and metric availability values', () => {

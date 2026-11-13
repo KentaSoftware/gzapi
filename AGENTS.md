@@ -23,10 +23,11 @@
 - Entry point is `src/server.ts` (`startServer()`): loads dotenv, connects Mongo, runs `seedDatabase()`, then starts HTTP + Socket.IO. `src/app.ts` exports `createApp()` for tests and composition: deterministic `loadRoutes()`, middleware, request logger and `public/` at `/image`, with no listener and no Mongo connection.
 - Purchase-doc uploads are async: `POST /purchaseDoc/upload` stores the file under `public/uploads/purchase-docs`, creates a draft in `PROCESSING`, kicks off Document AI + duplicate check in the background, then clients poll `GET /purchaseDoc/:draftId` and finish with `POST /purchaseDoc/:draftId/confirm`.
 - Purchase-doc analysis depends on external Document AI (`DOCUMENT_AI_URL`, default `http://localhost:8000`); upload defaults are 10 MB and `image/jpeg,image/png,image/webp,application/pdf`.
-- Catalog search/matching logic lives in `src/services/catalog.ts` and `src/services/productAlias.ts`; the batch-search indexes are a manual mongo-shell migration in `migrations/add-batch-search-indexes.js`.
+- Catalog search/matching logic lives in `src/services/catalog.ts` and `src/services/productAlias.ts`.
 
 ## Repo-specific gotchas
-- Startup seeding needs `ADMIN_PASSWORD`. The seed is idempotent: it upserts the admin role/user by `Role.name` and the business roles (Propietario, Administración, Preventista, Repartidor) with their permission grants.
+- Startup calls `seedDatabase()` for roles, admin and demo fixtures; no standalone seed or migration commands are provided. The admin password falls back to `123` when `ADMIN_PASSWORD` is unset or blank, so configure it securely. Simulation demo requests do not seed missing fixtures.
+- Independent demo fixtures cover categories, brands, providers, delivery zones, vehicle, depot and cashflow configuration. Startup does not seed demo business transactions, clients, products, route plans or inventory, does not remove existing records, and does not call route providers for fixtures.
 - Test files under `test/` are tracked and committed; `npm test` only runs `test/**/*.test.ts`.
 - `src/app.ts` exports `createApp()` and does not listen; Supertest-style tests import `createApp()` directly (see `test/phase0/`).
 - Backup routes shell out to `mongodump` / `mongorestore`; local testing needs MongoDB Database Tools plus `BACKUP_URI`, `USER`, and `PASS`.

@@ -6,56 +6,6 @@ import { getDashboard } from '../services/routeDashboard'
 import { assign, createProjection, OperationalProjectionError } from '../services/routePlanOperational'
 import { AssignmentConflictError, AssignmentSafetyError } from '../services/routeAssignment'
 import type { RouteOperationalStatus } from '../interfaces/routeOptimization.interface'
-import {
-  applyAssignmentIndex,
-  preflightAssignmentIndex,
-  ROUTE_ASSIGNMENT_INDEX_CONFIRMATION,
-  RouteAssignmentMigrationSafetyError
-} from '../services/routeAssignmentMigration'
-import type { MigrationResult } from '../../migrations/route-plan-005-assignment-index'
-
-const isExactObject = (value: unknown, key: string, expected: unknown): boolean => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  const record = value as Record<string, unknown>
-  return Object.keys(record).length === 1 && record[key] === expected
-}
-
-const sendAssignmentMigrationResult = (res: Response, result: MigrationResult): void => {
-  res.status(result.status === 'blocked' ? 409 : 200).send(result)
-}
-
-const handleAssignmentMigration = (res: Response, error: unknown): void => {
-  if (error instanceof RouteAssignmentMigrationSafetyError) {
-    sendErrorEnvelope(res, 403, 'ROUTE_ASSIGNMENT_MIGRATION_FORBIDDEN', error.message)
-    return
-  }
-  handleHttp(res, 'ERROR_ROUTE_ASSIGNMENT_INDEX_MIGRATION', error)
-}
-
-const preflightAssignmentIndexMigration = async (req: Request, res: Response): Promise<void> => {
-  if (!isExactObject(req.body, 'apply', false)) {
-    sendErrorEnvelope(res, 400, 'INVALID_ROUTE_ASSIGNMENT_MIGRATION_REQUEST', 'Preflight requires exactly { apply: false }')
-    return
-  }
-  try {
-    sendAssignmentMigrationResult(res, await preflightAssignmentIndex())
-  } catch (error) {
-    handleAssignmentMigration(res, error)
-  }
-}
-
-const applyAssignmentIndexMigration = async (req: Request, res: Response): Promise<void> => {
-  if (!isExactObject(req.body, 'confirmation', ROUTE_ASSIGNMENT_INDEX_CONFIRMATION)) {
-    sendErrorEnvelope(res, 400, 'INVALID_ROUTE_ASSIGNMENT_MIGRATION_CONFIRMATION', 'Exact local test database confirmation is required')
-    return
-  }
-  try {
-    sendAssignmentMigrationResult(res, await applyAssignmentIndex())
-  } catch (error) {
-    handleAssignmentMigration(res, error)
-  }
-}
-
 const handleAssignmentError = (res: Response, error: unknown): boolean => {
   if (error instanceof AssignmentConflictError) { sendErrorEnvelope(res, 409, 'ROUTE_SALE_ALREADY_ASSIGNED', error.message); return true }
   if (error instanceof AssignmentSafetyError) { sendErrorEnvelope(res, 503, 'ROUTE_ASSIGNMENT_UNAVAILABLE', 'Route assignment safety verification is unavailable'); return true }
@@ -285,4 +235,4 @@ const patchRoutePlanOperational = async (req: Request, res: Response): Promise<v
   }
 }
 
-export { getCandidateItems, getRouteAssignmentOptions, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById, getRouteDashboard, patchRoutePlanOperational, preflightAssignmentIndexMigration, applyAssignmentIndexMigration }
+export { getCandidateItems, getRouteAssignmentOptions, previewRoute, saveRoutePlan, getRouteConfig, patchRouteConfig, getRoutePlans, getRoutePlanById, getRouteDashboard, patchRoutePlanOperational }

@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response, Router } from 'express'
-import { applyAssignmentIndexMigration, getCandidateItems, getRouteAssignmentOptions, getRouteConfig, getRoutePlanById, getRoutePlans, getRouteDashboard, patchRouteConfig, patchRoutePlanOperational, preflightAssignmentIndexMigration, previewRoute, saveRoutePlan } from '../controllers/routePlan'
+import { getCandidateItems, getRouteAssignmentOptions, getRouteConfig, getRoutePlanById, getRoutePlans, getRouteDashboard, patchRouteConfig, patchRoutePlanOperational, previewRoute, saveRoutePlan } from '../controllers/routePlan'
 import { checkJwt } from '../middleware/session'
 import { checkPermission } from '../middleware/checkPermission'
 import { sendErrorEnvelope } from '../utils/error.handle'
@@ -31,19 +31,6 @@ const authorize = (permission: string): ((req: Request, res: Response, next: Nex
   }
 }
 
-const authorizeMigrationAdmin = (req: Request, res: Response, next: NextFunction): void => {
-  const middleware = checkPermission('route_assignment_index_migration', { currentRole: true })
-  void middleware(req, res, () => {
-    if (res.locals.authorizationRole !== 'admin') {
-      sendErrorEnvelope(res, 403, 'PERMISSION_DENIED', 'Permission is denied')
-      return
-    }
-    next()
-  })
-}
-
-router.post('/assignment-index/preflight', authenticate, authorizeMigrationAdmin, (req, res) => { void preflightAssignmentIndexMigration(req, res) })
-router.post('/assignment-index/apply', authenticate, authorizeMigrationAdmin, (req, res) => { void applyAssignmentIndexMigration(req, res) })
 router.get('/dashboard', authenticate, authorize('read_route_plan'), (req, res) => { void getRouteDashboard(req, res) })
 router.get('/candidates', authenticate, authorize('create_route_plan'), (req, res) => { void getCandidateItems(req, res) })
 router.get('/assignment-options', authenticate, authorize('create_route_plan'), (req, res) => { void getRouteAssignmentOptions(req, res) })

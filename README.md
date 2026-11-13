@@ -74,8 +74,7 @@ The application reads `MONGODB_URI`, not `DB_URI`. The main local settings are:
 | `UPLOAD_ALLOWED_MIMES` | Optional allowed upload MIME types |
 | `BACKUP_URI`, `USER`, `PASS` | Optional backup and restore configuration |
 
-The base seed creates roles and the `admin` user only. It does not create
-synthetic route-plan data.
+The startup seed also initializes the independent demo fixtures described below.
 
 ## Vercel deployment
 
@@ -89,7 +88,6 @@ initialization. Configure these required environment variables in Vercel:
 | `MONGODB_URI` | MongoDB connection URI |
 | `JWT_SECRET` | Secret used to sign JWTs |
 | `ADMIN_PASSWORD` | Password used when the seed first creates `admin` |
-| `GOOGLE_MAPS_SERVER_API_KEY` | Server key required by the demo seed for geocoding and Google Routes DRIVE validation |
 
 The optional provider and integration variables are `DOCUMENT_AI_URL`,
 `DOCUMENT_AI_TIMEOUT`, `DOCUMENT_AI_DEBUG`, `BACKUP_URI`, `USER`, and `PASS`.
@@ -118,224 +116,25 @@ npm run lint   # Run the TypeScript lint checks
 npm test       # Run the Mocha test suite
 ```
 
-## Stock migration commands
+## Demo-data seed at startup
 
-The six Stock migration commands below expose the existing TypeScript
-entrypoints without adding arguments or bypassing their safety checks. npm
-forwards operator arguments after `--`; the package scripts contain no target,
-approval, proof, or credential values.
+After base roles, simulation and admin initialization, startup inserts missing
+independent demo fixtures: seven categories, nine brands, six providers, three
+delivery zones, one vehicle, one depot routing configuration, and one cashflow
+configuration. The simulation demo is one document in `simulationdemofixtures`
+with embedded routes, catalog and scenarios.
 
-Every command requires these base arguments. Set them through the approved
-operator secret mechanism; do not commit credentials or proof contents, and
-remember that shell-expanded values can still be visible in process arguments:
+Startup does not seed demo clients, products, sales, purchases, expenses, route
+plans, their item records or product inventory fixtures. It does not delete
+previously seeded records; existing data remains in the database. No Google
+provider calls are needed to prepare the retained fixtures.
 
-```bash
-export MONGODB_URI
-export MIGRATION_ENVIRONMENT
-export STOCK_APPROVAL_ID
-```
-
-### Safe dry-run templates
-
-All six dry-run paths are non-mutating and do not connect to MongoDB. They
-produce a plan or artifact and preserve the existing argument requirements:
-
-```bash
-npm run migration:stock:preflight -- \
-  --dry-run --uri "$MONGODB_URI" \
-  --environment "$MIGRATION_ENVIRONMENT" \
-  --confirm-target "$MIGRATION_ENVIRONMENT" \
-  --approval-id "$STOCK_APPROVAL_ID"
-
-npm run migration:stock:indexes -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID"
-npm run migration:stock:opening-template -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID"
-npm run migration:stock:opening-count -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID" --input "$STOCK_OPENING_INPUT"
-npm run migration:stock:repair-projections -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID" --input "$STOCK_REPAIR_INPUT"
-npm run migration:stock:verify -- --dry-run --uri "$MONGODB_URI" --environment "$MIGRATION_ENVIRONMENT" --confirm-target "$MIGRATION_ENVIRONMENT" --approval-id "$STOCK_APPROVAL_ID"
-```
-
-Preflight, opening-template, and verification inspect or describe state; they
-do not change business data. Index creation is non-mutating only with
-`--dry-run`. Opening-count and projection-repair dry-runs only parse and plan
-their inputs.
-
-### Proof-gated apply templates
-
-Only omit `--dry-run` after the required preflight and backup evidence exists.
-The existing helper validates proof status, target fingerprint, artifact hash,
-restore verification, and backup archive hash before mutation-capable work.
-Use paths supplied by the operator environment:
-
-```bash
-npm run migration:stock:indexes -- \
-  --uri "$MONGODB_URI" \
-  --environment "$MIGRATION_ENVIRONMENT" \
-  --confirm-target "$MIGRATION_ENVIRONMENT" \
-  --approval-id "$STOCK_APPROVAL_ID" \
-  --preflight-proof "$STOCK_PREFLIGHT_PROOF" \
-  --backup-proof "$STOCK_BACKUP_PROOF"
-
-npm run migration:stock:opening-count -- \
-  --uri "$MONGODB_URI" \
-  --environment "$MIGRATION_ENVIRONMENT" \
-  --confirm-target "$MIGRATION_ENVIRONMENT" \
-  --approval-id "$STOCK_APPROVAL_ID" \
-  --input "$STOCK_OPENING_INPUT" \
-  --preflight-proof "$STOCK_PREFLIGHT_PROOF" \
-  --backup-proof "$STOCK_BACKUP_PROOF"
-
-npm run migration:stock:repair-projections -- \
-  --uri "$MONGODB_URI" \
-  --environment "$MIGRATION_ENVIRONMENT" \
-  --confirm-target "$MIGRATION_ENVIRONMENT" \
-  --approval-id "$STOCK_APPROVAL_ID" \
-  --input "$STOCK_REPAIR_INPUT" \
-  --preflight-proof "$STOCK_PREFLIGHT_PROOF" \
-  --backup-proof "$STOCK_BACKUP_PROOF"
-```
-
-The index, opening-count, and projection-repair apply commands can mutate
-database state and fail closed when either proof argument is missing or
-invalid. Live verification remains read-only, but its existing entrypoint is
-also proof-gated; use the same proof arguments when running it without
-`--dry-run`. JSON input approval metadata must match `--approval-id` (and
-`--approved-by` when supplied).
-
-## Route-plan test fixture seed
-
-`npm run seed:route-plan:test` is a separate, local-only fixture command. It
-uses the `test_route_plan` database and is intended for route-planning tests and
-demo data, not normal application startup or production databases.
-
-```bash
-npm run seed:route-plan:test
-```
-
-The fixture seed is idempotent and only accepts a local MongoDB URI at
-`localhost` or `127.0.0.1`; it rejects other databases and hosts. It creates
-synthetic route data including six delivery zones, 34 clients, 34 pending
-sales, catalog fixtures, a test vehicle, route configuration, and deterministic
-demo snapshots. It does not replace the base seed.
-
-Optional variables:
-
-```bash
-ROUTE_PLAN_SERVICE_DATE=2026-10-14 npm run seed:route-plan:test
-ROUTE_PLAN_TEST_PASSWORD=route-plan-local-password npm run seed:route-plan:test
-```
-
-## Demo-data seed: Production startup and manual CLI
-
-`vercel-build` only compiles TypeScript. On the first Production API request,
-initialization connects to MongoDB, awaits the existing roles/admin seed, then
-inspects the demo fixture inventory before constructing the application. The
-handler caches successful initialization across warm requests. Demo fixture
-repair runs wherever `seedDatabase()` runs. No activation flag is required. A missing fixture that cannot be prepared or written, a fixture
-identity conflict, or a provider validation failure prevents **all** requests,
-including login, until initialization can retry successfully. Initialization
-errors return a generic response without logging credentials.
-
-`seedDatabase()` performs demo inventory after the base roles/admin seed during
-application startup. `vercel-build` is compile-only and never connects to MongoDB.
-The manual `seed:demo` command remains available. Existing owned documents are
-not overwritten by startup or manual repair; conflicting fixture ownership
-fails closed. Inventory checks deterministic IDs and fixture ownership, not the
-contents of existing route/catalog/finance documents. Concurrent insert winners
-are checked for namespace/key ownership.
-
-Client coordinates come from a fixed table in `src/services/seed.ts`
-(read from Google Maps pins). Route distances, durations, and polylines are
-computed by Google Routes when missing fixtures require preparation; if Routes is
-unavailable, startup fails closed before serving requests.
-
-The startup service date is fixed in code at `2026-10-21`. This preserves the
-same six-month fixture IDs across cold starts without an environment variable.
-Tradeoff: the demo history becomes older over time; changing this constant
-creates additional monthly IDs and must be reviewed as a fixture migration.
-Inventory checks every deterministic ID with at most 16 simultaneous Mongo
-reads. Insert-only repair reuses that validated inventory: it skips existing
-owned records and attempts inserts only for missing keys. If another writer
-inserts a missing key first, its namespace/key must pass ownership validation;
-the repair never overwrites it. The manual command uses insert-only repair too.
-Writes use bounded concurrency (at most 8 inserts in flight), not transactions:
-a failed write can leave partial owned fixtures. After correcting the cause,
-the next startup retries the same anchor and inserts missing fixtures. The 85
-demo products also receive clearly fictional minimums, reconciled baselines,
-expiry buckets, and opening movements. Bucket totals match each fixture product's
-physical `stock`; expiry dates deliberately include expired and upcoming examples.
-These figures are demo-only, not a representation of actual inventory. Stock
-fixture ownership is independently inventoried so stock-only repairs can run even
-when the older catalog fixtures are already present; an unowned product inventory
-configuration or same-ID bucket/movement collision fails closed. No live Google
-route or Production startup has been verified by these offline tests.
-
-`seed:demo` remains a manually-run operator command. It upserts only documents owned by the
-`gzapi-demo-seed-v1` fixture namespace and never deletes unrelated data.
-
-The seed uses the fixed coordinate table for the depot and clients and validates
-every depot/client pair in both directions with Google Routes `DRIVE` routing
-before any dependent document is written. Route snapshots use the provider's returned
-distance, duration, and encoded polyline; the seed fails closed if a provider
-result is missing or not routable.
-
-The planned fixture contains 20 clients across three zones, one pending route
-sale per client, three route snapshots, 85 products, nine brands, seven
-categories, six providers, and six calendar months ending at the service-date
-month with 21 paid sales, seven paid purchases, and 11 dated expenses per month.
-No finance event is dated after the service-date anchor. Automatic startup uses the fixed `2026-10-21` anchor; manual runs default to
-today's UTC calendar date and accept `DEMO_SERVICE_DATE=YYYY-MM-DD` to reproduce
-an exact run. Existing fixture IDs and keys remain stable for overlapping months.
-Monthly reruns never delete older months: finance records accumulate beyond six
-months, so review dashboard date filters accordingly. Candidate addresses are
-listed publicly at https://www.cgcetucuman.org.ar/sucursales-rapipago/ ;
-their continued existence, Google geocoding precision and DRIVE connectivity
-are **not** verified by `--dry-run`. Review provider results before authorizing
-a real run: any unresolvable address blocks all writes.
-
-When fixtures are missing, automatic startup requires `GOOGLE_MAPS_SERVER_API_KEY`;
-manual runs require `MONGODB_URI` and `GOOGLE_MAPS_SERVER_API_KEY`. The base startup seed must already have created
-the `admin` user, which is used only as the fixture actor. `DEMO_SERVICE_DATE`
-is optional and accepts a real `YYYY-MM-DD` service date.
-
-Writes are sequential, **not atomic**. Provider checks finish before the first
-write, but a database write failure can leave an incomplete owned fixture. To
-recover, correct the failing condition and rerun against the same target with
-the exact same `DEMO_SERVICE_DATE` (set it explicitly before the first real
-run). Insert-only repair fills missing owned records without updating existing
-ones or matching unrelated records. Inspect the failure and
-owned fixture before rerunning; do not assume rollback. If the first run used
-the default date, supply that original UTC date explicitly on the rerun.
-
-Run the dry run first; it does not connect to MongoDB or call external
-providers:
-
-```bash
-npm run seed:demo -- --dry-run
-```
-
-Dry-run reports candidate addresses only; it does not prove geocoding
-precision, street-number equality, or DRIVE connectivity.
-
-For Vercel production variables, use the exact operator pattern below. The
-production dry run also requires explicit remote-target confirmation because
-the target guard runs before the dry-run decision. The second command performs
-the actual writes:
-
-```bash
-vercel env run -e production -- npm run seed:demo -- --dry-run --confirm-remote
-vercel env run -e production -- npm run seed:demo -- --confirm-remote
-```
-
-Do not place MongoDB URIs, Google keys, or other credentials in scripts,
-arguments, logs, documentation, or commits. This command is a one-off operator action that uses the same insert-only repair
-as automatic application startup.
-
-Fixture credentials:
-
-```text
-nickname: route-plan-test
-password: route-plan-test-password
-```
+Inventory checks deterministic IDs and ownership before insert-only repair;
+existing owned records are not overwritten, and identity collisions fail closed.
+Reads and writes are bounded to 16 and eight concurrent operations respectively.
+Writes are not transactional, so a failed initialization may leave partial fixtures
+and a subsequent startup can retry. Vercel returns a generic initialization error
+and retries on a later request. Simulation demo requests do not seed fixtures.
 
 ## Project information
 

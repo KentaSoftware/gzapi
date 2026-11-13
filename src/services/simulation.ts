@@ -127,7 +127,7 @@ const DEMO_PRODUCTS: readonly SimulationDemoProduct[] = [
   { id: 'agua-500', name: 'Agua 500 ml', stock: 120, unitPrice: 1200 },
   { id: 'gaseosa-15', name: 'Gaseosa 1.5 L', stock: 90, unitPrice: 2500 },
   { id: 'jugo-1', name: 'Jugo 1 L', stock: 75, unitPrice: 1800 },
-  { id: 'snacks', name: 'Snacks', stock: 60, unitPrice: 1000 },
+  { id: 'snacks', name: 'Aperitivos', stock: 60, unitPrice: 1000 },
   { id: 'panificados', name: 'Panificados', stock: 40, unitPrice: 1500 }
 ]
 
@@ -173,12 +173,8 @@ const demoPage = <T>(items: readonly T[], page: number, pageSize: number): { ite
 }
 
 const ensureDemoFixtures = async (repository: SimulationDemoRepository): Promise<NonNullable<Awaited<ReturnType<SimulationDemoRepository['read']>>>> => {
-  let fixtures = await repository.read()
-  if (fixtures === null) {
-    await seedSimulationDemoFixtures(repository)
-    fixtures = await repository.read()
-  }
-  if (fixtures === null) throw new Error('Simulation demo fixtures could not be initialized')
+  const fixtures = await repository.read()
+  if (fixtures === null) throw new Error('Simulation demo fixtures have not been seeded')
   return fixtures
 }
 
