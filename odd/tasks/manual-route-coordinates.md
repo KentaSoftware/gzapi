@@ -20,3 +20,5 @@ Branches `feat/manual-route-coordinates` start at API `a4de3a4` and Web `43bd6e9
 Independent verification led to fixes for compatibility, stale snapshots, authorization fixtures and seed revision handling. MongoDB server semantics and real cross-repository interaction remain unverified. Previously verified compatibility retains legacy last-write-wins semantics; old deployments or unversioned direct writers bypass revision protections. Deploy API before Web after draining older API instances.
 
 Both clients still need confirmation by the authenticated actor after verifying the updated running API target and UI. No client records or sales were modified. Receipt-driven development is disabled; risk assessments were unavailable and treated as high; independent verification and focused checks were run. No external routing, push or PR was performed.
+
+Work-unit commits: API `6b06d38`; Web `194750c`. Parent reran the focused suites: API 80 passing; Web 55 passing. Next: establish the running API database identity and use an authenticated actor to confirm the two locations; do not invent audit identity.
