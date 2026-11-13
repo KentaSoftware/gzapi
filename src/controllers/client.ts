@@ -11,6 +11,7 @@ import {
   getClients,
   getClientSearch,
   getSaleClientOptions,
+  getSaleClientOptionsPage,
   insertClient,
   updateClient
 } from '../services/client'
@@ -84,6 +85,38 @@ const getSaleOptions = async (req: Request, res: Response): Promise<void> => {
     return
   }
   const query = (input ?? '').trim()
+  const { paged, limit, cursor } = req.query
+  if ((paged !== undefined && paged !== 'true') || (cursor !== undefined && paged !== 'true')) {
+    sendErrorEnvelope(res, 400, 'INVALID_CLIENT_PAGING', 'Client paging parameters are invalid')
+    return
+  }
+  if (paged === 'true') {
+    if ((limit !== undefined && (typeof limit !== 'string' || !/^[1-9]\d*$/.test(limit) || Number(limit) > 100)) ||
+      (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor)))) {
+      sendErrorEnvelope(res, 400, 'INVALID_CLIENT_PAGING', 'Client paging parameters are invalid')
+      return
+    }
+    let decoded: { id: string, query: string } | undefined
+    if (typeof cursor === 'string') {
+      try {
+        const bytes = Buffer.from(cursor, 'base64url')
+        const value: unknown = JSON.parse(bytes.toString('utf8'))
+        if (bytes.toString('base64url') !== cursor || typeof value !== 'object' || value === null || Array.isArray(value) ||
+          !('id' in value) || typeof value.id !== 'string' || !/^[a-f0-9]{24}$/.test(value.id) ||
+          !('query' in value) || value.query !== query || Object.keys(value).length !== 2) throw new Error('Invalid cursor')
+        decoded = { id: value.id, query }
+      } catch {
+        sendErrorEnvelope(res, 400, 'INVALID_CLIENT_PAGING', 'Client paging parameters are invalid')
+        return
+      }
+    }
+    try {
+      res.send(await getSaleClientOptionsPage(query, limit === undefined ? 20 : Number(limit), decoded))
+    } catch {
+      sendErrorEnvelope(res, 500, 'CLIENT_SEARCH_UNAVAILABLE', 'Client search is unavailable')
+    }
+    return
+  }
   if (query.length < 2) {
     res.send({ clients: [] })
     return

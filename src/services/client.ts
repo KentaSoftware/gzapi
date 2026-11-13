@@ -74,6 +74,36 @@ const getSaleClientOptions = async (input: string): Promise<Array<{ id: string, 
   }))
 }
 
+interface SaleClientCursor {
+  id: string
+  query: string
+}
+
+const getSaleClientOptionsPage = async (input: string, limit: number, cursor?: SaleClientCursor): Promise<{ clients: Array<{ id: string, name: string, address?: string }>, nextCursor: string | null }> => {
+  const literal = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const clients = await ClientModel.find(
+    {
+      isActive: true,
+      ...(input === '' ? {} : { nombreCompleto: new RegExp(`^${literal}`, 'i') }),
+      ...(cursor === undefined ? {} : { _id: { $gt: new Types.ObjectId(cursor.id) } })
+    },
+    { _id: 1, nombreCompleto: 1, address: 1 }
+  ).sort({ _id: 1 }).limit(limit + 1).maxTimeMS(5000).lean()
+  const page = clients.slice(0, limit)
+  const last = page[page.length - 1]
+  const nextCursor = clients.length > limit
+    ? Buffer.from(JSON.stringify({ id: String(last._id), query: input })).toString('base64url')
+    : null
+  return {
+    clients: page.map((client) => ({
+      id: String(client._id),
+      name: typeof client.nombreCompleto === 'string' && client.nombreCompleto.trim() !== '' ? client.nombreCompleto : 'Sin nombre',
+      ...(typeof client.address === 'string' ? { address: client.address } : {})
+    })),
+    nextCursor
+  }
+}
+
 const getClient = async (id: Types.ObjectId): Promise<any> => {
   const response = await ClientModel.aggregate([
     { $match: { _id: { $eq: id } } },
@@ -150,6 +180,7 @@ export {
   getClient,
   getClients,
   getSaleClientOptions,
+  getSaleClientOptionsPage,
   insertClient,
   updateClient,
   getClientSearch
