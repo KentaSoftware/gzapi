@@ -51,4 +51,5 @@ export interface Client {
   deliveryZoneId?: Types.ObjectId
   isActive?: boolean
   geocoding?: ClientGeocoding
+  locationRevision?: number
 }

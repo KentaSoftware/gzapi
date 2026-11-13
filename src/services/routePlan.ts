@@ -5,6 +5,7 @@ import { Client, GEOCODING_STATUS } from '../interfaces/client.interface'
 import type { Sale } from '../interfaces/sale.interface'
 import {
   CANDIDATE_BLOCK_REASONS,
+  CANDIDATE_LOCATION_ISSUES,
   DEFAULT_ROUTE_ALGORITHM,
   ROUTE_METRIC_AVAILABILITY,
   ROUTING_CONFIG_KEYS,
@@ -12,6 +13,7 @@ import {
   type CandidateEntry,
   type CandidateQuery,
   type CandidateResult,
+  type CandidateLocationIssue,
   type RouteLocation,
   type RoutePreviewDepot,
   type RoutePlan,
@@ -109,21 +111,32 @@ const serviceDateRange = (serviceDate: string): { start: Date, end: Date } => {
   }
 }
 
-const candidateEntry = (saleId: unknown, client: Client): CandidateEntry => ({
+const locationIssue = (client: Client): CandidateLocationIssue | undefined => {
+  if (client.lat == null || client.lng == null) return CANDIDATE_LOCATION_ISSUES.COORDINATES_MISSING
+  if (!hasValidCoordinates(client.lat, client.lng)) return CANDIDATE_LOCATION_ISSUES.COORDINATES_INVALID
+  if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) return CANDIDATE_LOCATION_ISSUES.UNCONFIRMED
+  return undefined
+}
+
+const candidateEntry = (saleId: unknown, client: Client, zoneName?: string): CandidateEntry => ({
   saleId: String(saleId),
   clientId: String(client._id),
   displayName: client.nombreCompleto,
   addressSummary: client.address,
+  ...(zoneName === undefined ? {} : { zoneName }),
+  ...(locationIssue(client) === undefined ? {} : { locationIssue: locationIssue(client) }),
   ...(Number.isFinite(client.lat) ? { latitude: client.lat } : {}),
   ...(Number.isFinite(client.lng) ? { longitude: client.lng } : {})
 })
 
-const blockedCandidate = (saleId: unknown, reason: BlockedCandidateEntry['reasons'][number], client?: Client): BlockedCandidateEntry => {
+const blockedCandidate = (saleId: unknown, reason: BlockedCandidateEntry['reasons'][number], client?: Client, zoneName?: string): BlockedCandidateEntry => {
   const result: BlockedCandidateEntry = { saleId: String(saleId), reasons: [reason] }
   if (client !== undefined) {
     result.clientId = String(client._id)
     result.displayName = client.nombreCompleto
     result.addressSummary = client.address
+    if (zoneName !== undefined) result.zoneName = zoneName
+    result.locationIssue = locationIssue(client)
     if (Number.isFinite(client.lat)) result.latitude = client.lat
     if (Number.isFinite(client.lng)) result.longitude = client.lng
   }
@@ -148,14 +161,18 @@ const queryCandidateBatches = async (deliveryZoneId?: string): Promise<Candidate
     const clientIds = [...new Set(unassigned.map(({ sale }) => sale.idCliente === undefined ? undefined : String(sale.idCliente)).filter((id): id is string => id !== undefined && Types.ObjectId.isValid(id)))].map((id) => new Types.ObjectId(id))
     const clients = clientIds.length === 0 ? [] : await ClientModel.find({ _id: { $in: clientIds } }).lean()
     const clientsById = new Map(clients.map((client) => [String(client._id), client]))
+    const zoneIds = [...new Set(clients.map((client) => client.deliveryZoneId == null ? '' : String(client.deliveryZoneId)).filter((id) => Types.ObjectId.isValid(id)))].map((id) => new Types.ObjectId(id))
+    const zones = zoneIds.length === 0 ? [] : await DeliveryZoneModel.find({ _id: { $in: zoneIds } }).lean()
+    const zonesById = new Map(zones.map((zone) => [String(zone._id), zone.name]))
     for (const { sale } of unassigned) {
       const client = sale.idCliente === undefined ? undefined : clientsById.get(String(sale.idCliente))
+      const zoneName = client?.deliveryZoneId === undefined ? undefined : zonesById.get(String(client.deliveryZoneId))
       if (client === undefined) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.INVALID_CLIENT_REFERENCE))
-      else if (client.isActive !== true) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_INACTIVE, client))
-      else if (requestedZoneId !== undefined && (client.deliveryZoneId === undefined || !requestedZoneId.equals(client.deliveryZoneId))) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_ZONE_MISMATCH, client))
-      else if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client))
-      else if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_UNCONFIRMED, client))
-      else eligible.push(candidateEntry(sale._id, client))
+      else if (client.isActive !== true) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_INACTIVE, client, zoneName))
+      else if (requestedZoneId !== undefined && (client.deliveryZoneId === undefined || !requestedZoneId.equals(client.deliveryZoneId))) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_ZONE_MISMATCH, client, zoneName))
+      else if (!hasValidCoordinates(client.lat, client.lng)) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_MISSING, client, zoneName))
+      else if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) blocked.push(blockedCandidate(sale._id, CANDIDATE_BLOCK_REASONS.CLIENT_LOCATION_UNCONFIRMED, client, zoneName))
+      else eligible.push(candidateEntry(sale._id, client, zoneName))
     }
   }
   const cursor = SaleModel.find({ 'delivery.status': 'PENDING', estado: { $not: CANCELLED_SALE_PATTERN } }, { _id: 1, idCliente: 1 }).sort({ _id: 1 }).lean().cursor({ batchSize: CANDIDATE_BATCH_SIZE })
@@ -271,7 +288,7 @@ const updateRoutingConfig = async (input: RoutingConfigUpdateInput, updatedBy: s
 
 const previewErrorForClient = (client: Client | undefined): RoutePreviewError | undefined => {
   if (client === undefined || client.isActive !== true) return new RoutePreviewError('NO_ELIGIBLE_ORDERS', 'Selected sales are not eligible for route planning')
-  if (client.address === undefined || client.address.trim() === '' || !hasValidCoordinates(client.lat, client.lng)) return new RoutePreviewError('CLIENT_LOCATION_MISSING', 'A selected client is missing a confirmed location')
+  if (!hasValidCoordinates(client.lat, client.lng)) return new RoutePreviewError('CLIENT_LOCATION_MISSING', 'A selected client is missing a confirmed location')
   if (client.geocoding?.status !== GEOCODING_STATUS.CONFIRMED) return new RoutePreviewError('CLIENT_LOCATION_AMBIGUOUS', 'A selected client location is not confirmed')
   return undefined
 }

@@ -98,6 +98,16 @@ describe('route receipt service without database access', () => {
   })
   afterEach(() => sinon.restore())
 
+  it('previews and saves confirmed manual coordinates without a street address', async () => {
+    const originalAddress = client.address
+    try {
+      client.address = ''
+      const reviewed = await preview(input, { actor: 'actor' })
+      expect(reviewed.route.stops[0]).to.include({ latitude: 1, longitude: 2 })
+      expect((await saveSnapshot({ receipt: reviewed.receipt as string }, 'actor')).stops).to.have.length(1)
+    } finally { client.address = originalAddress }
+  })
+
   it('accepts an undated pending sale and reserves it on both save paths', async () => {
     const previous = sale.delivery.serviceDate
     try {

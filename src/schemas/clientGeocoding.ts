@@ -39,9 +39,17 @@ const manualReferenceSchema = z.object({
   }
 })
 
+const expectedLocationSchema = z.object({
+  address: z.string().nullable(),
+  lat: z.number().finite().nullable(),
+  lng: z.number().finite().nullable(),
+  locationRevision: z.number().int().nonnegative().safe()
+}).strict()
+
 const clientLocationConfirmationSchema = z.union([
-  z.object({ candidate: geocodingCandidateSchema }).strict(),
-  z.object({ manualReference: manualReferenceSchema }).strict()
+  z.object({ candidate: geocodingCandidateSchema, expectedLocation: expectedLocationSchema.optional() }).strict(),
+  z.object({ manualConfirmation: z.object({ lat: latitudeSchema, lng: longitudeSchema }).strict(), expectedLocation: expectedLocationSchema }).strict(),
+  z.object({ manualReference: manualReferenceSchema, expectedLocation: expectedLocationSchema.optional() }).strict()
 ])
 
 const clientGeocodingSchema = z.object({
@@ -72,6 +80,7 @@ const clientGeocodingSchema = z.object({
 export {
   clientGeocodingSchema,
   clientLocationConfirmationSchema,
+  expectedLocationSchema,
   geocodeRequestSchema,
   geocodingCandidateSchema,
   latitudeSchema,

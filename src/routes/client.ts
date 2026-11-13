@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response, Router } from 'express'
-import { confirmLocationItem, geocodeItem, getItem, getItems, getSaleOptions, postItem, uptdateItem } from '../controllers/client'
+import { confirmLocationItem, geocodeItem, getItem, getItems, getLocationSnapshotItem, getSaleOptions, postItem, uptdateItem } from '../controllers/client'
 import { checkJwt } from '../middleware/session'
 import { checkPermission } from '../middleware/checkPermission'
 
@@ -20,6 +20,7 @@ router.get('/sale-options', authenticate, (req, res, next) => { void checkPermis
 router.get('/:id', authenticate, (req, res, next) => { void checkPermission('read_client')(req, res, next) }, (req, res) => { void getItem(req, res) })
 router.post('/', authenticate, (req, res, next) => { void checkPermission('create_client')(req, res, next) }, (req, res) => { void postItem(req, res) })
 router.post('/:id/geocode', authenticate, (req, res, next) => { void checkPermission('confirm_client_location')(req, res, next) }, (req, res) => { void geocodeItem(req, res) })
+router.get('/:id/location-snapshot', authenticate, (req, res, next) => { void checkPermission('confirm_client_location')(req, res, next) }, (req, res) => { void getLocationSnapshotItem(req, res) })
 router.post('/:id/location-confirmation', authenticate, (req, res, next) => { void checkPermission('confirm_client_location')(req, res, next) }, (req, res) => { void confirmLocationItem(req, res) })
 router.patch('/:id', authenticate, (req, res, next) => { void checkPermission('update_client')(req, res, next) }, (req, res) => { void uptdateItem(req, res) })
 

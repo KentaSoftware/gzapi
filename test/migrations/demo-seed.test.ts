@@ -63,17 +63,27 @@ describe('demo seed safety seams', () => {
         : filter.productId !== undefined
           ? [...(records.get(name)?.values() ?? [])].find((record) => String(record.productId) === String(filter.productId)) ?? null
           : records.get(name)?.get(String(filter._id)) ?? null,
-      updateOne: async (filter, update) => {
+      updateOne: async (filter, update, options) => {
         writes += 1
         const collection = records.get(name) ?? new Map<string, Record<string, unknown>>()
         records.set(name, collection)
         const id = String(filter._id)
         const existing = collection.get(id)
+        if (!options.upsert) {
+          const revision = existing?.locationRevision
+          const matches = existing !== undefined && existing.fixtureNamespace === filter.fixtureNamespace && existing.fixtureKey === filter.fixtureKey &&
+            (existing.lat ?? null) === filter.lat && (existing.lng ?? null) === filter.lng &&
+            (filter.$or !== undefined ? revision === undefined || revision === 0 : revision === filter.locationRevision)
+          if (!matches) return { upsertedCount: 0, modifiedCount: 0, matchedCount: 0 }
+        }
         if (existing !== undefined && update.$set !== undefined && (existing.fixtureNamespace !== filter.fixtureNamespace || existing.fixtureKey !== filter.fixtureKey)) {
           throw new Error('Cannot update an unowned fixture')
         }
-        collection.set(id, { ...existing, ...(existing === undefined ? update.$setOnInsert : {}), ...(update.$set ?? {}) })
-        return { upsertedCount: existing === undefined ? 1 : 0, modifiedCount: existing === undefined ? 0 : 1 }
+        const next = { ...existing, ...(existing === undefined ? update.$setOnInsert : {}), ...(update.$set ?? {}) }
+        for (const [field, value] of Object.entries(update.$inc ?? {})) next[field] = Number(next[field] ?? 0) + value
+        for (const field of Object.keys(update.$unset ?? {})) Reflect.deleteProperty(next, field)
+        collection.set(id, next)
+        return { upsertedCount: existing === undefined ? 1 : 0, modifiedCount: existing === undefined ? 0 : 1, matchedCount: existing === undefined ? 0 : 1 }
       }
     }),
     withTransaction: async (work) => {
@@ -211,6 +221,65 @@ describe('demo seed safety seams', () => {
     expect(clients[1]).to.include({ lat: 1, lng: 2 })
     expect(depot.latitude).to.equal(3)
     expect(records.get('clients')?.get(String(missing._id))).to.deep.equal(missing)
+  })
+
+  it('invalidates confirmed client locations only when a non-insert-only seed changes coordinates', async () => {
+    records.clear()
+    const now = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
+    const clients = [...(records.get('clients')?.values() ?? [])]
+    const changedId = String(clients[0]._id)
+    const unchangedId = String(clients[1]._id)
+    const legacyId = String(clients[2]._id)
+    const metadata = { status: 'CONFIRMED', source: 'MANUAL' }
+    clients[0].lat = 1
+    clients[0].geocoding = metadata
+    clients[0].locationRevision = 4
+    clients[1].geocoding = metadata
+    clients[1].locationRevision = 7
+    clients[2].lat = 2
+    clients[2].geocoding = metadata
+    await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
+    expect(records.get('clients')?.get(changedId)).to.include({ lat: 1, locationRevision: 4, geocoding: metadata })
+    await runDemoSeed({ target, dryRun: false, database, now, insertOnly: false })
+    expect(records.get('clients')?.get(changedId)).to.include({ lat: -26.948112, locationRevision: 5 })
+    expect(records.get('clients')?.get(changedId)?.geocoding).to.equal(undefined)
+    expect(records.get('clients')?.get(unchangedId)).to.include({ locationRevision: 7, geocoding: metadata })
+    expect(records.get('clients')?.get(legacyId)?.locationRevision).to.equal(1)
+    expect(records.get('clients')?.get(legacyId)?.geocoding).to.equal(undefined)
+    await runDemoSeed({ target, dryRun: false, database, now, insertOnly: false })
+    expect(records.get('clients')?.get(changedId)?.locationRevision).to.equal(5)
+    expect(records.get('clients')?.get(unchangedId)?.geocoding).to.equal(metadata)
+    expect(records.get('clients')?.get(legacyId)?.locationRevision).to.equal(1)
+  })
+
+  it('fails closed if a client is confirmed between the seed read and update', async () => {
+    records.clear()
+    await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+    const client = [...(records.get('clients')?.values() ?? [])][0]
+    client.lat = 1
+    const racing: DemoDatabase = {
+      withTransaction: database.withTransaction,
+      collection: (name) => {
+        const collection = database.collection(name)
+        return {
+          findOne: collection.findOne,
+          updateOne: async (filter, update, options) => {
+            if (name === 'clients' && String(filter._id) === String(client._id) && !options.upsert) {
+              client.locationRevision = 1
+              client.geocoding = { status: 'CONFIRMED', source: 'MANUAL' }
+            }
+            return await collection.updateOne(filter, update, options)
+          }
+        }
+      }
+    }
+    try {
+      await runDemoSeed({ target, dryRun: false, database: racing, insertOnly: false })
+      expect.fail('Expected concurrent change rejection')
+    } catch (error) { expect((error as Error).message).to.contain('location changed concurrently') }
+    expect(client).to.include({ lat: 1, locationRevision: 1 })
+    expect(client.geocoding).to.deep.equal({ status: 'CONFIRMED', source: 'MANUAL' })
   })
 
   it('creates consistent seeded stock with business-day expiry and actual availability rules', async () => {
