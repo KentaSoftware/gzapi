@@ -209,6 +209,18 @@ const simulationBaseScenarioInputSchema = z.object({
   routeId: objectIdSchema
 }).strict()
 
+const realRouteScenarioInputSchema = z.object({
+  routeId: objectIdSchema,
+  parameters: z.object({
+    fuelPricePerLiter: nonNegativeNumberSchema,
+    hourlyRate: nonNegativeNumberSchema,
+    generalCosts: nonNegativeNumberSchema,
+    includeSurplus: z.boolean()
+  }).strict(),
+  products: z.array(z.object({ id: objectIdSchema, quantity: nonNegativeNumberSchema.int().refine(Number.isSafeInteger, 'value must be a safe integer') }).strict()).max(10000)
+    .refine((products) => hasUniqueValues(products.map((product) => product.id.toLowerCase())))
+}).strict()
+
 const simulationSaveRunInputSchema = z.object({
   token: tokenSchema,
   variant: simulationVariantInputSchema
@@ -310,6 +322,7 @@ const simulationVariantCalculationResultSchema = z.discriminatedUnion('dataQuali
 ])
 
 export {
+  realRouteScenarioInputSchema,
   objectIdSchema,
   measureSchema,
   routeStopSchema,

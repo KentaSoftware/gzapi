@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { calculateDemoSimulation } from './simulationCalculation'
 
 import {
   SIMULATION_DATA_QUALITY,
@@ -225,8 +226,7 @@ const simulateDemoScenario = async (input: SimulationDemoRunInput, now = new Dat
   const fixtures = await ensureDemoFixtures(repository)
   const route = fixtures.routes.find((entry) => entry.id === input.routeId)
   if (route === undefined) throw new SimulationServiceError(SIMULATION_ERROR_CODES.INPUT_INVALID, 'Unknown route', 'routeId')
-  const estimatedRevenue = input.products.reduce((total, product) => total + product.unitPrice * product.quantity, 0)
-  const operatingCost = Math.round(route.fuelLiters * input.parameters.fuelPricePerLiter + route.durationHours * input.parameters.hourlyRate + input.parameters.generalCosts)
+  const calculation = calculateDemoSimulation(route, input.products, input.parameters)
   const nextId = await repository.allocateScenarioNumber()
   const result: SimulationDemoScenario = {
     id: `ESC-${String(nextId).padStart(3, '0')}`,
@@ -235,9 +235,7 @@ const simulateDemoScenario = async (input: SimulationDemoRunInput, now = new Dat
     zone: route.zone,
     driver: route.driver,
     vehicle: route.vehicle,
-    estimatedRevenue: Math.round(estimatedRevenue),
-    operatingCost,
-    grossMargin: Math.round(estimatedRevenue - operatingCost)
+    ...calculation
   }
   const detail: SimulationDemoScenarioDetail = {
     ...result,

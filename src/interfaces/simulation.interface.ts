@@ -209,6 +209,45 @@ export interface SimulationBaseScenarioInput {
   routeId: string
 }
 
+export interface RealRouteScenarioSnapshot {
+  date?: Date
+  zone?: string
+  saleIds?: string[]
+  orderCount?: number
+  distanceKm?: number
+  fuelLiters?: number
+  durationHours?: number
+  driverId?: string
+  driver?: string
+  vehicleId?: string
+  vehicle?: string
+}
+
+export interface RealRouteScenarioSummary {
+  id: string
+  date?: string
+  routeId: string
+  zone?: string
+  driverId?: string
+  driver?: string
+  vehicleId?: string
+  vehicle?: string
+  orderCount?: number
+  fuelLiters?: number
+  distanceKm?: number
+  durationHours?: number
+  estimatedRevenue: number
+  operatingCost: number
+  grossMargin: number
+}
+
+export interface RealRouteScenarioHistoryPage {
+  items: RealRouteScenarioSummary[]
+  page: number
+  pageSize: number
+  total: number
+}
+
 export interface SimulationBaseScenarioCompleteResult {
   dataQuality: typeof SIMULATION_DATA_QUALITY.COMPLETE
   token: string
