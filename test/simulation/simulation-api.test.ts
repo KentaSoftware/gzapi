@@ -127,6 +127,12 @@ describe('Simulation API', () => {
     app = await createApp()
   })
 
+  let defaultDemoRepository: ReturnType<typeof createInMemorySimulationDemoRepository>
+  beforeEach(async () => {
+    defaultDemoRepository = createInMemorySimulationDemoRepository()
+    await seedSimulationDemoFixtures(defaultDemoRepository)
+  })
+
   afterEach(() => {
     sinon.restore()
   })
@@ -142,7 +148,7 @@ describe('Simulation API', () => {
       checkPermission,
       getConfig: options.getConfig ?? (() => simulationConfig(options.enabled ?? true)),
       service: serviceDependencies(options.service),
-      demoRepository: options.demoRepository ?? createInMemorySimulationDemoRepository()
+      demoRepository: options.demoRepository ?? defaultDemoRepository
     }
   }
 
@@ -523,7 +529,7 @@ describe('Simulation API', () => {
         products: [{ id: 'agua-500', quantity: 10 }, { id: 'snacks', quantity: 4 }]
       }
       const created = await post('/simulation/demo/scenarios', input)
-      const detail = await request(app).get(`/simulation/demo/scenarios/${created.body.id}`).set('Authorization', AUTH_HEADER)
+      const detail = await request(app).get(`/simulation/demo/scenarios/${String(created.body.id)}`).set('Authorization', AUTH_HEADER)
       const history = await request(app).get('/simulation/demo/scenarios?page=1').set('Authorization', AUTH_HEADER)
 
       expect(created.status).to.equal(201)
@@ -537,6 +543,7 @@ describe('Simulation API', () => {
     it('logs unexpected scenario repository failures with only safe correlation fields', async () => {
       const secretErrorMessage = 'repository failure with sensitive details'
       const demoRepository = createInMemorySimulationDemoRepository()
+      await seedSimulationDemoFixtures(demoRepository)
       sinon.stub(demoRepository, 'addScenario').rejects(new Error(secretErrorMessage))
       configure({ demoRepository })
       const log = sinon.stub(console, 'log')
@@ -569,7 +576,10 @@ describe('Simulation API', () => {
         },
         allocateScenarioNumber: async () => {
           if (document === null) throw new Error('test fixtures are not seeded')
-          const highest = document.scenarios.reduce((number, scenario) => Math.max(number, Number.parseInt(scenario.id.slice(4), 10) || 0), 0)
+          const highest = document.scenarios.reduce((number, scenario) => {
+            const parsed = Number.parseInt(scenario.id.slice(4), 10)
+            return Math.max(number, Number.isNaN(parsed) ? 0 : parsed)
+          }, 0)
           document.nextScenarioNumber = Math.max(document.nextScenarioNumber, highest + 1) + 1
           return document.nextScenarioNumber - 1
         },
@@ -595,7 +605,7 @@ describe('Simulation API', () => {
       ]
 
       const created = await Promise.all(inputs.map(async (input) => await post('/simulation/demo/scenarios', input)))
-      const ids = created.map((response) => response.body.id)
+      const ids = created.map((response) => String(response.body.id))
       const details = await Promise.all(ids.map(async (id) => await request(app)
         .get(`/simulation/demo/scenarios/${id}`)
         .set('Authorization', AUTH_HEADER)))

@@ -14,6 +14,15 @@ import { GEOCODING_PRECISION } from '../../src/interfaces/client.interface'
 import type { DemoDatabase, FixtureCollection } from '../../src/services/seed'
 import type { RouteLocation } from '../../src/interfaces/routeOptimization.interface'
 import { Types } from 'mongoose'
+import { readFileSync } from 'fs'
+import { join } from 'path'
+import { router as routePlanRouter } from '../../src/routes/routePlan'
+import ProductModel from '../../src/models/product'
+import ClientModel from '../../src/models/client'
+import InventoryMovementModel from '../../src/models/inventoryMovement'
+import { calculateAvailability } from '../../src/services/stockRules'
+import { STOCK_TIME_ZONE } from '../../src/config/stock'
+import { BASELINE_STATUS, EXPIRY_TRACKING } from '../../src/interfaces/stock.interface'
 
 const candidate = {
   formattedAddress: '25 de Mayo 90, San Miguel de Tucumán, Tucumán, Argentina',
@@ -29,14 +38,31 @@ const locations: RouteLocation[] = [
 ]
 
 describe('demo seed safety seams', () => {
+  it('keeps the build compile-only and exposes no standalone seed or migration scripts', () => {
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as { scripts: Record<string, string> }
+    expect(packageJson.scripts['vercel-build']).to.equal('npm run build')
+    expect(Object.keys(packageJson.scripts).filter((name) => name.startsWith('migration:') || name.startsWith('seed:'))).to.deep.equal([])
+    expect(readFileSync(join(process.cwd(), 'src/services/seed.ts'), 'utf8')).not.to.contain('require.main === module')
+  })
+
+  it('retains route planning routes without migration endpoints', () => {
+    const paths = routePlanRouter.stack.map((layer) => layer.route?.path).filter((path) => path !== undefined)
+    expect(paths).to.include('/preview')
+    expect(paths).to.include('/dashboard')
+    expect(paths).not.to.include('/assignment-index/preflight')
+    expect(paths).not.to.include('/assignment-index/apply')
+  })
   const target = resolveTarget('mongodb://127.0.0.1:27017/gzapi', false)
   const records = new Map<string, Map<string, Record<string, unknown>>>()
   let writes = 0
+  let queue: Promise<void> = Promise.resolve()
   const database: DemoDatabase = {
     collection: (name) => ({
       findOne: async (filter) => name === 'users'
         ? { _id: new Types.ObjectId('507f1f77bcf86cd799439011') }
-        : records.get(name)?.get(String(filter._id)) ?? null,
+        : filter.productId !== undefined
+          ? [...(records.get(name)?.values() ?? [])].find((record) => String(record.productId) === String(filter.productId)) ?? null
+          : records.get(name)?.get(String(filter._id)) ?? null,
       updateOne: async (filter, update) => {
         writes += 1
         const collection = records.get(name) ?? new Map<string, Record<string, unknown>>()
@@ -49,7 +75,39 @@ describe('demo seed safety seams', () => {
         collection.set(id, { ...existing, ...(existing === undefined ? update.$setOnInsert : {}), ...(update.$set ?? {}) })
         return { upsertedCount: existing === undefined ? 1 : 0, modifiedCount: existing === undefined ? 0 : 1 }
       }
-    })
+    }),
+    withTransaction: async (work) => {
+      let release: () => void = () => {}
+      const previous = queue
+      queue = new Promise<void>((resolve) => { release = resolve })
+      await previous
+      const names = ['products', 'stockexpirybuckets', 'inventorymovements']
+      const staged = new Map(names.map((name) => [name, new Map(records.get(name) ?? [])]))
+      const transaction: DemoDatabase = {
+        collection: (name) => ({
+          findOne: async (filter) => filter.productId !== undefined
+            ? [...(staged.get(name)?.values() ?? [])].find((record) => String(record.productId) === String(filter.productId)) ?? null
+            : staged.get(name)?.get(String(filter._id)) ?? null,
+          updateOne: async (filter, update) => {
+            const collection = staged.get(name)
+            if (collection === undefined) throw new Error('Unexpected transaction collection')
+            const id = String(filter._id)
+            if (collection.has(id)) return { upsertedCount: 0, modifiedCount: 0 }
+            collection.set(id, { ...update.$setOnInsert })
+            return { upsertedCount: 1, modifiedCount: 0 }
+          }
+        })
+      }
+      try {
+        const result = await work(transaction)
+        for (const name of names) {
+          const target = records.get(name) ?? new Map<string, Record<string, unknown>>()
+          for (const [id, record] of staged.get(name) ?? []) if (!target.has(id)) { target.set(id, record); writes += 1 }
+          if (target.size > 0) records.set(name, target)
+        }
+        return result
+      } finally { release() }
+    }
   }
   const providers = {
     geocoder: async ({ address }: { address: string }) => {
@@ -63,6 +121,342 @@ describe('demo seed safety seams', () => {
     }),
     route: async () => ({ encodedPolyline: 'offline-route', distanceMeters: 5000, durationSeconds: 900 })
   }
+
+  it('seeds only independent fixtures without providers or destructive writes', async () => {
+    records.clear()
+    const forbidden = ['sales', 'itemsales', 'buys', 'itembuys', 'expenses', 'routeplans']
+    const existing = { fixtureKey: 'existing', inventory: { minimum: 42 } }
+    records.set('products', new Map([['existing', existing]]))
+    const unavailable = {
+      geocoder: async () => { throw new Error('Unexpected geocoder') },
+      matrix: async () => { throw new Error('Unexpected matrix') },
+      route: async () => { throw new Error('Unexpected route') }
+    }
+    const observed: string[] = []
+    const guarded: DemoDatabase = {
+      withTransaction: database.withTransaction,
+      collection: (name) => {
+        observed.push(name)
+        if (forbidden.includes(name)) throw new Error(`Unexpected collection ${name}`)
+        const collection = database.collection(name)
+        return {
+          findOne: collection.findOne,
+          updateOne: async (filter, update, options) => {
+            expect(update.$set).to.equal(undefined)
+            expect(options.upsert).to.equal(true)
+            return await collection.updateOne(filter, update, options)
+          }
+        }
+      }
+    }
+    const result = await runDemoSeed({ target, dryRun: false, database: guarded, providers: unavailable, insertOnly: true })
+    expect(result.summary?.collections).to.deep.equal({ categories: 7, brands: 9, providers: 6, deliveryzones: 4, products: 15, clients: 12, vehicles: 1, routingconfigs: 1, cashflowconfigs: 1 })
+    expect(observed.some((name) => forbidden.includes(name))).to.equal(false)
+    expect(records.get('products')?.get('existing')).to.equal(existing)
+  })
+
+  it('inserts valid fictional products and clients with supplied coordinates and stable references', async () => {
+    records.clear()
+    const now = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
+    const products = [...(records.get('products')?.values() ?? [])]
+    const clients = [...(records.get('clients')?.values() ?? [])]
+    const zones = [...(records.get('deliveryzones')?.values() ?? [])]
+    expect(products).to.have.length(15)
+    expect(clients).to.have.length(12)
+    for (const product of products) {
+      expect(new ProductModel(product).validateSync()).to.equal(undefined)
+      expect(product.stock).to.be.within(50, 150)
+      expect(product.inventory).to.include({ expiryTracking: 'TRACKED', baselineStatus: 'RECONCILED' })
+      expect(product.precioUnitario).to.be.greaterThan(0)
+      expect(String(product.descripcion)).not.to.match(/demo|mock|\bgz\b/i)
+      for (const [field, collection] of [['categoria', 'categories'], ['marca', 'brands'], ['proveedor', 'providers']]) {
+        expect(records.get(collection)?.has(String(product[field]))).to.equal(true)
+      }
+    }
+    for (const client of clients) {
+      expect(new ClientModel(client).validateSync()).to.equal(undefined)
+      expect(client.isActive).to.equal(true)
+      expect(client.geocoding).to.equal(undefined)
+      expect(String(client.nombreCompleto)).not.to.match(/demo|mock|\bgz\b/i)
+    }
+    for (const zone of zones) expect(clients.filter((client) => String(client.deliveryZoneId) === String(zone._id))).to.have.length(3)
+    const expected = [
+      ['MOLLAR', [[-26.948112, -65.704691], [-26.941400, -65.714023], [-26.936928, -65.702852]]],
+      ['TAFI_DEL_VALLE', [[-26.857519, -65.698231], [-26.845241, -65.709813], [-26.848587, -65.689600]]],
+      ['SANTA_LUCIA', [[-27.098616, -65.513067], [-27.100511, -65.515926], [-27.105863, -65.517718]]],
+      ['SOLDADO_MALDONADO', [[-27.147658, -65.561876], [-27.145107, -65.567734], [-27.142619, -65.567160]]]
+    ] as const
+    for (const [code, coordinates] of expected) {
+      const zone = zones.find((entry) => entry.code === code) as Record<string, unknown>
+      const zonedClients = clients.filter((client) => String(client.deliveryZoneId) === String(zone._id))
+        .sort((a, b) => Number(String(a.fixtureKey).split(':')[1]) - Number(String(b.fixtureKey).split(':')[1]))
+      expect(zonedClients.map(({ lat, lng }) => [lat, lng])).to.deep.equal(coordinates)
+    }
+    const snapshot = JSON.stringify({ products, clients })
+    writes = 0
+    await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
+    expect(writes).to.equal(0)
+    expect(JSON.stringify({ products: [...(records.get('products')?.values() ?? [])], clients: [...(records.get('clients')?.values() ?? [])] })).to.equal(snapshot)
+    products[0].descripcion = 'Operator edit'
+    clients[1].lat = 1
+    clients[1].lng = 2
+    const config = [...(records.get('routingconfigs')?.values() ?? [])][0]
+    const depot = config.depot as Record<string, unknown>
+    depot.latitude = 3
+    const missing = clients[0]
+    records.get('clients')?.delete(String(missing._id))
+    await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
+    expect(products[0].descripcion).to.equal('Operator edit')
+    expect(clients[1]).to.include({ lat: 1, lng: 2 })
+    expect(depot.latitude).to.equal(3)
+    expect(records.get('clients')?.get(String(missing._id))).to.deep.equal(missing)
+  })
+
+  it('creates consistent seeded stock with business-day expiry and actual availability rules', async () => {
+    records.clear()
+    const now = new Date('2026-09-01T02:30:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, now, insertOnly: true })
+    const products = [...(records.get('products')?.values() ?? [])]
+    const buckets = [...(records.get('stockexpirybuckets')?.values() ?? [])]
+    const movements = [...(records.get('inventorymovements')?.values() ?? [])]
+    expect(buckets).to.have.length(15)
+    expect(movements).to.have.length(15)
+    const dates: string[] = []
+    for (const product of products) {
+      const bucket = buckets.find((entry) => String(entry.productId) === String(product._id)) as Record<string, unknown>
+      const movement = movements.find((entry) => String(entry.productId) === String(product._id)) as Record<string, unknown>
+      expect(new InventoryMovementModel(movement).validateSync()).to.equal(undefined)
+      expect(String(movement.createdBy)).to.equal('507f1f77bcf86cd799439011')
+      expect(movement).to.include({ type: 'OPENING', sourceType: 'SYSTEM_SEED', sourceEvent: 'FIXTURE_STOCK_INITIALIZED', quantity: product.stock })
+      expect(String(movement.expiryBucketId)).to.equal(String(bucket._id))
+      expect(bucket).to.include({ receivedQuantity: product.stock, availableQuantity: product.stock, committedQuantity: 0 })
+      const expiryDate = (bucket.expiryDate as Date).toISOString().slice(0, 10)
+      dates.push(expiryDate)
+      const result = calculateAvailability({ productId: String(product._id), businessDate: '2026-08-31', timeZone: STOCK_TIME_ZONE, physicalQuantity: product.stock as number, committedQuantity: 0, expiryTracking: EXPIRY_TRACKING.TRACKED, baselineStatus: BASELINE_STATUS.RECONCILED, expiryBuckets: [{ bucketId: String(bucket._id), expiryDate, availableQuantity: product.stock as number, committedQuantity: 0 }] })
+      expect(result.availableToSell).to.equal(expiryDate < '2026-08-31' ? 0 : product.stock)
+    }
+    expect(dates.filter((date) => date === '2026-08-30')).to.have.length(3)
+    expect(dates.filter((date) => date === '2026-09-20')).to.have.length(3)
+    expect(dates.filter((date) => date === '2027-02-28')).to.have.length(9)
+    const snapshot = JSON.stringify({ products, buckets, movements })
+    await runDemoSeed({ target, dryRun: false, database, now: new Date('2027-01-01T12:00:00Z'), insertOnly: true })
+    expect(JSON.stringify({ products, buckets, movements })).to.equal(snapshot)
+  })
+
+  it('preserves legacy products and fails on missing seeded evidence', async () => {
+    records.clear()
+    await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+    const products = [...(records.get('products')?.values() ?? [])]
+    const legacy = products[0]
+    delete legacy.fixtureStockVersion
+    legacy.stock = 0
+    delete legacy.inventory
+    const bucket = [...(records.get('stockexpirybuckets')?.values() ?? [])].find((entry) => String(entry.productId) === String(legacy._id)) as Record<string, unknown>
+    records.get('stockexpirybuckets')?.delete(String(bucket._id))
+    await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+    expect(legacy.stock).to.equal(0)
+    expect(legacy.inventory).to.equal(undefined)
+    const other = products[1]
+    const otherBucket = [...(records.get('stockexpirybuckets')?.values() ?? [])].find((entry) => String(entry.productId) === String(other._id)) as Record<string, unknown>
+    records.get('stockexpirybuckets')?.delete(String(otherBucket._id))
+    try {
+      await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+      expect.fail('Expected missing evidence error')
+    } catch (error) { expect((error as Error).message).to.contain('inventory evidence') }
+  })
+
+  it('rolls back product and bucket when a movement write fails', async () => {
+    records.clear()
+    const failing: DemoDatabase = {
+      collection: database.collection,
+      withTransaction: async (work) => await (database.withTransaction as NonNullable<DemoDatabase['withTransaction']>)(async (transaction) => await work({
+        collection: (name) => name !== 'inventorymovements'
+          ? transaction.collection(name)
+          : {
+              findOne: transaction.collection(name).findOne,
+              updateOne: async () => { throw new Error('Injected movement failure') }
+            }
+      }))
+    }
+    try {
+      await runDemoSeed({ target, dryRun: false, database: failing, insertOnly: true })
+      expect.fail('Expected transaction failure')
+    } catch (error) { expect((error as Error).message).to.contain('Injected movement failure') }
+    expect(records.get('products')?.size ?? 0).to.equal(0)
+    expect(records.get('stockexpirybuckets')?.size ?? 0).to.equal(0)
+    expect(records.get('inventorymovements')?.size ?? 0).to.equal(0)
+  })
+
+  it('fails closed without transactions and handles concurrent seed attempts', async () => {
+    records.clear()
+    try {
+      await runDemoSeed({ target, dryRun: false, database: { collection: database.collection }, insertOnly: true })
+      expect.fail('Expected missing transaction support')
+    } catch (error) { expect((error as Error).message).to.contain('requires MongoDB transactions') }
+    expect(records.get('products')?.size ?? 0).to.equal(0)
+    records.clear()
+    await Promise.all([runDemoSeed({ target, dryRun: false, database, insertOnly: true }), runDemoSeed({ target, dryRun: false, database, insertOnly: true })])
+    expect(records.get('products')?.size).to.equal(15)
+    expect(records.get('stockexpirybuckets')?.size).to.equal(15)
+    expect(records.get('inventorymovements')?.size).to.equal(15)
+  })
+
+  it('rejects orphaned inventory without recreating its product', async () => {
+    records.clear()
+    await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+    const product = [...(records.get('products')?.values() ?? [])][0]
+    records.get('products')?.delete(String(product._id))
+    try {
+      await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+      expect.fail('Expected orphaned inventory error')
+    } catch (error) { expect((error as Error).message).to.contain('Existing inventory evidence') }
+    expect(records.get('products')?.has(String(product._id))).to.equal(false)
+  })
+
+  it('propagates an unsupported transaction error without inserting inventory', async () => {
+    records.clear()
+    const unsupported: DemoDatabase = {
+      collection: database.collection,
+      withTransaction: async () => { throw new Error('Transactions unsupported') }
+    }
+    try {
+      await runDemoSeed({ target, dryRun: false, database: unsupported, insertOnly: true })
+      expect.fail('Expected unsupported transaction error')
+    } catch (error) { expect((error as Error).message).to.equal('Transactions unsupported') }
+    expect(records.get('products')?.size ?? 0).to.equal(0)
+    expect(records.get('stockexpirybuckets')?.size ?? 0).to.equal(0)
+    expect(records.get('inventorymovements')?.size ?? 0).to.equal(0)
+  })
+
+  it('uses neutral visible values while retaining fixture identities', async () => {
+    records.clear()
+    await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+    const descriptions = (collection: string): unknown[] => [...(records.get(collection)?.values() ?? [])].map((record) => record.descripcion)
+    expect(descriptions('categories')).to.deep.equal(['Catálogo', 'Bebidas', 'Almacén', 'Limpieza', 'Cuidado personal', 'Aperitivos', 'Despensa'])
+    expect(descriptions('brands')).to.deep.equal(['Marca', 'Andes', 'Norte', 'Pampa', 'Sol', 'Río', 'Valle', 'Campo', 'Luna'])
+    expect(descriptions('providers')).to.deep.equal(['Proveedor', 'Distribuidora Norte', 'Abastecimiento Regional', 'Mayorista del Valle', 'Comercializadora del Río', 'Mercadería Central'])
+    const zones = [...(records.get('deliveryzones')?.values() ?? [])]
+    expect(zones.map(({ fixtureKey, code, name, normalizedName }) => ({ fixtureKey, code, name, normalizedName }))).to.deep.equal([
+      { fixtureKey: 'zone:centro', code: 'MOLLAR', name: 'Mollar', normalizedName: 'mollar' },
+      { fixtureKey: 'zone:oeste', code: 'TAFI_DEL_VALLE', name: 'Tafí del Valle', normalizedName: 'tafí del valle' },
+      { fixtureKey: 'zone:sur', code: 'SANTA_LUCIA', name: 'Santa Lucía', normalizedName: 'santa lucía' },
+      { fixtureKey: 'zone:soldado-maldonado', code: 'SOLDADO_MALDONADO', name: 'Soldado Maldonado', normalizedName: 'soldado maldonado' }
+    ])
+    const vehicle = [...(records.get('vehicles')?.values() ?? [])][0]
+    expect(vehicle).to.include({ fixtureKey: 'vehicle:primary', code: '01', fuelConsumptionLitersPer100Km: 8.5, active: true })
+    expect(vehicle.attributes).to.deep.equal({ fixture: 'gzapi-demo-seed-v1' })
+    const depot = [...(records.get('routingconfigs')?.values() ?? [])][0].depot as { name: string }
+    expect(depot.name).to.equal('Depósito')
+  })
+
+  it('rejects unique code collisions without overwriting unrelated records', async () => {
+    for (const [collectionName, code] of [['deliveryzones', 'MOLLAR'], ['deliveryzones', 'SOLDADO_MALDONADO'], ['vehicles', '01']]) {
+      records.clear()
+      const existing = { _id: new Types.ObjectId(), code, owner: 'unrelated' }
+      records.set(collectionName, new Map([[String(existing._id), existing]]))
+      const guarded: DemoDatabase = {
+        withTransaction: database.withTransaction,
+        collection: (name) => ({
+          findOne: database.collection(name).findOne,
+          updateOne: async (filter, update, options) => {
+            if (name === collectionName && update.$setOnInsert.code === code) {
+              throw Object.assign(new Error('Duplicate code'), { code: 11000 })
+            }
+            return await database.collection(name).updateOne(filter, update, options)
+          }
+        })
+      }
+      try {
+        await runDemoSeed({ target, dryRun: false, database: guarded, insertOnly: true })
+        expect.fail('Expected unique code collision')
+      } catch (error) {
+        expect((error as Error).message).to.contain('identity conflict')
+      }
+      expect(records.get(collectionName)?.get(String(existing._id))).to.equal(existing)
+      expect(existing).to.include({ code, owner: 'unrelated' })
+    }
+  })
+
+  it('uses the supplied depot coordinates without asserting an address or validation', async () => {
+    records.clear()
+    await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+    const config = [...(records.get('routingconfigs')?.values() ?? [])][0]
+    const depot = config.depot as Record<string, unknown>
+    expect(depot).to.include({ latitude: -27.347969, longitude: -65.586886 })
+    expect(depot.address).to.equal(undefined)
+    expect(depot.geocoding).to.equal(undefined)
+  })
+
+  it('retains existing zone values while inserting only the new fourth fixture', async () => {
+    records.clear()
+    await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+    const zones = records.get('deliveryzones') as Map<string, Record<string, unknown>>
+    const legacy = [...zones.values()].find((zone) => zone.fixtureKey === 'zone:centro') as Record<string, unknown>
+    legacy.name = 'Centro'
+    legacy.code = 'CENTRO'
+    legacy.normalizedName = 'centro'
+    const fourth = [...zones.entries()].find(([, zone]) => zone.fixtureKey === 'zone:soldado-maldonado') as [string, Record<string, unknown>]
+    zones.delete(fourth[0])
+    const result = await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+    expect(result.summary?.inserted).to.equal(1)
+    expect(legacy).to.include({ name: 'Centro', code: 'CENTRO', normalizedName: 'centro' })
+    expect(zones.get(fourth[0])?.name).to.equal('Soldado Maldonado')
+  })
+
+  it('repairs only missing independent fixtures and preserves edited and excluded records', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, serviceDate: date, insertOnly: true })
+    const categories = records.get('categories') as Map<string, Record<string, unknown>>
+    const retained = [...categories.values()].find((record) => record.fixtureKey === 'catalog:category') as Record<string, unknown>
+    retained.descripcion = 'Operator edit'
+    const missing = [...categories.entries()].find(([, record]) => record.fixtureKey === 'catalog:category:1') as [string, Record<string, unknown>]
+    categories.delete(missing[0])
+    const oldSale = { fixtureKey: 'old-sale', total: 42 }
+    records.set('sales', new Map([['old-sale', oldSale]]))
+    writes = 0
+    const repaired = await runDemoSeed({ target, dryRun: false, database, serviceDate: date, insertOnly: true })
+    expect(repaired.summary?.inserted).to.equal(1)
+    expect(writes).to.equal(1)
+    expect(retained.descripcion).to.equal('Operator edit')
+    expect(records.get('sales')?.get('old-sale')).to.equal(oldSale)
+    expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)
+  })
+
+  it('rejects an independent fixture identity collision before any write', async () => {
+    records.clear()
+    const date = new Date('2026-10-21T00:00:00.000Z')
+    await runDemoSeed({ target, dryRun: false, database, serviceDate: date, insertOnly: true })
+    const category = [...(records.get('categories')?.values() ?? [])][0]
+    category.fixtureNamespace = 'another-owner'
+    writes = 0
+    try {
+      await runDemoSeed({ target, dryRun: false, database, serviceDate: date, insertOnly: true })
+      expect.fail('Expected identity conflict')
+    } catch (error) {
+      expect((error as Error).message).to.contain('identity conflict')
+    }
+    expect(writes).to.equal(0)
+  })
+
+  it('rejects product and client identity collisions before any write', async () => {
+    for (const collection of ['products', 'clients']) {
+      records.clear()
+      await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+      const record = [...(records.get(collection)?.values() ?? [])][0]
+      record.fixtureNamespace = 'another-owner'
+      writes = 0
+      try {
+        await runDemoSeed({ target, dryRun: false, database, insertOnly: true })
+        expect.fail('Expected identity conflict')
+      } catch (error) {
+        expect((error as Error).message).to.contain('identity conflict')
+      }
+      expect(writes).to.equal(0)
+      expect(record.fixtureNamespace).to.equal('another-owner')
+    }
+  })
 
   it('delegates fixture seeding after base seeding through injectable dependencies', async () => {
     const calls: string[] = []
@@ -78,6 +472,7 @@ describe('demo seed safety seams', () => {
     let peak = 0
     let reads = 0
     const slow: DemoDatabase = {
+      withTransaction: database.withTransaction,
       collection: () => ({
         findOne: async () => {
           active += 1
@@ -97,39 +492,13 @@ describe('demo seed safety seams', () => {
     expect(peak).to.be.at.most(16)
   })
 
-  it('avoids repeat reads and writes for inventoried owned fixtures during a repair', async () => {
-    records.clear()
-    const date = new Date('2026-10-21T00:00:00.000Z')
-    let reads = 0
-    let updates = 0
-    const counted: DemoDatabase = {
-      collection: (name) => {
-        const base = database.collection(name)
-        return {
-          findOne: async (filter) => { reads += 1; return await base.findOne(filter) },
-          updateOne: async (filter, update, options) => { updates += 1; return await base.updateOne(filter, update, options) }
-        }
-      }
-    }
-    const first = await runDemoSeed({ target, dryRun: false, database: counted, providers, serviceDate: date, insertOnly: true })
-    const total = (first.summary?.inserted ?? 0) + (first.summary?.updated ?? 0)
-    expect(reads).to.equal((await inspectDemoFixtures(database, date)).total + 1)
-    expect(updates).to.equal(total)
-    reads = 0
-    updates = 0
-    records.get('products')?.delete(String([...records.get('products')?.entries() ?? []].find(([, value]) => value.fixtureKey === 'catalog:product:1:1')?.[0]))
-    const repaired = await runDemoSeed({ target, dryRun: false, database: counted, providers, serviceDate: date, insertOnly: true })
-    expect(repaired.summary?.inserted).to.equal(1)
-    expect(updates).to.equal(2)
-    expect(reads).to.equal((await inspectDemoFixtures(database, date)).total + 1)
-  })
-
   it('bounds concurrent fixture writes during an insert-only repair', async () => {
     records.clear()
     const date = new Date('2026-10-21T00:00:00.000Z')
     let active = 0
     let peak = 0
     const slow: DemoDatabase = {
+      withTransaction: database.withTransaction,
       collection: (name) => ({
         findOne: database.collection(name).findOne,
         updateOne: async (filter, update, options) => {
@@ -145,140 +514,15 @@ describe('demo seed safety seams', () => {
       })
     }
     const result = await runDemoSeed({ target, dryRun: false, database: slow, providers, serviceDate: date, insertOnly: true })
-    expect(result.summary?.inserted ?? 0).to.be.greaterThan(100)
+    expect(result.summary?.inserted).to.equal(56)
     expect(peak).to.be.greaterThan(1)
     expect(peak).to.be.at.most(8)
   })
 
-  it('rejects an unowned concurrent insert after inventory without overwriting it', async () => {
-    records.clear()
-    const date = new Date('2026-10-21T00:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
-    const products = records.get('products') as Map<string, Record<string, unknown>>
-    const [id] = [...products.entries()].find(([, value]) => value.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
-    products.delete(id)
-    const unowned = { fixtureNamespace: 'other-owner', fixtureKey: 'other-product', stock: 99 }
-    const racing: DemoDatabase = {
-      collection: (name) => {
-        const base = database.collection(name)
-        return {
-          findOne: base.findOne,
-          updateOne: async (filter, update, options) => {
-            if (name === 'products' && String(filter._id) === id) {
-              products.set(id, unowned)
-              return { upsertedCount: 0, modifiedCount: 0 }
-            }
-            return await base.updateOne(filter, update, options)
-          }
-        }
-      }
-    }
-    try {
-      await runDemoSeed({ target, dryRun: false, database: racing, providers, serviceDate: date, insertOnly: true })
-      expect.fail('Expected concurrent ownership conflict')
-    } catch (error) {
-      expect((error as Error).message).to.contain('identity conflict')
-    }
-    expect(products.get(id)).to.equal(unowned)
-  })
-
-  it('plans 20 candidate clients without calling providers in dry-run', async () => {
-    expect(DEMO_ADDRESS_SPECS).to.have.length(21)
+  it('plans only the depot without calling providers in dry-run', async () => {
+    expect(DEMO_ADDRESS_SPECS).to.have.length(1)
     const result = await runDemoSeed({ target, dryRun: true })
-    expect(result.addressCount).to.equal(21)
-  })
-
-  it('seeds six months of paid finance, catalog and route snapshots with stable owned IDs', async () => {
-    records.clear()
-    writes = 0
-    const first = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2026-10-21T00:00:00.000Z') })
-    expect((first.summary?.inserted ?? 0) + (first.summary?.updated ?? 0)).to.equal(writes)
-    expect(records.get('clients')?.size).to.equal(20)
-    expect(records.get('categories')?.size).to.equal(7)
-    expect(records.get('brands')?.size).to.equal(9)
-    expect(records.get('providers')?.size).to.equal(6)
-    expect(records.get('products')?.size).to.equal(85)
-    expect(records.get('routeplans')?.size).to.equal(3)
-    const sales = [...(records.get('sales')?.values() ?? [])]
-    const buys = [...(records.get('buys')?.values() ?? [])]
-    const expenses = [...(records.get('expenses')?.values() ?? [])]
-    for (const month of ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10']) {
-      expect(sales.filter((sale) => sale.paidAt instanceof Date && sale.paidAt.toISOString().startsWith(month))).to.have.length(21)
-      expect(buys.filter((buy) => buy.paidAt instanceof Date && buy.paidAt.toISOString().startsWith(month))).to.have.length(7)
-      expect(expenses.filter((expense) => expense.date instanceof Date && expense.date.toISOString().startsWith(month))).to.have.length(11)
-    }
-    const clientIds = new Set(records.get('clients')?.keys())
-    for (const snapshot of records.get('routeplans')?.values() ?? []) {
-      for (const stop of snapshot.stops as Array<{ clientId: string }>) {
-        expect(Types.ObjectId.isValid(stop.clientId)).to.equal(true)
-        expect(clientIds.has(stop.clientId)).to.equal(true)
-      }
-    }
-    const counts = [...records].map(([key, value]) => [key, value.size])
-    const firstSale = sales.find((sale) => sale.fixtureKey === 'finance:sale:2026-05:1')
-    expect(firstSale?.createdAt).to.deep.equal(new Date('2026-05-01T12:00:00.000Z'))
-    const second = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2026-10-21T00:00:00.000Z') })
-    expect(second.summary?.inserted).to.equal(0)
-    expect([...records].map(([key, value]) => [key, value.size])).to.deep.equal(counts)
-    expect([...(records.get('sales')?.values() ?? [])].find((sale) => sale.fixtureKey === 'finance:sale:2026-05:1')?.createdAt).to.deep.equal(firstSale?.createdAt)
-  })
-
-  it('seeds owned Smart Stock minimums, reconciled baselines, expiry buckets, and opening movements', async () => {
-    records.clear()
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2026-10-21T00:00:00.000Z') })
-    const products = [...(records.get('products')?.values() ?? [])].filter((item) => String(item.fixtureKey).startsWith('catalog:product:'))
-    expect(products).to.have.length(84)
-    expect(products.every((product) => {
-      const inventory = product.inventory as Record<string, unknown> | undefined
-      return inventory?.minimum !== undefined && inventory.expiryTracking === 'tracked' && inventory.baselineStatus === 'reconciled'
-    })).to.equal(true)
-    const buckets = [...(records.get('stockexpirybuckets')?.values() ?? [])]
-    const movements = [...(records.get('inventorymovements')?.values() ?? [])]
-    expect(buckets).to.have.length.greaterThan(84)
-    expect(movements).to.have.length(buckets.length)
-    expect(buckets.some((bucket) => new Date(bucket.expiryDate as Date).getTime() < Date.parse('2026-10-21'))).to.equal(true)
-    expect(buckets.some((bucket) => new Date(bucket.expiryDate as Date).getTime() > Date.parse('2026-10-21'))).to.equal(true)
-    expect(movements.every((movement) => movement.type === 'OPENING')).to.equal(true)
-    for (const product of products) {
-      const productBuckets = buckets.filter((bucket) => String(bucket.productId) === String(product._id))
-      expect(productBuckets.reduce((sum, bucket) => sum + Number(bucket.receivedQuantity), 0)).to.equal(product.stock)
-      expect(productBuckets.reduce((sum, bucket) => sum + Number(bucket.availableQuantity), 0)).to.equal(product.stock)
-      expect(productBuckets.reduce((sum, bucket) => sum + Number(bucket.committedQuantity), 0)).to.equal(0)
-    }
-    expect(products.some((product) => ((product.inventory as Record<string, unknown>).minimum as number) > (product.stock as number))).to.equal(true)
-  })
-
-  it('repairs missing stock fixtures independently without touching an unrelated bucket', async () => {
-    records.clear()
-    const date = new Date('2026-10-21T00:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
-    const buckets = records.get('stockexpirybuckets') as Map<string, Record<string, unknown>>
-    const first = buckets.entries().next().value as [string, Record<string, unknown>]
-    const before = await inspectDemoFixtures(database, date)
-    buckets.delete(first[0])
-    expect((await inspectDemoFixtures(database, date)).missing).to.equal(before.missing + 1)
-    const result = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
-    expect(result.summary?.inserted).to.be.greaterThan(0)
-    expect([...buckets.values()].some((bucket) => bucket.fixtureKey === first[1].fixtureKey)).to.equal(true)
-  })
-
-  it('repairs stock fixtures when all catalog fixture documents are already complete', async () => {
-    records.clear()
-    const date = new Date('2026-10-21T00:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
-    const buckets = records.get('stockexpirybuckets') as Map<string, Record<string, unknown>>
-    const product = records.get('products') as Map<string, Record<string, unknown>>
-    buckets.clear()
-    records.delete('inventorymovements')
-    for (const item of product.values()) {
-      if (String(item.fixtureKey).startsWith('catalog:product')) delete item.inventory
-    }
-    expect((await inspectDemoFixtures(database, date)).missing).to.be.greaterThan(0)
-    const repaired = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
-    expect(repaired.summary?.inserted).to.be.greaterThan(0)
-    expect(buckets.size).to.be.greaterThan(84)
-    expect(records.get('inventorymovements')?.size).to.equal(buckets.size)
-    expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)
+    expect(result.addressCount).to.equal(1)
   })
 
   it('skips a complete owned dataset without a provider call or write', async () => {
@@ -298,103 +542,6 @@ describe('demo seed safety seams', () => {
     })
     expect(result.summary?.inserted).to.equal(0)
     expect(writes).to.equal(0)
-  })
-
-  it('repairs only a missing fixture while retaining edited owned data', async () => {
-    records.clear()
-    const date = new Date('2026-10-21T00:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
-    const products = records.get('products') as Map<string, Record<string, unknown>>
-    const first = [...products.values()].find((item) => item.fixtureKey === 'catalog:product') as Record<string, unknown>
-    first.stock = 13
-    const missing = [...products.entries()].find(([, item]) => item.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
-    products.delete(missing[0])
-    expect((await inspectDemoFixtures(database, date)).missing).to.equal(2)
-    writes = 0
-    const result = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date, insertOnly: true })
-    expect(result.summary?.inserted).to.be.greaterThan(0)
-    expect(products.get(missing[0])?.fixtureKey).to.equal('catalog:product:1:1')
-    expect(first.stock).to.equal(13)
-    expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)
-  })
-
-  it('rejects an identity collision before contacting Google or writing', async () => {
-    records.clear()
-    const date = new Date('2026-10-21T00:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
-    const products = records.get('products') as Map<string, Record<string, unknown>>
-    const item = [...products.values()].find((value) => value.fixtureKey === 'catalog:product') as Record<string, unknown>
-    item.fixtureNamespace = 'someone-else'
-    writes = 0
-    try {
-      await runDemoSeed({
-        target,
-        dryRun: false,
-        database,
-        serviceDate: date,
-        insertOnly: true,
-        providers: { ...providers, geocoder: async () => { throw new Error('Provider should not be called') } }
-      })
-      expect.fail('Expected identity conflict')
-    } catch (error) {
-      expect((error as Error).message).to.contain('identity conflict')
-    }
-    expect(writes).to.equal(0)
-  })
-
-  it('does not write a partial repair when provider preflight fails', async () => {
-    records.clear()
-    const date = new Date('2026-10-21T00:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
-    const products = records.get('products') as Map<string, Record<string, unknown>>
-    const missing = [...products.entries()].find(([, value]) => value.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
-    products.delete(missing[0])
-    writes = 0
-    try {
-      await runDemoSeed({
-        target,
-        dryRun: false,
-        database,
-        serviceDate: date,
-        insertOnly: true,
-        providers: { ...providers, matrix: async () => ({ segments: [] }) }
-      })
-      expect.fail('Expected provider failure')
-    } catch (error) {
-      expect((error as Error).message).to.contain('DRIVE route')
-    }
-    expect(writes).to.equal(0)
-    expect(products.has(missing[0])).to.equal(false)
-  })
-
-  it('allows two concurrent repairs without overwriting a winning insert', async () => {
-    records.clear()
-    const date = new Date('2026-10-21T00:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: date })
-    const products = records.get('products') as Map<string, Record<string, unknown>>
-    const missing = [...products.entries()].find(([, value]) => value.fixtureKey === 'catalog:product:1:1') as [string, Record<string, unknown>]
-    products.delete(missing[0])
-    const results = await Promise.all([1, 2].map(async () => await runDemoSeed({
-      target, dryRun: false, database, providers, serviceDate: date, insertOnly: true
-    })))
-    expect(results.reduce((sum, result) => sum + (result.summary?.inserted ?? 0), 0)).to.equal(1)
-    expect((await inspectDemoFixtures(database, date)).missing).to.equal(0)
-  })
-
-  it('performs zero writes when matrix or route validation fails', async () => {
-    for (const unavailable of [
-      { ...providers, matrix: async () => ({ segments: [] }) },
-      { ...providers, route: async () => { throw new Error('Provider unavailable') } }
-    ]) {
-      writes = 0
-      try {
-        await runDemoSeed({ target, dryRun: false, database, providers: unavailable })
-        expect.fail('Expected provider failure')
-      } catch (error) {
-        expect(error).to.be.instanceOf(Error)
-      }
-      expect(writes).to.equal(0)
-    }
   })
 
   it('rejects a matrix above the configured stop limit without calling the provider', async () => {
@@ -486,68 +633,6 @@ describe('demo seed safety seams', () => {
       expect(() => selectRoadSafeCandidate([{ ...candidate, formattedAddress }], requested)).to.throw()
     }
     expect(selectRoadSafeCandidate([{ ...candidate, formattedAddress: 'General Paz 523, San Miguel de Tucumán, Tucumán, Argentina' }], 'Gral. Paz 523, San Miguel de Tucumán, Tucumán, Argentina').precision).to.equal(GEOCODING_PRECISION.ROOFTOP)
-  })
-
-  it('derives six months from the anchor and never schedules finance after it', async () => {
-    records.clear()
-    const anchor = new Date('2027-02-03T00:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: anchor })
-    const sales = [...(records.get('sales')?.values() ?? [])].filter((sale) => String(sale.fixtureKey).startsWith('finance:'))
-    expect(new Set(sales.map((sale) => (sale.paidAt as Date).toISOString().slice(0, 7)))).to.deep.equal(new Set(['2026-09', '2026-10', '2026-11', '2026-12', '2027-01', '2027-02']))
-    for (const collection of ['sales', 'buys', 'expenses']) {
-      for (const record of records.get(collection)?.values() ?? []) {
-        if (!String(record.fixtureKey).startsWith('finance:')) continue
-        expect((record.paidAt ?? record.date) as Date).to.be.at.most(anchor)
-      }
-    }
-    const oldId = [...(records.get('sales')?.entries() ?? [])].find(([, sale]) => sale.fixtureKey === 'finance:sale:2026-10:1')?.[0]
-    await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: new Date('2027-03-03T00:00:00.000Z') })
-    expect([...records.get('sales')?.entries() ?? []].find(([, sale]) => sale.fixtureKey === 'finance:sale:2026-10:1')?.[0]).to.equal(oldId)
-    expect(records.get('sales')?.size).to.equal(20 + 21 * 7)
-  })
-
-  it('uses the injected clock as the default service-date anchor', async () => {
-    records.clear()
-    const clock = new Date('2027-03-04T18:00:00.000Z')
-    await runDemoSeed({ target, dryRun: false, database, providers, now: clock })
-    expect([...records.get('sales')?.values() ?? []].some((sale) => sale.fixtureKey === 'finance:sale:2027-03')).to.equal(true)
-    expect([...records.get('sales')?.values() ?? []].some((sale) => sale.fixtureKey === 'finance:sale:2026-09')).to.equal(false)
-    expect([...records.get('sales')?.values() ?? []].filter((sale) => String(sale.fixtureKey).startsWith('finance:')).every((sale) => (sale.paidAt as Date) <= new Date('2027-03-04T00:00:00.000Z'))).to.equal(true)
-  })
-
-  it('recovers a partial sequential write by rerunning with the same anchor, leaving unrelated data untouched', async () => {
-    records.clear()
-    const unrelated = { fixtureNamespace: 'other', fixtureKey: 'operator-record', descripcion: 'Keep me' }
-    records.set('categories', new Map([['unrelated-id', unrelated]]))
-    let attempts = 0
-    const failing: DemoDatabase = {
-      collection: (name) => {
-        const base = database.collection(name)
-        return {
-          findOne: base.findOne,
-          updateOne: async (filter, update, options) => {
-            attempts += 1
-            if (attempts === 5) throw new Error('Injected write failure')
-            return await base.updateOne(filter, update, options)
-          }
-        }
-      }
-    }
-    const anchor = new Date('2026-10-21T00:00:00.000Z')
-    try {
-      await runDemoSeed({ target, dryRun: false, database: failing, providers, serviceDate: anchor })
-      expect.fail('Expected injected write failure')
-    } catch (error) {
-      expect((error as Error).message).to.contain('Injected write failure')
-    }
-    expect(records.get('categories')?.get('unrelated-id')).to.equal(unrelated)
-    expect(records.get('products')?.size).to.equal(1)
-    const firstId = [...records.get('products')?.keys() ?? []][0]
-    const recovered = await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: anchor })
-    expect(recovered.summary?.inserted).to.be.greaterThan(0)
-    expect(records.get('products')?.has(firstId)).to.equal(true)
-    expect(records.get('categories')?.get('unrelated-id')).to.equal(unrelated)
-    expect((await runDemoSeed({ target, dryRun: false, database, providers, serviceDate: anchor })).summary?.inserted).to.equal(0)
   })
 
   it('does not match unowned records by id during an upsert', async () => {

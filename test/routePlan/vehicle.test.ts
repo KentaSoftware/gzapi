@@ -3,11 +3,6 @@ import proxyquire from 'proxyquire'
 
 import { vehicleSchema } from '../../src/schemas/vehicle'
 import VehicleModel, { vehicleMongooseSchema } from '../../src/models/vehicle'
-import {
-  applyVehicleCollectionMigration,
-  VEHICLE_COLLECTION_INDEXES,
-  type VehicleMigrationDatabase
-} from '../../migrations/route-plan-005-vehicle-collection'
 
 describe('Vehicle assignment contract', () => {
   it('TC-018: requires a unique plate code and active/read fields', () => {
@@ -45,23 +40,5 @@ describe('Vehicle assignment contract', () => {
     expect(await service.listSelectableVehicles()).to.deep.equal([expected])
     expect(await service.getVehicleById('vehicle-1')).to.deep.equal(expected)
     expect(VehicleModel.schema.path('code')).to.not.equal(undefined)
-  })
-
-  it('NFR-004: applies stable additive vehicle indexes on repeated migration runs', () => {
-    const calls: string[] = []
-    const database: VehicleMigrationDatabase = {
-      getCollection: () => ({
-        createIndex: (_keys, options) => calls.push(options.name)
-      })
-    }
-
-    applyVehicleCollectionMigration(database)
-    applyVehicleCollectionMigration(database)
-
-    expect(VEHICLE_COLLECTION_INDEXES.map((index) => index[2].name)).to.deep.equal([
-      'idx_unique_vehicle_code',
-      'idx_vehicle_active_code'
-    ])
-    expect(calls).to.deep.equal([...calls.slice(0, 2), ...calls.slice(0, 2)])
   })
 })

@@ -4,28 +4,19 @@ import { encrypt } from '../utils/bcrypt.handle'
 import { createHash } from 'crypto'
 import mongoose, { Types } from 'mongoose'
 import type { Document, UpdateFilter } from 'mongodb'
-import {
-  GEOCODING_PRECISION,
-  GEOCODING_SOURCE,
-  GEOCODING_STATUS
-} from '../interfaces/client.interface'
+import { STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
+import { GEOCODING_PRECISION } from '../interfaces/client.interface'
 import {
   DEFAULT_ROUTE_ALGORITHM,
-  ROUTE_METRIC_AVAILABILITY,
   ROUTING_CONFIG_KEYS,
   ROUTE_MODES,
   type RouteLocation,
   type RouteMatrix,
-  type RouteMatrixRequest,
-  type RoutePlanSegment,
-  type RoutePlanStop
+  type RouteMatrixRequest
 } from '../interfaces/routeOptimization.interface'
-import { SALE_DELIVERY_STATUS } from '../interfaces/sale.interface'
-import { EXPENSE_TYPE, PAYMENT_METHOD, RELATED_KIND } from '../interfaces/expense.interface'
 import type { GeocodingCandidate } from '../schemas/clientGeocoding'
 
-import { geocode } from './geocodingProvider'
-import { computeMatrix, computeRoute } from './routeMatrixProvider'
+import type { computeRoute } from './routeMatrixProvider'
 import { seedSimulationDemoFixtures } from './simulation'
 
 const BASE_PERMISSIONS = [
@@ -150,7 +141,6 @@ export const seedDatabase = async (dependencies: SeedDatabaseDependencies = {}):
 
 const DEFAULT_MONGO_URI = 'mongodb://127.0.0.1:27017/gzapi'
 const FIXTURE_NAMESPACE = 'gzapi-demo-seed-v1'
-const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const ROUTE_FUEL_CONSUMPTION = 8.5
 const ROUTE_MAX_STOPS = 20
 
@@ -161,117 +151,65 @@ const FIXTURE_OUTCOME = {
 
 type FixtureOutcome = (typeof FIXTURE_OUTCOME)[keyof typeof FIXTURE_OUTCOME]
 
-// Additional street numbers are published at https://www.cgcetucuman.org.ar/sucursales-rapipago/
-// They are candidates only; Google precision and complete DRIVE coverage gate every write.
-const DEMO_ADDRESS_SPECS = [
-  {
-    key: 'depot',
-    name: 'GZ Demo Depot',
-    address: 'Av. Mate de Luna 4357, San Miguel de Tucumán, Tucumán, Argentina'
-  },
-  {
-    key: 'client:centro:1',
-    name: 'GZ Demo Client Centro 1',
-    address: '25 de Mayo 90, San Miguel de Tucumán, Tucumán, Argentina',
-    zoneKey: 'centro'
-  },
-  {
-    key: 'client:centro:2',
-    name: 'GZ Demo Client Centro 2',
-    address: 'San Martín 469, San Miguel de Tucumán, Tucumán, Argentina',
-    zoneKey: 'centro'
-  },
-  {
-    key: 'client:oeste:1',
-    name: 'GZ Demo Client Oeste 1',
-    address: 'Av. Sarmiento 655, San Miguel de Tucumán, Tucumán, Argentina',
-    zoneKey: 'oeste'
-  },
-  ...[
-    ['centro', 3, 'Batalla de Chacabuco 85'],
-    ['centro', 4, 'Santiago del Estero 455'],
-    ['centro', 5, 'Córdoba 560'],
-    ['centro', 6, '25 de Mayo 319'],
-    ['centro', 7, 'Rivadavia 88'],
-    ['centro', 8, 'San Martín 853'],
-    ['oeste', 2, 'Av. Belgrano 1716'],
-    ['oeste', 3, 'Av. Belgrano 2755'],
-    ['oeste', 4, 'Av. Belgrano 3300'],
-    ['oeste', 5, 'Av. Roca 3057'],
-    ['oeste', 6, 'Av. Roca 3450'],
-    ['oeste', 7, 'Av. Roca 250'],
-    ['sur', 1, 'Entre Ríos 130'],
-    ['sur', 2, 'Congreso 514'],
-    ['sur', 3, 'Gral. Paz 523'],
-    ['sur', 4, 'Jujuy 108'],
-    ['sur', 5, 'Crisóstomo Álvarez 464']
-  ].map(([zone, number, street]) => ({
-    key: `client:${zone}:${number}`,
-    name: `GZ Demo Client ${zone} ${number}`,
-    address: `${street}, San Miguel de Tucumán, Tucumán, Argentina`,
-    zoneKey: zone
-  }))
-] as Array<{ key: string, name: string, address: string, zoneKey?: string }>
+// Retained for the legacy dry-run address inventory; not a claim about the depot coordinates.
+const DEMO_ADDRESS_SPECS = [{
+  key: 'depot',
+  name: 'Depósito',
+  address: 'Av. Mate de Luna 4357, San Miguel de Tucumán, Tucumán, Argentina'
+}]
 
-// Coordinates read from the Google Maps place pin for each address (fixed, reviewed input).
-// They replace Geocoding at seed time; Google Routes still computes the route metrics.
-const MANUAL_DEMO_COORDINATES: Record<string, { lat: number, lng: number }> = {
-  depot: { lat: -26.8193761, lng: -65.2589428 },
-  'client:centro:1': { lat: -26.8300928, lng: -65.205013 },
-  'client:centro:2': { lat: -26.8510626, lng: -65.2822725 },
-  'client:oeste:1': { lat: -26.8177266, lng: -65.2039054 },
-  'client:centro:3': { lat: -26.831372, lng: -65.2081626 },
-  'client:centro:4': { lat: -26.8242071, lng: -65.2025614 },
-  'client:centro:5': { lat: -26.8270052, lng: -65.204575 },
-  'client:centro:6': { lat: -26.826721, lng: -65.2034004 },
-  'client:centro:7': { lat: -26.830523, lng: -65.201654 },
-  'client:centro:8': { lat: -26.8284282, lng: -65.2097925 },
-  'client:oeste:2': { lat: -26.8152191, lng: -65.2201069 },
-  'client:oeste:3': { lat: -26.8116916, lng: -65.2360334 },
-  'client:oeste:4': { lat: -26.8105456, lng: -65.2433294 },
-  'client:oeste:5': { lat: -26.834853, lng: -65.2479649 },
-  'client:oeste:6': { lat: -26.8349324, lng: -65.2525064 },
-  'client:oeste:7': { lat: -26.844133, lng: -65.2040087 },
-  'client:sur:1': { lat: -26.8338055, lng: -65.2004494 },
-  'client:sur:2': { lat: -26.8383777, lng: -65.2047655 },
-  'client:sur:3': { lat: -26.8359667, lng: -65.2071356 },
-  'client:sur:4': { lat: -26.8311755, lng: -65.2110757 },
-  'client:sur:5': { lat: -26.8325424, lng: -65.204391 }
-}
-
-type DemoAddressKey = (typeof DEMO_ADDRESS_SPECS)[number]['key']
+const DEPOT_COORDINATES = { latitude: -27.347969, longitude: -65.586886 } as const
 
 const DEMO_ZONES = [
-  { key: 'centro', code: 'DEMO_CENTRO', name: 'Demo Centro' },
-  { key: 'oeste', code: 'DEMO_OESTE', name: 'Demo Oeste' },
-  { key: 'sur', code: 'DEMO_SUR', name: 'Demo Sur' }
+  { key: 'centro', code: 'MOLLAR', name: 'Mollar' },
+  { key: 'oeste', code: 'TAFI_DEL_VALLE', name: 'Tafí del Valle' },
+  { key: 'sur', code: 'SANTA_LUCIA', name: 'Santa Lucía' },
+  { key: 'soldado-maldonado', code: 'SOLDADO_MALDONADO', name: 'Soldado Maldonado' }
 ] as const
 
-const DEMO_PRODUCT = {
-  description: 'GZ Demo Route Product',
-  purchasePrice: 75,
-  salePrice: 120,
-  barcode: 'GZ-DEMO-ROUTE-001'
-} as const
-
 const DEMO_VEHICLE = {
-  code: 'GZ-DEMO-01',
+  code: '01',
   fuelConsumptionLitersPer100Km: ROUTE_FUEL_CONSUMPTION
 } as const
 
-const LEGACY_FINANCE_TOTALS = [
-  { saleTotal: 15800, buyTotal: 7200, expenseCents: 130000 },
-  { saleTotal: 16900, buyTotal: 7900, expenseCents: 145000 },
-  { saleTotal: 17400, buyTotal: 8500, expenseCents: 155000 },
-  { saleTotal: 18500, buyTotal: 9200, expenseCents: 175000 },
-  { saleTotal: 22400, buyTotal: 10800, expenseCents: 210000 },
-  { saleTotal: 26750, buyTotal: 12400, expenseCents: 235000 }
+const DEMO_CATEGORIES = ['Bebidas', 'Almacén', 'Limpieza', 'Cuidado personal', 'Aperitivos', 'Despensa'] as const
+const DEMO_BRANDS = ['Andes', 'Norte', 'Pampa', 'Sol', 'Río', 'Valle', 'Campo', 'Luna'] as const
+const DEMO_PROVIDERS = ['Distribuidora Norte', 'Abastecimiento Regional', 'Mayorista del Valle', 'Comercializadora del Río', 'Mercadería Central'] as const
+
+// Illustrative prices only; zero stock is not an inventory reconciliation.
+const PRODUCT_FIXTURES = [
+  ['Agua mineral sin gas 1,5 l', 1, 1, 1, 950],
+  ['Agua mineral con gas 500 ml', 1, 2, 1, 700],
+  ['Jugo de naranja 1 l', 1, 4, 2, 1800],
+  ['Gaseosa de pomelo 2,25 l', 1, 5, 2, 2400],
+  ['Arroz largo fino 1 kg', 2, 3, 3, 2200],
+  ['Fideos secos tirabuzón 500 g', 2, 6, 3, 1300],
+  ['Harina de trigo 1 kg', 2, 7, 3, 1100],
+  ['Azúcar blanca 1 kg', 6, 4, 5, 1500],
+  ['Aceite de girasol 900 ml', 6, 7, 5, 3200],
+  ['Yerba mate 1 kg', 6, 2, 5, 4800],
+  ['Detergente líquido 750 ml', 3, 5, 4, 1900],
+  ['Lavandina 1 l', 3, 1, 4, 1200],
+  ['Jabón de tocador 125 g', 4, 8, 4, 1000],
+  ['Papas fritas clásicas 150 g', 5, 6, 2, 2100],
+  ['Galletitas de agua 200 g', 5, 3, 5, 1400]
 ] as const
 
-const DEMO_CATEGORIES = ['Beverages', 'Groceries', 'Cleaning', 'Personal care', 'Snacks', 'Pantry'] as const
-const DEMO_BRANDS = ['Andes', 'Norte', 'Pampa', 'Sol', 'Rio', 'Valle', 'Campo', 'Luna'] as const
-const DEMO_PROVIDERS = ['North Distribution', 'Regional Supply', 'Valley Wholesale', 'River Trading', 'Central Goods'] as const
-const DEMO_VARIANTS = ['Classic', 'Family', 'Compact', 'Premium', 'Economy', 'Fresh', 'Large', 'Small', 'Original', 'Select', 'Daily', 'Special', 'Light', 'Extra'] as const
+// Fictional business identities, deliberately without addresses or contact details.
+const CLIENT_FIXTURES = [
+  ['Almacén Brisa de Piedra', 'centro'], ['Despensa Sendero Claro', 'centro'], ['Kiosco Nube Serrana', 'centro'],
+  ['Almacén Rincón del Alba', 'oeste'], ['Despensa Camino de Niebla', 'oeste'], ['Kiosco Estrella del Cerro', 'oeste'],
+  ['Almacén Hoja Dorada', 'sur'], ['Despensa Puente de Luz', 'sur'], ['Kiosco Ronda del Sol', 'sur'],
+  ['Almacén Trébol de Cobre', 'soldado-maldonado'], ['Despensa Patio del Viento', 'soldado-maldonado'], ['Kiosco Río de Papel', 'soldado-maldonado']
+] as const
+
+// User-supplied points in the same order as the client fixtures in each stable zone.
+const CLIENT_COORDINATES = {
+  centro: [[-26.948112, -65.704691], [-26.941400, -65.714023], [-26.936928, -65.702852]],
+  oeste: [[-26.857519, -65.698231], [-26.845241, -65.709813], [-26.848587, -65.689600]],
+  sur: [[-27.098616, -65.513067], [-27.100511, -65.515926], [-27.105863, -65.517718]],
+  'soldado-maldonado': [[-27.147658, -65.561876], [-27.145107, -65.567734], [-27.142619, -65.567160]]
+} as const
 
 interface DemoTarget {
   uri: string
@@ -306,29 +244,13 @@ interface FixtureUpdate {
 
 export interface DemoDatabase {
   collection: (name: string) => FixtureCollection
+  withTransaction?: <T>(work: (database: DemoDatabase) => Promise<T>) => Promise<T>
 }
 
 interface DemoProviders {
   geocoder: (input: { address: string }) => Promise<GeocodingCandidate[]>
   matrix: (input: RouteMatrixRequest) => Promise<RouteMatrix>
   route: typeof computeRoute
-}
-
-interface GeocodedLocation extends RouteLocation {
-  key: DemoAddressKey
-  requestedAddress: string
-  formattedAddress: string
-  placeId: string
-  precision: GeocodingCandidate['precision']
-}
-
-interface PreparedSnapshot {
-  zoneKey: string
-  zoneCode: string
-  zoneName: string
-  clients: GeocodedLocation[]
-  route: Awaited<ReturnType<typeof computeRoute>>
-  segments: RoutePlanSegment[]
 }
 
 interface DemoSummary {
@@ -348,11 +270,60 @@ const fixtureObjectId = (key: string): Types.ObjectId => new Types.ObjectId(
   createHash('sha256').update(`${FIXTURE_NAMESPACE}:${key}`).digest('hex').slice(0, 24)
 )
 
-const ownedFixtureKeys = (serviceDate: Date): Array<{ collection: string, key: string }> => {
+const stockExpiry = (now: Date, index: number): Date => {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: STOCK_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)
+  const value = (type: string): number => Number(parts.find((part) => part.type === type)?.value)
+  const year = value('year')
+  const month = value('month') - 1
+  const day = value('day')
+  if (index < 6) return new Date(Date.UTC(year, month, day + (index < 3 ? -1 : 20)))
+  const lastDay = new Date(Date.UTC(year, month + 7, 0)).getUTCDate()
+  return new Date(Date.UTC(year, month + 6, Math.min(day, lastDay)))
+}
+
+const assertSeedStockEvidence = async (database: DemoDatabase, key: string): Promise<void> => {
+  const productId = fixtureObjectId(key)
+  const bucket = asRecord(await database.collection('stockexpirybuckets').findOne({ _id: fixtureObjectId(`${key}:bucket`) }))
+  const movement = asRecord(await database.collection('inventorymovements').findOne({ _id: fixtureObjectId(`${key}:movement`) }))
+  if (String(bucket?.productId) !== String(productId) || String(movement?.productId) !== String(productId) ||
+      String(movement?.expiryBucketId) !== String(bucket?._id) || movement?.sourceType !== 'SYSTEM_SEED' ||
+      movement.sourceEvent !== 'FIXTURE_STOCK_INITIALIZED') throw new Error(`Missing or conflicting inventory evidence for ${key}`)
+}
+
+const seedProduct = async (database: DemoDatabase, index: number, payload: Record<string, unknown>, now: Date, adminId: Types.ObjectId): Promise<FixtureOutcome> => {
+  if (database.withTransaction === undefined) throw new Error('Demo product stock requires MongoDB transactions')
+  const key = `fixture-product:${index + 1}`
+  const productId = fixtureObjectId(key)
+  const bucketId = fixtureObjectId(`${key}:bucket`)
+  const movementId = fixtureObjectId(`${key}:movement`)
+  const quantity = 50 + index * 7
+  return await database.withTransaction(async (transaction) => {
+    const products = transaction.collection('products')
+    const existing = await products.findOne({ _id: productId })
+    if (existing !== null) {
+      assertOwned(existing, key)
+      if (asRecord(existing)?.fixtureStockVersion === 1) await assertSeedStockEvidence(transaction, key)
+      return FIXTURE_OUTCOME.UPDATED
+    }
+    for (const name of ['stockexpirybuckets', 'inventorymovements']) {
+      if (await transaction.collection(name).findOne({ productId }) !== null) throw new Error(`Existing inventory evidence for missing ${key}`)
+    }
+    const insert = async (name: string, id: Types.ObjectId, fields: Record<string, unknown>): Promise<void> => {
+      const result = await transaction.collection(name).updateOne({ _id: id }, { $setOnInsert: { ...fields, _id: id, createdAt: now, updatedAt: now } }, { upsert: true })
+      if (result.upsertedCount !== 1) throw new Error(`Demo inventory identity conflict for ${key}`)
+    }
+    await insert('products', productId, { ...payload, stock: quantity, inventory: { minimum: 0, expiryTracking: 'TRACKED', baselineStatus: 'RECONCILED' }, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: key, fixtureStockVersion: 1 })
+    await insert('stockexpirybuckets', bucketId, { productId, expiryDate: stockExpiry(now, index), receivedQuantity: quantity, availableQuantity: quantity, committedQuantity: 0 })
+    await insert('inventorymovements', movementId, { productId, expiryBucketId: bucketId, type: 'OPENING', quantity, occurredAt: now, sourceType: 'SYSTEM_SEED', sourceId: FIXTURE_NAMESPACE, sourceEvent: 'FIXTURE_STOCK_INITIALIZED', operationId: key, idempotencyKey: `${FIXTURE_NAMESPACE}:${key}`, rulesVersion: STOCK_RULES_VERSION, createdBy: adminId })
+    return FIXTURE_OUTCOME.INSERTED
+  })
+}
+
+const ownedFixtureKeys = (): Array<{ collection: string, key: string }> => {
   const keys: Array<{ collection: string, key: string }> = []
   const add = (collection: string, key: string): void => { keys.push({ collection, key }) }
-  for (const collection of ['categories', 'brands', 'providers', 'products']) {
-    add(collection, `catalog:${collection === 'categories' ? 'category' : collection === 'brands' ? 'brand' : collection === 'providers' ? 'provider' : 'product'}`)
+  for (const collection of ['categories', 'brands', 'providers']) {
+    add(collection, `catalog:${collection === 'categories' ? 'category' : collection === 'brands' ? 'brand' : 'provider'}`)
   }
   for (const [collection, prefix, count] of [
     ['categories', 'category', DEMO_CATEGORIES.length],
@@ -361,43 +332,12 @@ const ownedFixtureKeys = (serviceDate: Date): Array<{ collection: string, key: s
   ] as const) {
     for (let index = 1; index <= count; index += 1) add(collection, `catalog:${prefix}:${index}`)
   }
-  for (let category = 1; category <= DEMO_CATEGORIES.length; category += 1) {
-    for (let variant = 1; variant <= DEMO_VARIANTS.length; variant += 1) add('products', `catalog:product:${category}:${variant}`)
-  }
   for (const zone of DEMO_ZONES) add('deliveryzones', `zone:${zone.key}`)
-  for (const client of DEMO_ADDRESS_SPECS.slice(1)) {
-    add('clients', client.key)
-    add('sales', `route-sale:${client.key}`)
-    add('itemsales', `route-item-sale:${client.key}`)
-  }
+  for (const [index] of PRODUCT_FIXTURES.entries()) add('products', `fixture-product:${index + 1}`)
+  for (const [index] of CLIENT_FIXTURES.entries()) add('clients', `fixture-client:${index + 1}`)
   add('vehicles', 'vehicle:primary')
   add('routingconfigs', 'routing-config:depot')
-  for (const zone of DEMO_ZONES) add('routeplans', `route-snapshot:${zone.key}`)
-  for (const period of financePeriods(serviceDate)) {
-    for (const [collection, prefix] of [
-      ['sales', 'sale'], ['itemsales', 'item-sale'], ['buys', 'buy'],
-      ['itembuys', 'item-buy'], ['expenses', 'expense']
-    ] as const) add(collection, `finance:${prefix}:${period.key}`)
-    for (let index = 1; index <= 20; index += 1) {
-      add('sales', `finance:sale:${period.key}:${index}`)
-      add('itemsales', `finance:item-sale:${period.key}:${index}`)
-    }
-    for (let index = 1; index <= 6; index += 1) {
-      add('buys', `finance:buy:${period.key}:${index}`)
-      add('itembuys', `finance:item-buy:${period.key}:${index}`)
-    }
-    for (let index = 1; index <= 10; index += 1) add('expenses', `finance:expense:${period.key}:${index}`)
-  }
   add('cashflowconfigs', 'finance:cashflow-config')
-  for (let product = 0; product < 85; product += 1) {
-    const productKey = product === 0 ? 'catalog:product' : `catalog:product:${Math.floor((product - 1) / DEMO_VARIANTS.length) + 1}:${((product - 1) % DEMO_VARIANTS.length) + 1}`
-    add('products', `stock:${productKey}`)
-    for (let bucket = 1; bucket <= 2; bucket += 1) {
-      const key = `stock:bucket:${productKey}:${bucket}`
-      add('stockexpirybuckets', key)
-      add('inventorymovements', `stock:opening:${productKey}:${bucket}`)
-    }
-  }
   return keys
 }
 
@@ -409,9 +349,9 @@ const assertOwned = (value: unknown, key: string): void => {
 }
 
 export const inspectDemoFixtures = async (
-  database: DemoDatabase, serviceDate: Date, missingKeys?: Set<string>
+  database: DemoDatabase, _serviceDate: Date, missingKeys?: Set<string>
 ): Promise<{ total: number, missing: number }> => {
-  const keys = ownedFixtureKeys(serviceDate)
+  const keys = ownedFixtureKeys()
   let missing = 0
   let next = 0
   let failed = false
@@ -420,22 +360,15 @@ export const inspectDemoFixtures = async (
     while (next < keys.length && !failed) {
       const { collection, key } = keys[next++]
       try {
-        const stockProductKey = collection === 'products' && key.startsWith('stock:')
-        const productFixtureKey = stockProductKey ? key.slice('stock:'.length) : key
-        const existing = await database.collection(collection).findOne({ _id: fixtureObjectId(productFixtureKey) })
+        const existing = await database.collection(collection).findOne({ _id: fixtureObjectId(key) })
         if (existing === null) {
           missing += 1
           missingKeys?.add(key)
         } else {
-          if (stockProductKey) {
-            const product = asRecord(existing)
-            const inventory = asRecord(product?.inventory)
-            if (inventory?.fixtureNamespace !== FIXTURE_NAMESPACE || inventory.fixtureKey !== key) {
-              if (product?.inventory !== undefined && product.inventory !== null) throw new Error(`Demo stock fixture identity conflict for ${productFixtureKey}`)
-              missing += 1
-              missingKeys?.add(key)
-            }
-          } else assertOwned(existing, key)
+          assertOwned(existing, key)
+          if (collection === 'products' && asRecord(existing)?.fixtureStockVersion === 1) {
+            await assertSeedStockEvidence(database, key)
+          }
         }
       } catch (error) {
         failed = true
@@ -601,26 +534,6 @@ export const resolveServiceDate = (value: string | undefined, now: Date): Date =
   return date
 }
 
-const financeDate = (key: string, day: number, anchor: Date): Date => {
-  const date = new Date(`${key}-${String(day).padStart(2, '0')}T12:00:00.000Z`)
-  return date > anchor ? new Date(anchor) : date
-}
-
-const financePeriods = (anchor: Date): Array<{ key: string, date: Date, saleTotal: number, buyTotal: number, expenseCents: number }> =>
-  Array.from({ length: 6 }, (_, index) => {
-    const month = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 5 + index, 1))
-    const key = month.toISOString().slice(0, 7)
-    const absoluteIndex = (month.getUTCFullYear() - 2026) * 12 + month.getUTCMonth() - 4
-    const legacy = LEGACY_FINANCE_TOTALS[absoluteIndex]
-    return {
-      key,
-      date: financeDate(key, key === '2026-10' ? 10 : 15, anchor),
-      saleTotal: legacy?.saleTotal ?? 15800 + Math.max(0, absoluteIndex) * 1150,
-      buyTotal: legacy?.buyTotal ?? 7200 + Math.max(0, absoluteIndex) * 650,
-      expenseCents: legacy?.expenseCents ?? 130000 + Math.max(0, absoluteIndex) * 21000
-    }
-  })
-
 const asRecord = (value: unknown): Record<string, unknown> | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   return value as Record<string, unknown>
@@ -638,174 +551,10 @@ export const assertDemoAdmin = async (database: DemoDatabase): Promise<void> => 
   await readAdminId(database)
 }
 
-const manualLocation = (spec: (typeof DEMO_ADDRESS_SPECS)[number]): GeocodedLocation => {
-  const coordinates = MANUAL_DEMO_COORDINATES[spec.key]
-  if (coordinates === undefined) throw new Error(`Missing manual demo coordinates for ${spec.key}`)
-  return {
-    id: spec.key,
-    key: spec.key,
-    name: spec.name,
-    latitude: coordinates.lat,
-    longitude: coordinates.lng,
-    requestedAddress: spec.address,
-    formattedAddress: spec.address,
-    placeId: `manual:${spec.key}`,
-    precision: GEOCODING_PRECISION.APPROXIMATE
-  }
-}
-
-const routeSegmentsFor = (
-  depot: RouteLocation,
-  clients: GeocodedLocation[],
-  matrix: RouteMatrix
-): RoutePlanSegment[] => {
-  const points = [depot, ...clients, depot]
-  return points.slice(0, -1).map((from, index) => {
-    const to = points[index + 1]
-    const segment = matrix.segments.find((candidate) => candidate.fromId === from.id && candidate.toId === to.id)
-    if (segment === undefined) throw new Error('Google Routes matrix did not contain the planned route segment')
-    return {
-      fromStopSequence: index === 0 ? 0 : index,
-      toStopSequence: index === points.length - 2 ? 0 : index + 1,
-      distanceMeters: segment.distanceMeters,
-      durationSeconds: segment.durationSeconds
-    }
-  })
-}
-
-const prepareSeed = async (
-  providers: DemoProviders
-): Promise<{ depot: GeocodedLocation, clients: GeocodedLocation[], snapshots: PreparedSnapshot[] }> => {
-  const depot = manualLocation(DEMO_ADDRESS_SPECS[0])
-  const clients = DEMO_ADDRESS_SPECS.slice(1).map((spec) => manualLocation(spec))
-  const places = [depot, ...clients]
-  if (new Set(places.map((location) => location.placeId)).size !== places.length ||
-      new Set(places.map((location) => `${location.latitude}:${location.longitude}`)).size !== places.length ||
-      places.some((location) => !/san miguel de tucum[aá]n/i.test(location.formattedAddress))) {
-    throw new Error('Demo geocoding did not resolve distinct locations in San Miguel de Tucumán')
-  }
-  const matrix = await validateRoadConnectivity(depot, clients, providers.matrix)
-  const snapshots: PreparedSnapshot[] = []
-
-  for (const zone of DEMO_ZONES) {
-    const zoneClients = clients.filter((client) => client.key.startsWith(`client:${zone.key}:`))
-    const route = await providers.route({ origin: depot, intermediates: zoneClients, destination: depot })
-    snapshots.push({
-      zoneKey: zone.key,
-      zoneCode: zone.code,
-      zoneName: zone.name,
-      clients: zoneClients,
-      route,
-      segments: routeSegmentsFor(depot, zoneClients, matrix)
-    })
-  }
-
-  return { depot, clients, snapshots }
-}
-
-const geocodingDocument = (location: GeocodedLocation, validatedAt: Date, validatedBy: Types.ObjectId): Record<string, unknown> => ({
-  status: GEOCODING_STATUS.CONFIRMED,
-  source: GEOCODING_SOURCE.MANUAL,
-  formattedAddress: location.formattedAddress,
-  placeId: location.placeId,
-  precision: location.precision,
-  validatedAt,
-  validatedBy
-})
-
-const locationDocument = (location: GeocodedLocation, validatedAt: Date, validatedBy: Types.ObjectId): Record<string, unknown> => ({
-  nombreCompleto: location.name,
-  address: location.formattedAddress,
-  telefonos: [3815000000 + Math.abs(location.key.length)],
-  lat: location.latitude,
-  lng: location.longitude,
-  isActive: true,
-  geocoding: geocodingDocument(location, validatedAt, validatedBy)
-})
-
-const buildSnapshot = (
-  snapshot: PreparedSnapshot,
-  depot: GeocodedLocation,
-  serviceDate: Date,
-  userId: Types.ObjectId,
-  vehicleId: Types.ObjectId,
-  saleIds: string[]
-): Record<string, unknown> => {
-  const stops: RoutePlanStop[] = snapshot.clients.map((client, index) => ({
-    clientId: String(fixtureObjectId(client.key)),
-    saleIds: [saleIds[index]],
-    sequence: index + 1,
-    latitude: client.latitude,
-    longitude: client.longitude
-  }))
-  let cumulativeDurationSeconds = 0
-  const stopEstimates = snapshot.segments.slice(0, -1).map((segment, index) => {
-    cumulativeDurationSeconds += segment.durationSeconds + 180
-    return {
-      sequence: index + 1,
-      arrival: new Date(serviceDate.getTime() + cumulativeDurationSeconds * 1000),
-      cumulativeDurationSeconds,
-      calculatedAt: serviceDate,
-      timezone: SERVICE_TIME_ZONE,
-      availability: ROUTE_METRIC_AVAILABILITY.CALCULATED
-    }
-  })
-  const distanceKm = snapshot.route.distanceMeters / 1000
-  return {
-    snapshotVersion: 1,
-    planningDate: serviceDate,
-    zoneSnapshot: { code: snapshot.zoneCode, normalizedName: snapshot.zoneKey, name: snapshot.zoneName },
-    selectedSaleIds: saleIds,
-    depot: {
-      id: depot.id,
-      name: depot.name,
-      latitude: depot.latitude,
-      longitude: depot.longitude,
-      address: depot.formattedAddress,
-      geocoding: {
-        status: GEOCODING_STATUS.CONFIRMED,
-        source: GEOCODING_SOURCE.MANUAL,
-        formattedAddress: depot.formattedAddress,
-        placeId: depot.placeId,
-        precision: depot.precision
-      }
-    },
-    stops,
-    segments: snapshot.segments,
-    metrics: {
-      distanceMeters: snapshot.route.distanceMeters,
-      durationSeconds: snapshot.route.durationSeconds + snapshot.clients.length * 180,
-      stopCount: stops.length,
-      fuelLiters: distanceKm * ROUTE_FUEL_CONSUMPTION / 100,
-      availability: ROUTE_METRIC_AVAILABILITY.CALCULATED
-    },
-    algorithm: { name: DEFAULT_ROUTE_ALGORITHM, version: DEFAULT_ROUTE_ALGORITHM, provider: ROUTE_MODES.GOOGLE_ROUTES },
-    routingConfigRevision: 1,
-    ruleVersion: 'candidate-eligibility-v1',
-    encodedPolyline: snapshot.route.encodedPolyline,
-    warnings: [],
-    audit: { createdBy: String(userId), createdAt: serviceDate },
-    assignments: { driverId: String(userId), vehicleId: String(vehicleId) },
-    fuelAssumptions: {
-      availability: ROUTE_METRIC_AVAILABILITY.CALCULATED,
-      consumptionLitersPer100Km: ROUTE_FUEL_CONSUMPTION,
-      distanceKm,
-      vehicleCode: DEMO_VEHICLE.code,
-      source: 'google-routes',
-      calculatedAt: serviceDate
-    },
-    scheduleAssumptions: { calculatedAt: serviceDate, timezone: SERVICE_TIME_ZONE, source: 'google-routes' },
-    stopEstimates,
-    saleReferences: saleIds.map((saleId) => ({ saleId, versionAtSave: null, statusAtSave: SALE_DELIVERY_STATUS.PENDING }))
-  }
-}
-
 const SEED_WRITE_CONCURRENCY = 8
 
 const seedPreparedData = async (
   database: DemoDatabase,
-  prepared: Awaited<ReturnType<typeof prepareSeed>>,
-  serviceDate: Date,
   now: Date,
   insertOnly = false,
   missingKeys?: Set<string>,
@@ -827,98 +576,69 @@ const seedPreparedData = async (
   const categoryId = fixtureObjectId('catalog:category')
   const brandId = fixtureObjectId('catalog:brand')
   const providerId = fixtureObjectId('catalog:provider')
-  const productId = fixtureObjectId('catalog:product')
-  write('categories', 'catalog:category', categoryId, { descripcion: 'GZ Demo Catalog' })
-  write('brands', 'catalog:brand', brandId, { descripcion: 'GZ Demo Brand' })
-  write('providers', 'catalog:provider', providerId, { descripcion: 'GZ Demo Supplier' })
-  write('products', 'catalog:product', productId, {
-    descripcion: DEMO_PRODUCT.description,
-    stock: 500,
-    codigoBarra: DEMO_PRODUCT.barcode,
-    precioCompra: DEMO_PRODUCT.purchasePrice,
-    precioUnitario: DEMO_PRODUCT.salePrice,
-    categoria: categoryId,
-    marca: brandId,
-    proveedor: providerId
-  })
-
-  const categoryIds: Types.ObjectId[] = []
-  const brandIds: Types.ObjectId[] = []
-  const providerIds: Types.ObjectId[] = []
+  write('categories', 'catalog:category', categoryId, { descripcion: 'Catálogo' })
+  write('brands', 'catalog:brand', brandId, { descripcion: 'Marca' })
+  write('providers', 'catalog:provider', providerId, { descripcion: 'Proveedor' })
   for (const [index, name] of DEMO_CATEGORIES.entries()) {
     const id = fixtureObjectId(`catalog:category:${index + 1}`)
-    categoryIds.push(id)
-    write('categories', `catalog:category:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+    write('categories', `catalog:category:${index + 1}`, id, { descripcion: name })
   }
   for (const [index, name] of DEMO_BRANDS.entries()) {
     const id = fixtureObjectId(`catalog:brand:${index + 1}`)
-    brandIds.push(id)
-    write('brands', `catalog:brand:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+    write('brands', `catalog:brand:${index + 1}`, id, { descripcion: name })
   }
   for (const [index, name] of DEMO_PROVIDERS.entries()) {
     const id = fixtureObjectId(`catalog:provider:${index + 1}`)
-    providerIds.push(id)
-    write('providers', `catalog:provider:${index + 1}`, id, { descripcion: `GZ Demo ${name}` })
+    write('providers', `catalog:provider:${index + 1}`, id, { descripcion: name })
   }
-  for (const [categoryIndex, category] of DEMO_CATEGORIES.entries()) {
-    for (const [variantIndex, variant] of DEMO_VARIANTS.entries()) {
-      const key = `catalog:product:${categoryIndex + 1}:${variantIndex + 1}`
-      const purchasePrice = 80 + categoryIndex * 25 + variantIndex * 7
-      write('products', key, fixtureObjectId(key), {
-        descripcion: `GZ Demo ${category} ${variant}`,
-        stock: 120 + variantIndex * 10,
-        codigoBarra: `GZ-DEMO-${categoryIndex + 1}-${String(variantIndex + 1).padStart(2, '0')}`,
-        precioCompra: purchasePrice,
-        precioUnitario: purchasePrice + 40,
-        categoria: categoryIds[categoryIndex],
-        marca: brandIds[(categoryIndex + variantIndex) % brandIds.length],
-        proveedor: providerIds[(categoryIndex + variantIndex) % providerIds.length]
-      })
-    }
-  }
-
-  const zoneIds = new Map<string, Types.ObjectId>()
   for (const zone of DEMO_ZONES) {
     const id = fixtureObjectId(`zone:${zone.key}`)
-    zoneIds.set(zone.key, id)
-    write('deliveryzones', `zone:${zone.key}`, id, { code: zone.code, name: zone.name, normalizedName: zone.key, active: true })
+    write('deliveryzones', `zone:${zone.key}`, id, { code: zone.code, name: zone.name, normalizedName: zone.name.trim().toLowerCase(), active: true })
   }
 
-  const clientIds = new Map<string, Types.ObjectId>()
-  for (const client of prepared.clients) {
-    const id = fixtureObjectId(client.key)
-    clientIds.set(client.key, id)
-    const zoneKey = client.key.split(':')[1]
-    const zoneId = zoneIds.get(zoneKey)
-    if (zoneId === undefined) throw new Error('Demo client zone is not configured')
-    write('clients', client.key, id, { ...locationDocument(client, now, adminId), deliveryZoneId: zoneId })
+  for (const [index, [description, category, brand, provider, price]] of PRODUCT_FIXTURES.entries()) {
+    const key = `fixture-product:${index + 1}`
+    if (insertOnly && missingKeys !== undefined && !missingKeys.has(key)) continue
+    pending.push(async () => {
+      recordOutcome(summary, 'products', await seedProduct(database, index, {
+        descripcion: description,
+        precioUnitario: price,
+        categoria: fixtureObjectId(`catalog:category:${category}`),
+        marca: fixtureObjectId(`catalog:brand:${brand}`),
+        proveedor: fixtureObjectId(`catalog:provider:${provider}`)
+      }, now, adminId))
+    })
+  }
+  const zoneClientCounts: Record<string, number> = {}
+  for (const [index, [name, zone]] of CLIENT_FIXTURES.entries()) {
+    const key = `fixture-client:${index + 1}`
+    const zoneIndex = zoneClientCounts[zone] ?? 0
+    const [lat, lng] = CLIENT_COORDINATES[zone][zoneIndex]
+    zoneClientCounts[zone] = zoneIndex + 1
+    write('clients', key, fixtureObjectId(key), {
+      nombreCompleto: name,
+      deliveryZoneId: fixtureObjectId(`zone:${zone}`),
+      isActive: true,
+      lat,
+      lng
+    })
   }
 
   const vehicleId = fixtureObjectId('vehicle:primary')
   write('vehicles', 'vehicle:primary', vehicleId, {
     code: DEMO_VEHICLE.code,
     fuelConsumptionLitersPer100Km: DEMO_VEHICLE.fuelConsumptionLitersPer100Km,
-    attributes: { fixture: FIXTURE_NAMESPACE, capacity: 'demo' },
+    attributes: { fixture: FIXTURE_NAMESPACE },
     active: true
   })
 
-  const depot = prepared.depot
   write('routingconfigs', 'routing-config:depot', fixtureObjectId('routing-config:depot'), {
     key: ROUTING_CONFIG_KEYS.DEPOSITO_1,
     enabled: true,
     revision: 1,
     depot: {
-      name: depot.name,
-      latitude: depot.latitude,
-      longitude: depot.longitude,
-      address: depot.formattedAddress,
-      geocoding: {
-        status: GEOCODING_STATUS.CONFIRMED,
-        source: GEOCODING_SOURCE.MANUAL,
-        formattedAddress: depot.formattedAddress,
-        placeId: depot.placeId,
-        precision: depot.precision
-      }
+      name: DEMO_ADDRESS_SPECS[0].name,
+      ...DEPOT_COORDINATES
     },
     fuelConsumptionLitersPer100Km: ROUTE_FUEL_CONSUMPTION,
     maxStops: ROUTE_MAX_STOPS,
@@ -926,165 +646,6 @@ const seedPreparedData = async (
     algorithm: DEFAULT_ROUTE_ALGORITHM,
     updatedBy: adminId
   })
-
-  const routeSaleIds = new Map<string, Types.ObjectId>()
-  for (const client of prepared.clients) {
-    const clientId = clientIds.get(client.key)
-    if (clientId === undefined) throw new Error('Demo client identifier is missing')
-    const saleId = fixtureObjectId(`route-sale:${client.key}`)
-    routeSaleIds.set(client.key, saleId)
-    const quantity = client.key.endsWith(':1') ? 2 : 1
-    write('sales', `route-sale:${client.key}`, saleId, {
-      estado: 'CREATED',
-      total: quantity * DEMO_PRODUCT.salePrice,
-      user: adminId,
-      cliente: client.name,
-      idCliente: clientId,
-      delivery: { status: SALE_DELIVERY_STATUS.PENDING, serviceDate }
-    })
-    write('itemsales', `route-item-sale:${client.key}`, fixtureObjectId(`route-item-sale:${client.key}`), {
-      idVenta: saleId,
-      idProducto: productId,
-      cantidad: quantity,
-      total: quantity * DEMO_PRODUCT.salePrice,
-      estado: true,
-      precioUnitario: DEMO_PRODUCT.salePrice
-    })
-  }
-
-  for (const snapshot of prepared.snapshots) {
-    const saleIds = snapshot.clients.map((client) => String(routeSaleIds.get(client.key)))
-    write('routeplans', `route-snapshot:${snapshot.zoneKey}`, fixtureObjectId(`route-snapshot:${snapshot.zoneKey}`), buildSnapshot(snapshot, depot, serviceDate, adminId, vehicleId, saleIds))
-  }
-
-  for (const period of financePeriods(serviceDate)) {
-    const index = (Number(period.key.slice(0, 4)) - 2026) * 12 + Number(period.key.slice(5)) - 5
-    const client = prepared.clients[index % prepared.clients.length]
-    const clientId = clientIds.get(client.key)
-    if (clientId === undefined) throw new Error('Finance fixture client identifier is missing')
-    const date = period.date
-    const saleId = fixtureObjectId(`finance:sale:${period.key}`)
-    write('sales', `finance:sale:${period.key}`, saleId, {
-      estado: 'COMPLETED',
-      total: period.saleTotal,
-      user: adminId,
-      cliente: client.name,
-      idCliente: clientId,
-      paidAt: date,
-      createdAt: date,
-      delivery: { status: SALE_DELIVERY_STATUS.DELIVERED, deliveredAt: date }
-    })
-    write('itemsales', `finance:item-sale:${period.key}`, fixtureObjectId(`finance:item-sale:${period.key}`), {
-      idVenta: saleId,
-      idProducto: productId,
-      cantidad: 10,
-      total: period.saleTotal,
-      estado: true,
-      precioUnitario: period.saleTotal / 10
-    })
-
-    const buyId = fixtureObjectId(`finance:buy:${period.key}`)
-    write('buys', `finance:buy:${period.key}`, buyId, {
-      estado: 'paid',
-      total: period.buyTotal,
-      user: adminId,
-      proveedor: 'GZ Demo Supplier',
-      fecha: date,
-      paidAt: date,
-      createdAt: date,
-      docNumber: `GZ-DEMO-${period.key}`
-    })
-    write('itembuys', `finance:item-buy:${period.key}`, fixtureObjectId(`finance:item-buy:${period.key}`), {
-      idBuy: buyId,
-      idProducto: productId,
-      cantidad: 10,
-      total: period.buyTotal,
-      precio: period.buyTotal / 10,
-      estado: true
-    })
-
-    write('expenses', `finance:expense:${period.key}`, fixtureObjectId(`finance:expense:${period.key}`), {
-      date,
-      amountCents: period.expenseCents,
-      currency: 'ARS',
-      category: 'Demo operations',
-      type: EXPENSE_TYPE.OPERATIVO,
-      paymentMethod: PAYMENT_METHOD.TRANSFERENCIA,
-      description: `GZ demo operating expense ${period.key}`,
-      relatedTo: { kind: RELATED_KIND.NONE },
-      createdBy: adminId,
-      isDeleted: false
-    })
-
-    for (let saleIndex = 1; saleIndex <= 20; saleIndex += 1) {
-      const key = `finance:sale:${period.key}:${saleIndex}`
-      const saleClient = prepared.clients[(index * 20 + saleIndex) % prepared.clients.length]
-      const saleClientId = clientIds.get(saleClient.key)
-      if (saleClientId === undefined) throw new Error('Finance fixture client identifier is missing')
-      const paidAt = financeDate(period.key, saleIndex, serviceDate)
-      const total = 900 + index * 135 + saleIndex * 47
-      const id = fixtureObjectId(key)
-      write('sales', key, id, {
-        estado: 'COMPLETED',
-        total,
-        user: adminId,
-        cliente: saleClient.name,
-        idCliente: saleClientId,
-        paidAt,
-        createdAt: paidAt,
-        delivery: { status: SALE_DELIVERY_STATUS.DELIVERED, deliveredAt: paidAt }
-      })
-      write('itemsales', `finance:item-sale:${period.key}:${saleIndex}`, fixtureObjectId(`finance:item-sale:${period.key}:${saleIndex}`), {
-        idVenta: id,
-        idProducto: fixtureObjectId(`catalog:product:${(saleIndex % DEMO_CATEGORIES.length) + 1}:${(saleIndex % DEMO_VARIANTS.length) + 1}`),
-        cantidad: 1,
-        total,
-        estado: true,
-        precioUnitario: total
-      })
-    }
-
-    for (let buyIndex = 1; buyIndex <= 6; buyIndex += 1) {
-      const key = `finance:buy:${period.key}:${buyIndex}`
-      const date = financeDate(period.key, buyIndex + 4, serviceDate)
-      const total = 2500 + index * 270 + buyIndex * 115
-      const id = fixtureObjectId(key)
-      write('buys', key, id, {
-        estado: 'paid',
-        total,
-        user: adminId,
-        proveedor: `GZ Demo ${DEMO_PROVIDERS[(buyIndex - 1) % DEMO_PROVIDERS.length]}`,
-        fecha: date,
-        paidAt: date,
-        createdAt: date,
-        docNumber: `GZ-DEMO-${period.key}-${buyIndex}`
-      })
-      write('itembuys', `finance:item-buy:${period.key}:${buyIndex}`, fixtureObjectId(`finance:item-buy:${period.key}:${buyIndex}`), {
-        idBuy: id,
-        idProducto: fixtureObjectId(`catalog:product:1:${buyIndex}`),
-        cantidad: 10,
-        total,
-        precio: total / 10,
-        estado: true
-      })
-    }
-
-    for (let expenseIndex = 1; expenseIndex <= 10; expenseIndex += 1) {
-      const key = `finance:expense:${period.key}:${expenseIndex}`
-      write('expenses', key, fixtureObjectId(key), {
-        date: financeDate(period.key, expenseIndex + 10, serviceDate),
-        amountCents: 15000 + index * 2000 + expenseIndex * 700,
-        currency: 'ARS',
-        category: ['Fuel', 'Utilities', 'Operations', 'Rent'][expenseIndex % 4],
-        type: EXPENSE_TYPE.OPERATIVO,
-        paymentMethod: PAYMENT_METHOD.TRANSFERENCIA,
-        description: `GZ demo operating expense ${period.key} ${expenseIndex}`,
-        relatedTo: { kind: RELATED_KIND.NONE },
-        createdBy: adminId,
-        isDeleted: false
-      })
-    }
-  }
 
   write('cashflowconfigs', 'finance:cashflow-config', fixtureObjectId('finance:cashflow-config'), {
     openingBalance: 100000,
@@ -1109,51 +670,6 @@ const seedPreparedData = async (
   }
 
   await flush()
-  for (let productIndex = 0; productIndex < 85; productIndex += 1) {
-    const productKey = productIndex === 0 ? 'catalog:product' : `catalog:product:${Math.floor((productIndex - 1) / DEMO_VARIANTS.length) + 1}:${((productIndex - 1) % DEMO_VARIANTS.length) + 1}`
-    const stockKey = `stock:${productKey}`
-    const productId = fixtureObjectId(productKey)
-    const physicalQuantity = productIndex === 0 ? 500 : 120 + ((productIndex - 1) % DEMO_VARIANTS.length) * 10
-    const firstQuantity = Math.floor(physicalQuantity * (productIndex % 2 === 0 ? 0.7 : 0.35))
-    const quantities = [firstQuantity, physicalQuantity - firstQuantity]
-    const minimum = productIndex % 5 === 0 ? physicalQuantity + 5 : Math.max(10, physicalQuantity - 10)
-    const productCollection = database.collection('products')
-    if (!insertOnly || missingKeys === undefined || missingKeys.has(stockKey)) {
-      const productResult = await productCollection.updateOne(
-        { _id: productId, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: productKey, inventory: { $exists: false } },
-        { $set: { inventory: { minimum, expiryTracking: 'tracked', baselineStatus: 'reconciled', lastReconciledAt: serviceDate, lastReconciledBy: adminId, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: stockKey } }, $setOnInsert: {} },
-        { upsert: false }
-      )
-      if (productResult.upsertedCount > 0 || productResult.modifiedCount === 0) {
-        const existing = await productCollection.findOne({ _id: productId })
-        const existingProduct = asRecord(existing)
-        const inventory = asRecord(existingProduct?.inventory)
-        if (inventory?.fixtureNamespace !== FIXTURE_NAMESPACE || inventory.fixtureKey !== stockKey) {
-          throw new Error(`Demo stock fixture identity conflict for ${productKey}`)
-        }
-      } else recordOutcome(summary, 'products', FIXTURE_OUTCOME.UPDATED)
-    }
-    for (let bucketIndex = 0; bucketIndex < 2; bucketIndex += 1) {
-      const bucketKey = `stock:bucket:${productKey}:${bucketIndex + 1}`
-      const movementKey = `stock:opening:${productKey}:${bucketIndex + 1}`
-      const bucketId = fixtureObjectId(bucketKey)
-      const expiryDate = new Date(`${bucketIndex === 0 ? '2026-10-15' : '2026-11-30'}T00:00:00.000Z`)
-      const quantity = quantities[bucketIndex]
-      const bucketPayload = { _id: bucketId, productId, expiryDate, receivedQuantity: quantity, availableQuantity: quantity, committedQuantity: 0, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: bucketKey, createdAt: now, updatedAt: now }
-      if (quantity > 0) {
-        if (!insertOnly || missingKeys === undefined || missingKeys.has(bucketKey)) {
-          const outcome = insertOnly ? await insertMissingFixture(database.collection('stockexpirybuckets'), bucketKey, bucketId, bucketPayload, now) : await upsertFixture(database.collection('stockexpirybuckets'), bucketKey, bucketId, bucketPayload, now)
-          recordOutcome(summary, 'stockexpirybuckets', outcome)
-        }
-        const movementId = fixtureObjectId(movementKey)
-        const movementPayload = { _id: movementId, productId, expiryBucketId: bucketId, type: 'OPENING', quantity, occurredAt: serviceDate, sourceType: 'opening-count', sourceId: 'gzapi-demo-stock-v1', sourceEvent: 'opening-count', operationId: 'gzapi-demo-stock-opening-v1', idempotencyKey: movementKey, rulesVersion: 'stock-rules-v1', reason: 'Fictional demo opening balance', createdBy: adminId, fixtureNamespace: FIXTURE_NAMESPACE, fixtureKey: movementKey, createdAt: now, updatedAt: now }
-        if (!insertOnly || missingKeys === undefined || missingKeys.has(movementKey)) {
-          const movement = insertOnly ? await insertMissingFixture(database.collection('inventorymovements'), movementKey, movementId, movementPayload, now) : await upsertFixture(database.collection('inventorymovements'), movementKey, movementId, movementPayload, now)
-          recordOutcome(summary, 'inventorymovements', movement)
-        }
-      }
-    }
-  }
   return summary
 }
 
@@ -1169,7 +685,7 @@ export const runDemoSeed = async (input: {
   if (input.dryRun) {
     return { dryRun: true, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length }
   }
-  if (input.database === undefined || input.providers === undefined) throw new Error('Demo seed dependencies are not configured')
+  if (input.database === undefined) throw new Error('Demo seed dependencies are not configured')
   const serviceDate = input.serviceDate ?? resolveServiceDate(undefined, input.now ?? new Date())
   if (Number.isNaN(serviceDate.getTime())) throw new Error('DEMO_SERVICE_DATE must be a real calendar date')
   if (input.insertOnly === true) {
@@ -1179,12 +695,10 @@ export const runDemoSeed = async (input: {
       return { dryRun: false, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length, summary: createSummary() }
     }
     const adminId = await readAdminId(input.database)
-    const prepared = await prepareSeed(input.providers)
-    const summary = await seedPreparedData(input.database, prepared, serviceDate, input.now ?? new Date(), true, missingKeys, adminId)
+    const summary = await seedPreparedData(input.database, input.now ?? new Date(), true, missingKeys, adminId)
     return { dryRun: false, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length, summary }
   }
-  const prepared = await prepareSeed(input.providers)
-  const summary = await seedPreparedData(input.database, prepared, serviceDate, input.now ?? new Date(), input.insertOnly)
+  const summary = await seedPreparedData(input.database, input.now ?? new Date(), input.insertOnly)
   return { dryRun: false, target: { database: input.target.database, remote: input.target.remote }, addressCount: DEMO_ADDRESS_SPECS.length, summary }
 }
 
@@ -1196,7 +710,6 @@ export const seedDemoFixtures = async (): Promise<DemoSeedResult> => {
     target,
     dryRun: false,
     database: mongoDatabase(),
-    providers: { geocoder: geocode, matrix: computeMatrix, route: computeRoute },
     serviceDate: resolveServiceDate('2026-10-21', new Date()),
     insertOnly: true
   })
@@ -1205,62 +718,28 @@ export const seedDemoFixtures = async (): Promise<DemoSeedResult> => {
 export const mongoDatabase = (): DemoDatabase => {
   const database = mongoose.connection.db
   if (database === undefined) throw new Error('MongoDB connection did not expose a database')
-  return {
+  const adapter = (session?: mongoose.mongo.ClientSession): DemoDatabase => ({
     collection: (name: string): FixtureCollection => {
       const collection = database.collection(name)
       return {
-        findOne: async (filter) => await collection.findOne(filter as Document),
+        findOne: async (filter) => await collection.findOne(filter as Document, { session }),
         updateOne: async (filter, update, options) => {
-          const result = await collection.updateOne(filter as Document, update as unknown as UpdateFilter<Document>, options)
+          const result = await collection.updateOne(filter as Document, update as unknown as UpdateFilter<Document>, { ...options, session })
           return { upsertedCount: result.upsertedCount, modifiedCount: result.modifiedCount }
         }
       }
+    },
+    withTransaction: async (work) => {
+      const transaction = await mongoose.connection.startSession()
+      try {
+        let result: Awaited<ReturnType<typeof work>> | undefined
+        await transaction.withTransaction(async () => { result = await work(adapter(transaction)) })
+        if (result === undefined) throw new Error('Demo inventory transaction did not complete')
+        return result
+      } finally { await transaction.endSession() }
     }
-  }
-}
-
-const printResult = (result: DemoSeedResult): void => {
-  if (result.dryRun) {
-    process.stdout.write(`Demo seed dry run: ${result.addressCount} candidate addresses planned for ${result.target.remote ? 'remote' : 'local'} database ${result.target.database}\n`)
-    process.stdout.write('No database connection, geocoding request, or write was performed.\n')
-    return
-  }
-  process.stdout.write(`Demo seed completed for ${result.target.remote ? 'remote' : 'local'} database ${result.target.database}\n`)
-  process.stdout.write(`Fixtures: ${result.summary?.inserted ?? 0} inserted, ${result.summary?.updated ?? 0} updated\n`)
-}
-
-const safeErrorMessage = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : 'Demo seed failed'
-  return message.replace(/mongodb(?:\+srv)?:\/\/[^\s]+/gi, '[redacted MongoDB target]')
-}
-
-const main = async (): Promise<void> => {
-  const args = parseDemoArguments(process.argv.slice(2))
-  if (args.dryRun) {
-    printResult(await runDemoSeed({ target: args.target, dryRun: true }))
-    return
-  }
-  await mongoose.connect(args.target.uri)
-  try {
-    const result = await runDemoSeed({
-      target: args.target,
-      dryRun: false,
-      database: mongoDatabase(),
-      providers: { geocoder: geocode, matrix: computeMatrix, route: computeRoute },
-      serviceDate: resolveServiceDate(process.env.DEMO_SERVICE_DATE, new Date()),
-      insertOnly: true
-    })
-    printResult(result)
-  } finally {
-    await mongoose.disconnect()
-  }
-}
-
-if (require.main === module) {
-  void main().catch((error: unknown) => {
-    process.stderr.write(`${safeErrorMessage(error)}\n`)
-    process.exitCode = 1
   })
+  return adapter()
 }
 
 export { DEMO_ADDRESS_SPECS, FIXTURE_NAMESPACE }

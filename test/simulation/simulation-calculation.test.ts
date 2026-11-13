@@ -1,10 +1,24 @@
 import { strict as assert } from 'node:assert'
 
 import { createInMemorySimulationDemoRepository } from '../../src/models/simulationDemoFixture'
-import { simulateDemoScenario } from '../../src/services/simulation'
+import { getSimulationDemoCatalog, getSimulationDemoRoutes, getSimulationDemoScenarios, getSimulationDemoScenarioDetail, seedSimulationDemoFixtures, simulateDemoScenario } from '../../src/services/simulation'
 import { calculateDemoSimulation } from '../../src/services/simulationCalculation'
 
 describe('demo simulation calculation', () => {
+  it('never seeds missing fixtures during demo reads or scenario creation', async () => {
+    const repository = createInMemorySimulationDemoRepository()
+    let seeds = 0
+    repository.seed = async () => { seeds++ }
+    const input = { routeId: 'R-001', parameters: { fuelPricePerLiter: 1, hourlyRate: 1, generalCosts: 0, includeSurplus: false }, products: [] }
+    for (const operation of [
+      async () => await getSimulationDemoRoutes(1, repository),
+      async () => await getSimulationDemoCatalog(repository),
+      async () => await getSimulationDemoScenarios(1, repository),
+      async () => await getSimulationDemoScenarioDetail('ESC-014', repository),
+      async () => await simulateDemoScenario(input, new Date(), repository)
+    ]) await assert.rejects(operation, /fixtures/i)
+    assert.equal(seeds, 0)
+  })
   const route = { fuelLiters: 0.5, durationHours: 0 }
   const products = [{ unitPrice: 1.25, quantity: 1.2 }]
   const parameters = { fuelPricePerLiter: 1, hourlyRate: 0, generalCosts: 0, includeSurplus: false }
@@ -41,6 +55,10 @@ describe('demo simulation calculation', () => {
 
   it('preserves the demo service response and persisted detail', async () => {
     const repository = createInMemorySimulationDemoRepository()
+    await seedSimulationDemoFixtures(repository)
+    const catalog = await getSimulationDemoCatalog(repository)
+    assert.deepEqual(catalog.available.map(({ name }) => name), ['Agua 500 ml', 'Gaseosa 1.5 L', 'Jugo 1 L', 'Aperitivos', 'Panificados'])
+    assert.deepEqual(catalog.included.map(({ name }) => name), catalog.available.map(({ name }) => name))
     const input = {
       routeId: 'R-001',
       parameters: { fuelPricePerLiter: 1, hourlyRate: 1, generalCosts: 0, includeSurplus: false },

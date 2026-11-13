@@ -12,7 +12,6 @@ import * as provider from '../../src/services/routeMatrixProvider'
 import * as vehicles from '../../src/services/vehicle'
 import { getCandidates, preview, saveSnapshot, saveLegacySnapshot } from '../../src/services/routePlan'
 import { assignmentGuard, assertAssignmentIndex, ASSIGNMENT_INDEX_NAME, isDuplicateIndexError, unassignedCandidates } from '../../src/services/routeAssignment'
-import { assignmentCollectionAdapter, migrateAssignmentIndex, type AssignmentCollection } from '../../migrations/route-plan-005-assignment-index'
 
 const integration = process.env.RUN_ROUTE_ASSIGNMENT_MONGO === '1' ? describe : describe.skip
 
@@ -49,13 +48,7 @@ integration('route assignment local MongoDB integration', function () {
       const historicalSale = sale()
       const historicalIds = [id(), id()]
       await collection.insertMany(historicalIds.map((_id) => ({ _id, selectedSaleIds: [historicalSale], stops: [{ saleId: historicalSale }] })))
-      const adapter = assignmentCollectionAdapter(collection as unknown as AssignmentCollection)
-      const preview = await migrateAssignmentIndex(adapter)
-      assert.equal(preview.status, 'preview')
-      assert.equal(preview.audit.snapshots, 2)
-      assert.equal(preview.audit.clean, true)
-      const applied = await migrateAssignmentIndex(adapter, true)
-      assert.equal(applied.status, 'created')
+      await collection.createIndex({ reservedSaleIds: 1 }, { name: ASSIGNMENT_INDEX_NAME, unique: true, sparse: true })
       assert.equal(await collection.countDocuments({ _id: { $in: historicalIds } }), 2)
       await assertAssignmentIndex(assignmentGuard)
       const catalog = await collection.listIndexes().toArray()
@@ -129,8 +122,7 @@ integration('route assignment local MongoDB integration', function () {
       const reviewed = await preview(input([0, 1]), { actor: actors[0] })
       await assert.rejects(async () => await saveSnapshot({ receipt: reviewed.receipt as string }, actors[0]), { name: 'AssignmentSafetyError' })
       await assert.rejects(async () => await saveLegacySnapshot(input([0, 1]), actors[1]), { name: 'AssignmentSafetyError' })
-      const adapter = assignmentCollectionAdapter(RoutePlanModel.collection as unknown as AssignmentCollection)
-      assert.equal((await migrateAssignmentIndex(adapter, true)).status, 'created')
+      await RoutePlanModel.collection.createIndex({ reservedSaleIds: 1 }, { name: ASSIGNMENT_INDEX_NAME, unique: true, sparse: true })
       const overlap = await Promise.allSettled([
         saveSnapshot({ receipt: reviewed.receipt as string }, actors[0]),
         saveLegacySnapshot(input([0, 1]), actors[1])

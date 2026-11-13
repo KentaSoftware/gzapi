@@ -2,16 +2,12 @@ import { expect } from 'chai'
 import mongoose from 'mongoose'
 import RoleModel from '../../src/models/role'
 import UserModel from '../../src/models/user'
-import ItemSaleModel from '../../src/models/itemSale'
-import ProductModel from '../../src/models/product'
 import { seedDatabase, SIMULATION_ROLE_GRANTS } from '../../src/services/seed'
 import { verified } from '../../src/utils/bcrypt.handle'
-import { seed as seedRoutePlanFixtures } from '../../migrations/route-plan-002-seed-test-data'
 import { createInMemorySimulationDemoRepository } from '../../src/models/simulationDemoFixture'
 import { seedSimulationDemoFixtures } from '../../src/services/simulation'
 
 const TEST_DB_URI = 'mongodb://localhost:27017/gzapi_phase0_test'
-const ROUTE_TEST_DB_URI = 'mongodb://127.0.0.1:27017/test_route_plan'
 
 const PHASE_0_GRANTS = {
   Propietario: ['confirm_sale_payment', 'refund_sale', 'confirm_purchase_payment', 'receive_purchase', 'adjust_stock', 'read_route_plan', 'create_route_plan', 'confirm_client_location', 'manage_route_config', 'manage_delivery_zone', 'simulation:read', 'simulation:write'],
@@ -32,7 +28,6 @@ describe('simulation role permission mapping', () => {
     expect(SIMULATION_ROLE_GRANTS.Preventista).to.deep.equal([])
   })
 })
-
 const stringAscending = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
 
 async function withAdminPassword (password: string, action: () => Promise<void>): Promise<void> {
@@ -214,46 +209,5 @@ describe('Simulation demo seed fixtures', () => {
       'ESC-014', 'ESC-013', 'ESC-012', 'ESC-011', 'ESC-010', 'ESC-009', 'ESC-008',
       'ESC-007', 'ESC-006', 'ESC-005', 'ESC-004', 'ESC-003', 'ESC-002', 'ESC-001'
     ])
-  })
-})
-
-describe('Route plan fixture item seed idempotency', () => {
-  before(async () => {
-    await mongoose.connect(ROUTE_TEST_DB_URI)
-    await mongoose.connection.dropDatabase()
-    await mongoose.disconnect()
-  })
-
-  after(async () => {
-    await mongoose.connect(ROUTE_TEST_DB_URI)
-    await mongoose.connection.dropDatabase()
-    await mongoose.disconnect()
-  })
-
-  it('seeds active item sales once per route sale with stable product and unit counts', async () => {
-    const first = await seedRoutePlanFixtures()
-    expect(first.summary.sales.inserted).to.equal(34)
-    expect(first.summary.itemSales.inserted).to.equal(34)
-    expect(first.summary.products.inserted).to.equal(1)
-
-    await mongoose.connect(ROUTE_TEST_DB_URI)
-    const firstItems = await ItemSaleModel.find({ estado: true }).lean()
-    expect(firstItems).to.have.length(34)
-    expect(new Set(firstItems.map((item) => String(item.idVenta))).size).to.equal(34)
-    expect(firstItems.reduce((total, item) => total + item.cantidad, 0)).to.equal(67)
-    expect(await ProductModel.countDocuments({ codigoBarra: 'ROUTE-TEST-PRODUCT-001' })).to.equal(1)
-    await mongoose.disconnect()
-
-    const second = await seedRoutePlanFixtures()
-    expect(second.summary.sales.updated).to.equal(34)
-    expect(second.summary.itemSales.updated).to.equal(34)
-    expect(second.summary.products.updated).to.equal(1)
-
-    await mongoose.connect(ROUTE_TEST_DB_URI)
-    const secondItems = await ItemSaleModel.find({ estado: true }).lean()
-    expect(secondItems).to.have.length(34)
-    expect(new Set(secondItems.map((item) => String(item.idVenta))).size).to.equal(34)
-    expect(secondItems.reduce((total, item) => total + item.cantidad, 0)).to.equal(67)
-    await mongoose.disconnect()
   })
 })
