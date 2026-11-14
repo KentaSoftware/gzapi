@@ -43,6 +43,7 @@ describe('Phase 0 — Vercel REST handler', () => {
     }) as Express
     const handler = createVercelHandler({
       connect: async () => { connectCalls += 1 },
+      initializeAssignmentIndex: async () => {},
       seed: async () => { seedCalls += 1 },
       createApp: async () => {
         appCalls += 1
@@ -77,6 +78,7 @@ describe('Phase 0 — Vercel REST handler', () => {
         connectCalls += 1
         if (connectCalls === 1) throw error
       },
+      initializeAssignmentIndex: async () => {},
       seed: async () => {},
       createApp: async () => app
     })
@@ -102,13 +104,35 @@ describe('Phase 0 — Vercel REST handler', () => {
     }) as Express
     const handler = createVercelHandler({
       connect: async () => { order.push('connect') },
+      initializeAssignmentIndex: async () => { order.push('index') },
       seed: async () => { order.push('base') },
       createApp: async () => { order.push('app'); return app }
     })
     const served = response()
     await handler(request, served as unknown as Response)
     expect(served.statusCode).to.equal(200)
-    expect(order).to.deep.equal(['connect', 'base', 'app', 'request'])
+    expect(order).to.deep.equal(['connect', 'index', 'base', 'app', 'request'])
+  })
+
+  it('fails closed and retries when index initialization fails', async () => {
+    const index = sinon.stub().onFirstCall().rejects(new Error('index failure')).onSecondCall().resolves()
+    const seed = sinon.stub().resolves()
+    const app = ((_: Request, res: Response) => { res.status(200).json({ ok: true }) }) as Express
+    const handler = createVercelHandler({
+      connect: async () => {},
+      initializeAssignmentIndex: index,
+      seed,
+      createApp: async () => app
+    })
+    sinon.stub(console, 'error')
+    const failed = response()
+    await handler(request, failed as unknown as Response)
+    expect(failed.statusCode).to.equal(500)
+    expect(seed.callCount).to.equal(0)
+    const retried = response()
+    await handler(request, retried as unknown as Response)
+    expect(retried.statusCode).to.equal(200)
+    expect(seed.callCount).to.equal(1)
   })
 })
 
