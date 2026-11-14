@@ -4,7 +4,7 @@ import sinon from 'sinon'
 import request from 'supertest'
 
 import { createApp } from '../../src/app'
-import type { SimulationConfiguration } from '../../src/config/simulation'
+import { readSimulationConfig, type SimulationConfiguration } from '../../src/config/simulation'
 import {
   SIMULATION_DATA_QUALITY,
   SIMULATION_ERROR_CODES,
@@ -79,8 +79,7 @@ const serviceDependencies = (
   ...overrides
 })
 
-const simulationConfig = (enabled = true): SimulationConfiguration => ({
-  enabled,
+const simulationConfig = (): SimulationConfiguration => ({
   routeContractAllowlist: [validRouteSnapshot.contractVersion],
   stockContractAllowlist: [validStockSnapshot.contractVersion]
 })
@@ -138,7 +137,6 @@ describe('Simulation API', () => {
   })
 
   const configure = (options: {
-    enabled?: boolean
     service?: Partial<SimulationServiceDependencies>
     getConfig?: () => SimulationConfiguration
     demoRepository?: ReturnType<typeof createInMemorySimulationDemoRepository>
@@ -146,7 +144,7 @@ describe('Simulation API', () => {
     app.locals.simulationRouteDependencies = {
       checkJwt,
       checkPermission,
-      getConfig: options.getConfig ?? (() => simulationConfig(options.enabled ?? true)),
+      getConfig: options.getConfig ?? (() => simulationConfig()),
       service: serviceDependencies(options.service),
       demoRepository: options.demoRepository ?? defaultDemoRepository
     }
@@ -179,19 +177,15 @@ describe('Simulation API', () => {
       expect(issueBaseScenarioToken.firstCall.args[1]).to.deep.equal({ actorId: USER_ID })
     })
 
-    it('SIMULATION_DISABLED: returns 503 with the correlation id when the flag is off', async () => {
-      configure({ enabled: false })
+    it('creates a base scenario when the retired flag is false', async () => {
+      configure({ getConfig: () => readSimulationConfig({ SIMULATION_ENABLED: 'false' }) })
 
       const response = await post('/simulation/base-scenarios', { routeId: ROUTE_ID }, {
         'x-correlation-id': 'corr-base-flag'
       })
 
-      expect(response.status).to.equal(503)
-      expect(response.body).to.deep.equal({
-        code: SIMULATION_ERROR_CODES.DISABLED,
-        message: 'Simulation is disabled',
-        correlationId: 'corr-base-flag'
-      })
+      expect(response.status).to.equal(200)
+      expect(response.body.token).to.equal(ISSUED_TOKEN)
       expect(response.headers['x-correlation-id']).to.equal('corr-base-flag')
     })
 
@@ -353,13 +347,12 @@ describe('Simulation API', () => {
       expect(verifyBaseScenarioToken.calledOnceWith(ISSUED_TOKEN, { actorId: USER_ID })).to.equal(true)
     })
 
-    it('SIMULATION_DISABLED: returns 503 when the flag is off', async () => {
-      configure({ enabled: false })
+    it('calculates a variant when the retired flag is false', async () => {
+      configure({ getConfig: () => readSimulationConfig({ SIMULATION_ENABLED: 'false' }) })
 
       const response = await post(calculatePath(), validVariant())
 
-      expect(response.status).to.equal(503)
-      expect(response.body.code).to.equal(SIMULATION_ERROR_CODES.DISABLED)
+      expect(response.status).to.equal(200)
     })
 
     it('returns 403 when the actor lacks simulation:write', async () => {
@@ -481,8 +474,8 @@ describe('Simulation API', () => {
       products: [{ id: 'agua-500', quantity: 10 }]
     }
 
-    it('serves paginated demo routes and the available/included product catalog without the simulation grant or feature flag', async () => {
-      configure({ enabled: false })
+    it('serves paginated demo routes and the available/included product catalog without the simulation grant', async () => {
+      configure()
 
       const routes = await request(app).get('/simulation/demo/routes?page=1').set('Authorization', AUTH_HEADER).set('x-test-permission', 'deny')
       const catalog = await request(app).get('/simulation/demo/catalog').set('Authorization', AUTH_HEADER).set('x-test-permission', 'deny')
@@ -499,7 +492,7 @@ describe('Simulation API', () => {
     })
 
     it('calculates and stores a scenario in the process-local history', async () => {
-      configure({ enabled: false })
+      configure()
 
       const response = await post('/simulation/demo/scenarios', {
         routeId: 'R-002',

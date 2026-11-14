@@ -116,6 +116,14 @@ npm run lint   # Run the TypeScript lint checks
 npm test       # Run the Mocha test suite
 ```
 
+## Simulation access
+
+Real simulation endpoints require a valid JWT and the existing `simulation:read`
+or `simulation:write` permission (active administrators are authorized by the
+existing admin policy). The retired `SIMULATION_ENABLED` setting is ignored.
+Contract allowlists and other scenario validation still apply. Demo endpoints
+retain their separate JWT-only policy.
+
 ## Demo-data seed at startup
 
 After base roles, simulation and admin initialization, startup inserts missing
