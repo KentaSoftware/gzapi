@@ -2,8 +2,10 @@ import type { Express, Request, Response } from 'express'
 import { createApp } from '../src/app'
 import dbConnect from '../src/config/mongo'
 import { seedDatabase } from '../src/services/seed'
+import { initializeAssignmentIndex } from '../src/services/assignmentIndex'
 export interface InitializationDependencies {
   connect: () => Promise<void>
+  initializeAssignmentIndex: () => Promise<void>
   seed: () => Promise<void>
   createApp: () => Promise<Express>
 }
@@ -23,6 +25,7 @@ export function createVercelHandler (dependencies: InitializationDependencies): 
 
   const initialize = async (): Promise<Express> => {
     await dependencies.connect()
+    await dependencies.initializeAssignmentIndex()
     await dependencies.seed()
     return await dependencies.createApp()
   }
@@ -43,6 +46,7 @@ export function createVercelHandler (dependencies: InitializationDependencies): 
 
 const handler = createVercelHandler({
   connect: dbConnect,
+  initializeAssignmentIndex,
   seed: seedDatabase,
   createApp
 })
