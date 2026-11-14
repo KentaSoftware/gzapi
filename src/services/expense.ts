@@ -56,12 +56,26 @@ class ExpenseService {
       }
     }
 
+    if (dto.type != null && dto.type !== '' && !Object.values(EXPENSE_TYPE).includes(dto.type as EXPENSE_TYPE)) {
+      throw new Error('Tipo de egreso inválido')
+    }
+    if (
+      dto.paymentMethod != null &&
+      dto.paymentMethod !== '' &&
+      !Object.values(PAYMENT_METHOD).includes(dto.paymentMethod as PAYMENT_METHOD)
+    ) {
+      throw new Error('Medio de pago inválido')
+    }
+
     const expense = await ExpenseModel.create({
       date: expenseDate,
       amountCents,
       category: dto.category,
-      type: dto.type,
-      paymentMethod: dto.paymentMethod,
+      ...(dto.type != null && dto.type !== '' ? { type: dto.type } : {}),
+      ...(dto.paymentMethod != null && dto.paymentMethod !== '' ? { paymentMethod: dto.paymentMethod } : {}),
+      ...(dto.comprobante != null && String(dto.comprobante).trim() !== ''
+        ? { comprobante: String(dto.comprobante).trim() }
+        : {}),
       description: dto.description,
       relatedTo: (dto.relatedTo != null) || { kind: RELATED_KIND.NONE },
       createdBy: new Types.ObjectId(userId)
@@ -414,6 +428,11 @@ class ExpenseService {
     if (dto.type != null && dto.type !== '') expense.type = dto.type as any
     if (dto.paymentMethod != null && dto.paymentMethod !== '') expense.paymentMethod = dto.paymentMethod as any
     if (dto.description !== undefined) expense.description = dto.description
+    if (dto.comprobante !== undefined) {
+      expense.comprobante = dto.comprobante === '' || dto.comprobante == null
+        ? undefined
+        : String(dto.comprobante).trim()
+    }
 
     // Validar y actualizar relatedTo
     if (dto.relatedTo != null) {

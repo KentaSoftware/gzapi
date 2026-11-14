@@ -176,9 +176,11 @@ class CashflowService {
       {
         $setOnInsert: {
           openingBalance: 0,
-          reserveMonthsMultiplier: 1,
-          deficitAlertEnabled: true,
-          idleCapitalRecommendMin: 0
+          reserveMinimumAmount: 500000,
+          deficitAlertThresholdPercent: 20,
+          minExpectedRoiPercent: 18,
+          historyEvaluationDays: 90,
+          riskProfile: 'moderado'
         }
       },
       { upsert: true, new: true }
@@ -187,14 +189,18 @@ class CashflowService {
   }
 
   /**
-   * Updates the CashflowConfig singleton (opening balance and/or finance knobs).
+   * Updates the CashflowConfig singleton (opening balance and/or CUR-6 finance knobs).
    */
   async updateConfig (patch: Partial<CashflowConfig>): Promise<CashflowConfig> {
     const $set: Record<string, unknown> = {}
     if (patch.openingBalance !== undefined) $set.openingBalance = patch.openingBalance
-    if (patch.reserveMonthsMultiplier !== undefined) $set.reserveMonthsMultiplier = patch.reserveMonthsMultiplier
-    if (patch.deficitAlertEnabled !== undefined) $set.deficitAlertEnabled = patch.deficitAlertEnabled
-    if (patch.idleCapitalRecommendMin !== undefined) $set.idleCapitalRecommendMin = patch.idleCapitalRecommendMin
+    if (patch.reserveMinimumAmount !== undefined) $set.reserveMinimumAmount = patch.reserveMinimumAmount
+    if (patch.deficitAlertThresholdPercent !== undefined) {
+      $set.deficitAlertThresholdPercent = patch.deficitAlertThresholdPercent
+    }
+    if (patch.minExpectedRoiPercent !== undefined) $set.minExpectedRoiPercent = patch.minExpectedRoiPercent
+    if (patch.historyEvaluationDays !== undefined) $set.historyEvaluationDays = patch.historyEvaluationDays
+    if (patch.riskProfile !== undefined) $set.riskProfile = patch.riskProfile
 
     const doc = await CashflowConfigModel.findOneAndUpdate(
       {},
@@ -206,11 +212,16 @@ class CashflowService {
 }
 
 function normalizeConfig (doc: any): CashflowConfig {
+  const risk = doc?.riskProfile
+  const riskProfile =
+    risk === 'conservador' || risk === 'moderado' || risk === 'agresivo' ? risk : 'moderado'
   return {
     openingBalance: Number(doc?.openingBalance ?? 0),
-    reserveMonthsMultiplier: Number(doc?.reserveMonthsMultiplier ?? 1),
-    deficitAlertEnabled: doc?.deficitAlertEnabled !== false,
-    idleCapitalRecommendMin: Number(doc?.idleCapitalRecommendMin ?? 0)
+    reserveMinimumAmount: Number(doc?.reserveMinimumAmount ?? 500000),
+    deficitAlertThresholdPercent: Number(doc?.deficitAlertThresholdPercent ?? 20),
+    minExpectedRoiPercent: Number(doc?.minExpectedRoiPercent ?? 18),
+    historyEvaluationDays: Number(doc?.historyEvaluationDays ?? 90),
+    riskProfile
   }
 }
 

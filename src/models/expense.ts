@@ -31,14 +31,19 @@ const ExpenseSchema = new Schema<IExpense>(
     type: {
       type: String,
       enum: Object.values(EXPENSE_TYPE),
-      required: [true, 'El tipo de egreso es obligatorio'],
+      required: false,
       index: true
     },
     paymentMethod: {
       type: String,
       enum: Object.values(PAYMENT_METHOD),
-      required: [true, 'El medio de pago es obligatorio'],
+      required: false,
       index: true
+    },
+    comprobante: {
+      type: String,
+      trim: true,
+      maxlength: [120, 'El comprobante no puede superar 120 caracteres']
     },
     description: {
       type: String,

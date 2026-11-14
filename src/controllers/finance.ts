@@ -1,6 +1,6 @@
 /**
  * FinanceController — /finance dashboard, rules (CU-012), PDF export.
- * Auth: checkJwt + read_cashflow (Spec §7.6 — fine-grained RBAC deferred).
+ * Auth: checkJwt + read_cashflow (fine-grained RBAC deferred).
  */
 
 import { Request, Response } from 'express'
@@ -43,16 +43,12 @@ function parseDateRange (
     })
     return null
   }
-  // Inclusive end-of-day if date-only string (YYYY-MM-DD)
   if (typeof e === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e)) {
     endDate.setUTCHours(23, 59, 59, 999)
   }
   return { startDate, endDate }
 }
 
-/**
- * GET /finance/dashboard?startDate=&endDate=
- */
 export const getDashboard = async ({ query }: RequestExt, res: Response): Promise<void> => {
   try {
     const dates = parseDateRange(query as Record<string, any>, res)
@@ -68,9 +64,6 @@ export const getDashboard = async ({ query }: RequestExt, res: Response): Promis
   }
 }
 
-/**
- * GET /finance/rules
- */
 export const getRules = async (_req: RequestExt, res: Response): Promise<void> => {
   try {
     const config = await financeService.getRulesConfig()
@@ -84,22 +77,20 @@ export const getRules = async (_req: RequestExt, res: Response): Promise<void> =
   }
 }
 
-/**
- * PUT /finance/rules — CU-012 (no fine-grained permission split in this iteration).
- */
 export const updateRules = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
     const patch: Record<string, unknown> = {}
-    if (body.openingBalance !== undefined) patch.openingBalance = Number(body.openingBalance)
-    if (body.reserveMonthsMultiplier !== undefined) {
-      patch.reserveMonthsMultiplier = Number(body.reserveMonthsMultiplier)
+    if (body.reserveMinimumAmount !== undefined) patch.reserveMinimumAmount = Number(body.reserveMinimumAmount)
+    if (body.deficitAlertThresholdPercent !== undefined) {
+      patch.deficitAlertThresholdPercent = Number(body.deficitAlertThresholdPercent)
     }
-    if (body.deficitAlertEnabled !== undefined) {
-      patch.deficitAlertEnabled = Boolean(body.deficitAlertEnabled)
+    if (body.minExpectedRoiPercent !== undefined) {
+      patch.minExpectedRoiPercent = Number(body.minExpectedRoiPercent)
     }
-    if (body.idleCapitalRecommendMin !== undefined) {
-      patch.idleCapitalRecommendMin = Number(body.idleCapitalRecommendMin)
+    if (body.historyEvaluationDays !== undefined) {
+      patch.historyEvaluationDays = Number(body.historyEvaluationDays)
     }
+    if (body.riskProfile !== undefined) patch.riskProfile = body.riskProfile
     if (Object.keys(patch).length === 0) {
       res.status(400).json({ error: 'At least one rule field is required' })
       return
@@ -119,9 +110,6 @@ export const updateRules = async ({ body }: RequestExt, res: Response): Promise<
   }
 }
 
-/**
- * GET /finance/report.pdf?startDate=&endDate=
- */
 export const exportReportPdf = async ({ query }: RequestExt, res: Response): Promise<void> => {
   try {
     const dates = parseDateRange(query as Record<string, any>, res)
@@ -133,7 +121,7 @@ export const exportReportPdf = async ({ query }: RequestExt, res: Response): Pro
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="golozur360-finance-${dashboard.historical.startDate.slice(0, 10)}.pdf"`
+      `attachment; filename="golozur360-finance-${dashboard.startDate.slice(0, 10)}.pdf"`
     )
     doc.pipe(res)
 
@@ -145,50 +133,44 @@ export const exportReportPdf = async ({ query }: RequestExt, res: Response): Pro
       .text(`Moneda: ${dashboard.currency}`)
     doc.moveDown()
 
-    doc.fillColor('#000').fontSize(14).text('1. Histórico del período', { underline: true })
+    doc.fillColor('#000').fontSize(14).text('1. Resumen del período', { underline: true })
     doc.moveDown(0.3)
     doc.fontSize(11)
-    const h = dashboard.historical
-    doc.text(`Desde: ${h.startDate.slice(0, 10)}  Hasta: ${h.endDate.slice(0, 10)}`)
-    doc.text(`Saldo inicial: ARS ${h.openingBalance.toFixed(2)}`)
-    doc.text(`Ingresos: ARS ${h.totalInflows.toFixed(2)}`)
-    doc.text(`Egresos: ARS ${h.totalOutflows.toFixed(2)}`)
-    doc.text(`Flujo neto: ARS ${h.netCashFlow.toFixed(2)}`)
-    doc.text(`Saldo final: ARS ${h.closingBalance.toFixed(2)}`)
+    doc.text(`Desde: ${dashboard.startDate.slice(0, 10)}  Hasta: ${dashboard.endDate.slice(0, 10)}`)
+    if (dashboard.emptyPeriod) {
+      doc.text('No se encontraron registros para las fechas seleccionadas.')
+    }
+    const k = dashboard.kpis
+    doc.text(`Saldo actual: ARS ${k.currentBalance.toFixed(2)}`)
+    doc.text(`Ingresos: ARS ${k.totalInflows.toFixed(2)}`)
+    doc.text(`Egresos: ARS ${k.totalOutflows.toFixed(2)}`)
+    doc.text(`Flujo neto: ARS ${k.netCashFlow.toFixed(2)}`)
+    doc.text(`Capital ocioso: ARS ${k.idleCapital.toFixed(2)}`)
+    doc.text(`Reserva efectiva: ARS ${k.effectiveReserve.toFixed(2)}`)
     doc.moveDown()
 
-    doc.fontSize(14).text('2. Proyección', { underline: true })
+    doc.fontSize(14).text('2. Proyección semanal (real vs proyectado)', { underline: true })
     doc.moveDown(0.3)
     doc.fontSize(11)
-    const p = dashboard.projection
-    if (p.status !== 'ok') {
-      doc.text(`Estado: ${p.status}`)
-      if (p.message) doc.text(p.message)
+    if (dashboard.weeklyProjection.length === 0) {
+      doc.text('Sin semanas en el período.')
     } else {
-      doc.text(`Período proyectado: ${p.periodLabel}`)
-      doc.text(`Ingresos proyectados: ARS ${p.projectedInflows.toFixed(2)}`)
-      doc.text(`Egresos proyectados: ARS ${p.projectedOutflows.toFixed(2)}`)
-      doc.text(`Saldo final proyectado: ARS ${p.projectedClosingBalance.toFixed(2)}`)
-      doc.text(`Reserva mínima: ARS ${p.reserveMinimum.toFixed(2)}`)
-      doc.text(`Capital ocioso: ARS ${p.idleCapital.toFixed(2)}`)
-      doc.text(`Clasificación: ${p.liquidityClass ?? 'n/d'}`)
-      if (p.comparableMonths.length > 0) {
-        doc.moveDown(0.3)
-        doc.text('Meses comparables:')
-        for (const m of p.comparableMonths) {
-          doc.text(
-            `  ${m.label}: ingresos ${m.inflows.toFixed(2)} / egresos ${m.outflows.toFixed(2)}`
-          )
-        }
+      for (const w of dashboard.weeklyProjection) {
+        doc.text(
+          `${w.label}: real ARS ${w.realNet.toFixed(2)} / proyectado ARS ${w.projectedNet.toFixed(2)}`
+        )
       }
     }
     doc.moveDown()
 
-    doc.fontSize(14).text('3. Alertas y recomendaciones', { underline: true })
+    doc.fontSize(14).text('3. Oportunidad / alertas', { underline: true })
     doc.moveDown(0.3)
     doc.fontSize(11)
+    doc.text(`${dashboard.opportunity.title}`)
+    doc.text(`  ${dashboard.opportunity.explanation}`)
+    doc.moveDown(0.3)
     if (dashboard.insights.length === 0) {
-      doc.text('Sin alertas ni recomendaciones para este período.')
+      doc.text('Sin alertas adicionales.')
     } else {
       for (const insight of dashboard.insights) {
         doc.text(`[${insight.type}/${insight.severity}] ${insight.title}`)
