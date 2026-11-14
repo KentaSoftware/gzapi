@@ -1,15 +1,23 @@
 import { Schema, model } from 'mongoose'
 
+export type FinanceRiskProfile = 'conservador' | 'moderado' | 'agresivo'
+
 /**
- * CashflowConfig — singleton for opening balance + editable finance rule knobs (CU-012).
- * Formula version remains finance-rules-v1 in code; these fields only tune thresholds.
+ * CashflowConfig — singleton.
+ * - openingBalance: used by /cashflow and as baseline for Finanzas Saldo Actual (not shown in /finance rules UI).
+ * - CUR-6 knobs: reserve/deficit/ROI/history/risk (avance 2).
  */
 interface ICashflowConfig {
   openingBalance: number
-  /** Multiplier for reserve = avgMonthlyOutflows * this (default 1). */
-  reserveMonthsMultiplier: number
-  deficitAlertEnabled: boolean
-  idleCapitalRecommendMin: number
+  reserveMinimumAmount: number
+  deficitAlertThresholdPercent: number
+  minExpectedRoiPercent: number
+  historyEvaluationDays: number
+  riskProfile: FinanceRiskProfile
+  /** @deprecated avance-1 Spec knobs — kept for backward-compatible documents */
+  reserveMonthsMultiplier?: number
+  deficitAlertEnabled?: boolean
+  idleCapitalRecommendMin?: number
 }
 
 const CashflowConfigSchema = new Schema<ICashflowConfig>(
@@ -19,20 +27,50 @@ const CashflowConfigSchema = new Schema<ICashflowConfig>(
       required: true,
       default: 0
     },
-    reserveMonthsMultiplier: {
+    reserveMinimumAmount: {
       type: Number,
       required: true,
+      default: 500000,
+      min: 0
+    },
+    deficitAlertThresholdPercent: {
+      type: Number,
+      required: true,
+      default: 20,
+      min: 0
+    },
+    minExpectedRoiPercent: {
+      type: Number,
+      required: true,
+      default: 18,
+      min: 0
+    },
+    historyEvaluationDays: {
+      type: Number,
+      required: true,
+      default: 90,
+      min: 1
+    },
+    riskProfile: {
+      type: String,
+      enum: ['conservador', 'moderado', 'agresivo'],
+      required: true,
+      default: 'moderado'
+    },
+    reserveMonthsMultiplier: {
+      type: Number,
+      required: false,
       default: 1,
       min: 0
     },
     deficitAlertEnabled: {
       type: Boolean,
-      required: true,
+      required: false,
       default: true
     },
     idleCapitalRecommendMin: {
       type: Number,
-      required: true,
+      required: false,
       default: 0,
       min: 0
     }

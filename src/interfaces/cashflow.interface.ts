@@ -1,13 +1,8 @@
 /**
- * Cashflow domain interfaces — TICKET-002: cash-flow-real-v1
- *
- * These types describe the shape of cashflow aggregation results returned
- * by CashflowService and exposed through the /cashflow REST endpoints.
- *
- * Design constraint: all monetary amounts are plain decimals (not cents).
- * Expense.amountCents is normalized (÷ 100) inside CashflowService before
- * these types are populated.
+ * Cashflow domain interfaces — cash-flow-real-v1 + finance CUR-6 knobs (avance 2).
  */
+
+export type FinanceRiskProfile = 'conservador' | 'moderado' | 'agresivo'
 
 export interface CashflowMovement {
   /** Resolved cash date: paidAt > fecha > createdAt */
@@ -36,14 +31,19 @@ export interface CashflowSummary {
 
 /**
  * CashflowTimelineEntry — flat movement ordered by cashDate ascending.
- * Alias of CashflowMovement; kept as a named type for future extension.
  */
 export type CashflowTimelineEntry = CashflowMovement
 
 export interface CashflowConfig {
   openingBalance: number
-  /** CU-012 / finance-rules-v1 knobs (defaults applied if missing). */
-  reserveMonthsMultiplier: number
-  deficitAlertEnabled: boolean
-  idleCapitalRecommendMin: number
+  /** CUR-6 — Reserva mínima de seguridad (ARS absoluto). */
+  reserveMinimumAmount: number
+  /** CUR-6 — Umbral de alerta por déficit (%). */
+  deficitAlertThresholdPercent: number
+  /** CUR-6 — ROI mínimo esperado (%) — umbral de análisis. */
+  minExpectedRoiPercent: number
+  /** CUR-6 — Plazos de evaluación histórica (días). */
+  historyEvaluationDays: number
+  /** CUR-6 — Perfil de riesgo. */
+  riskProfile: FinanceRiskProfile
 }

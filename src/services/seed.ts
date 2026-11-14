@@ -681,9 +681,11 @@ const seedPreparedData = async (
 
   write('cashflowconfigs', 'finance:cashflow-config', fixtureObjectId('finance:cashflow-config'), {
     openingBalance: 100000,
-    reserveMonthsMultiplier: 1,
-    deficitAlertEnabled: true,
-    idleCapitalRecommendMin: 25000
+    reserveMinimumAmount: 500000,
+    deficitAlertThresholdPercent: 20,
+    minExpectedRoiPercent: 18,
+    historyEvaluationDays: 90,
+    riskProfile: 'moderado'
   })
 
   const flush = async (): Promise<void> => {

@@ -1,5 +1,5 @@
 /**
- * Minimal unit tests for finance-rules-v1 pure helpers (S-03 / S-04 style).
+ * Unit tests for finance-rules-v2 (CUR-6 / avance 2).
  */
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -7,58 +7,75 @@ const { expect } = require('chai')
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   average,
-  computeReserveMinimum,
+  computeEffectiveReserve,
   computeIdleCapital,
-  classifyLiquidity,
-  listComparableMonthWindows,
-  buildInsights
+  hasDeficitRisk,
+  buildInsights,
+  buildOpportunityCard,
+  riskReserveMultiplier
 } = require('../src/services/financeRules')
 
-describe('finance-rules-v1 — projection math (S-03/S-04)', () => {
-  it('averages three comparable months for projected inflows/outflows', () => {
-    expect(average([900, 1200, 1500])).to.equal(1200)
-    expect(average([300, 600, 900])).to.equal(600)
+describe('finance-rules-v2 — CUR-6 formulas', () => {
+  it('applies risk profile multipliers to reserve', () => {
+    expect(riskReserveMultiplier('moderado')).to.equal(1)
+    expect(riskReserveMultiplier('conservador')).to.equal(1.25)
+    expect(riskReserveMultiplier('agresivo')).to.equal(0.75)
+    expect(computeEffectiveReserve(400000, 'moderado')).to.equal(400000)
+    expect(computeEffectiveReserve(400000, 'conservador')).to.equal(500000)
   })
 
-  it('computes projected closing, reserve and idle capital', () => {
-    const projectedInflows = 1200
-    const projectedOutflows = 600
-    const opening = 600
-    const projectedClosing = opening + projectedInflows - projectedOutflows
-    expect(projectedClosing).to.equal(1200)
-
-    const reserve = computeReserveMinimum(projectedOutflows, 1)
-    expect(reserve).to.equal(600)
-
-    const idle = computeIdleCapital(projectedClosing, reserve)
-    expect(idle).to.equal(600)
-    expect(classifyLiquidity(projectedClosing, reserve)).to.equal('liquidez')
+  it('computes idle capital as max(0, saldo − reserva efectiva)', () => {
+    expect(computeIdleCapital(600000, 500000)).to.equal(100000)
+    expect(computeIdleCapital(400000, 500000)).to.equal(0)
   })
 
-  it('classifies necesidad and en_reserva', () => {
-    expect(classifyLiquidity(400, 600)).to.equal('necesidad')
-    expect(classifyLiquidity(600, 600)).to.equal('en_reserva')
-    expect(computeIdleCapital(400, 600)).to.equal(0)
+  it('flags deficit when below reserve or early threshold', () => {
+    // saldo < reserva → always
+    expect(hasDeficitRisk(400000, 500000, 20)).to.equal(true)
+    // saldo above reserve but below 80% line? 480000 < 500000*0.8=400000? no
+    expect(hasDeficitRisk(450000, 500000, 20)).to.equal(true) // 450k < 500k reserve
+    // early: umbral 20% → line 400000; saldo 390000 < 400000 and also < 500000
+    expect(hasDeficitRisk(390000, 500000, 20)).to.equal(true)
+    // healthy
+    expect(hasDeficitRisk(600000, 500000, 20)).to.equal(false)
   })
 
-  it('lists 3 complete months before projected month (excludes current)', () => {
-    // Projecting from Oct 2026 → windows should be Jul, Aug, Sep 2026
-    const asOfProjectedStart = new Date(Date.UTC(2026, 9, 1)) // Oct 1
-    const windows = listComparableMonthWindows(asOfProjectedStart, 3)
-    expect(windows).to.have.length(3)
-    expect(windows.map((w: any) => w.label)).to.deep.equal(['2026-07', '2026-08', '2026-09'])
+  it('averages weekly nets for projected series', () => {
+    expect(average([100, 200, 300])).to.equal(200)
+    expect(average([])).to.equal(0)
   })
 
-  it('builds idle-capital recommendation with disclaimer', () => {
+  it('builds M2 insufficient history and disables ROI opportunity', () => {
     const insights = buildInsights({
-      projectionStatus: 'ok',
-      idleCapital: 600,
-      liquidityClass: 'liquidez',
-      reserveMinimum: 600,
-      deficitAlertEnabled: true,
-      idleCapitalRecommendMin: 0
+      historySufficient: false,
+      availableBalance: 800000,
+      effectiveReserve: 500000,
+      idleCapital: 300000,
+      deficitAlertThresholdPercent: 20,
+      minExpectedRoiPercent: 18
     })
-    expect(insights.some((i: any) => i.code === 'FINANCE_REC_REVIEW_IDLE_CAPITAL')).to.equal(true)
-    expect(insights[0].disclaimer || insights.find((i: any) => i.disclaimer)?.disclaimer).to.be.a('string')
+    expect(insights.some((i: any) => i.code === 'FINANCE_INSUFFICIENT_HISTORY')).to.equal(true)
+
+    const card = buildOpportunityCard({
+      historySufficient: false,
+      idleCapital: 300000,
+      deficitRisk: false,
+      minExpectedRoiPercent: 18
+    })
+    expect(card.code).to.equal('CAPITAL_OCIOSO_NO_DETECTADO')
+    expect(card.roiEnabled).to.equal(false)
+  })
+
+  it('builds capital ocioso opportunity with reference ROI when healthy', () => {
+    const card = buildOpportunityCard({
+      historySufficient: true,
+      idleCapital: 125000,
+      deficitRisk: false,
+      minExpectedRoiPercent: 18
+    })
+    expect(card.code).to.equal('CAPITAL_OCIOSO_DETECTADO')
+    expect(card.referenceRoiPercent).to.equal(18)
+    expect(card.roiEnabled).to.equal(true)
+    expect(card.disclaimer).to.be.a('string')
   })
 })

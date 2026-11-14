@@ -1,69 +1,56 @@
 /**
- * Finance module contracts — gestion-financiera Spec (finance-rules-v1).
- * Read-model only: no persisted ledger, snapshots or alerts.
+ * Finance module contracts — CUR-5 / CUR-6 avance 2 (finance-rules-v2).
  */
 
-export const FINANCE_RULES_VERSION = 'finance-rules-v1' as const
+import type { CashflowConfig, CashflowMovement, FinanceRiskProfile } from './cashflow.interface'
 
-export type LiquidityClass = 'liquidez' | 'necesidad' | 'en_reserva'
+export const FINANCE_RULES_VERSION = 'finance-rules-v2' as const
 
-export type FinanceSectionStatus =
-  | 'ok'
-  | 'insufficient_history'
-  | 'data_incomplete'
-  | 'source_unavailable'
-  | 'not_calculable'
+export type { FinanceRiskProfile }
 
+/** Rules editable from /finance (CU-012). openingBalance stays on /cashflow only. */
 export interface FinanceRulesConfig {
-  /** Global opening balance (shared with cashflow). */
-  openingBalance: number
-  /**
-   * Multiplier for minimum reserve = avgMonthlyOutflows * reserveMonthsMultiplier.
-   * Spec default: 1 (one month of average expenses).
-   */
-  reserveMonthsMultiplier: number
-  /** When true, emit visual alert for necesidad financiera. */
-  deficitAlertEnabled: boolean
-  /** Soft threshold (ARS) above which idle-capital recommendations are emphasized. */
-  idleCapitalRecommendMin: number
+  reserveMinimumAmount: number
+  deficitAlertThresholdPercent: number
+  minExpectedRoiPercent: number
+  historyEvaluationDays: number
+  riskProfile: FinanceRiskProfile
 }
 
-export interface ComparableMonthTotals {
-  year: number
-  month: number // 1-12
-  label: string
-  inflows: number
-  outflows: number
-}
-
-export interface FinanceHistoricalBlock {
-  status: FinanceSectionStatus
-  startDate: string
-  endDate: string
-  openingBalance: number
+export interface FinanceKpis {
+  /** Saldo Actual at filter end (baseline openingBalance + cumulative net through endDate). */
+  currentBalance: number
   totalInflows: number
   totalOutflows: number
   netCashFlow: number
-  closingBalance: number
-  kind: 'historical'
+  /** Capital ocioso vs effective reserve (CUR-6). */
+  idleCapital: number
+  effectiveReserve: number
 }
 
-export interface FinanceProjectionBlock {
-  status: FinanceSectionStatus
-  kind: 'projected'
-  rulesVersion: typeof FINANCE_RULES_VERSION
-  periodLabel: string
+export interface FinanceExpenseDistributionSlice {
+  category: string
+  amount: number
+}
+
+export interface FinanceWeeklyPoint {
+  label: string
+  weekIndex: number
   startDate: string
   endDate: string
-  openingBalance: number
-  projectedInflows: number
-  projectedOutflows: number
-  projectedClosingBalance: number
-  reserveMinimum: number
+  realNet: number
+  projectedNet: number
+}
+
+export interface FinanceOpportunityCard {
+  code: 'CAPITAL_OCIOSO_DETECTADO' | 'CAPITAL_OCIOSO_NO_DETECTADO'
+  title: string
+  explanation: string
+  /** ROI de referencia (umbral configurado); null si historial insuficiente. */
+  referenceRoiPercent: number | null
   idleCapital: number
-  liquidityClass: LiquidityClass | null
-  comparableMonths: ComparableMonthTotals[]
-  message?: string
+  roiEnabled: boolean
+  disclaimer?: string
 }
 
 export interface FinanceInsight {
@@ -80,8 +67,18 @@ export interface FinanceDashboard {
   rulesVersion: typeof FINANCE_RULES_VERSION
   currency: 'ARS'
   generatedAt: string
-  historical: FinanceHistoricalBlock
-  projection: FinanceProjectionBlock
+  startDate: string
+  endDate: string
+  /** True when the filtered period has zero movements (CUR-5 empty state). */
+  emptyPeriod: boolean
+  kpis: FinanceKpis
+  timeline: CashflowMovement[]
+  expenseDistribution: FinanceExpenseDistributionSlice[]
+  weeklyProjection: FinanceWeeklyPoint[]
+  recentMovements: CashflowMovement[]
   insights: FinanceInsight[]
-  config: FinanceRulesConfig
+  opportunity: FinanceOpportunityCard
+  /** Full cashflow config including openingBalance (for server use); UI rules omit openingBalance. */
+  config: CashflowConfig
+  historySufficient: boolean
 }

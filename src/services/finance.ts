@@ -1,6 +1,5 @@
 /**
- * FinanceService — Gestión Financiera unificada (Spec finance-rules-v1).
- * Reuses CashflowService derivation rules; adds projection, idle capital, insights.
+ * FinanceService — CUR-5 / CUR-6 avance 2 (finance-rules-v2).
  */
 
 import cashflowService, { buildMovements, resolveCashDate } from './cashflow'
@@ -10,50 +9,36 @@ import ExpenseModel from '../models/expense'
 import {
   FINANCE_RULES_VERSION,
   FinanceDashboard,
-  FinanceHistoricalBlock,
-  FinanceProjectionBlock,
+  FinanceExpenseDistributionSlice,
   FinanceRulesConfig,
-  ComparableMonthTotals
+  FinanceWeeklyPoint
 } from '../interfaces/finance.interface'
+import type { CashflowConfig, CashflowMovement } from '../interfaces/cashflow.interface'
 import {
+  addUtcDays,
   average,
   buildInsights,
-  classifyLiquidity,
+  buildOpportunityCard,
+  computeEffectiveReserve,
   computeIdleCapital,
-  computeReserveMinimum,
-  listComparableMonthWindows,
-  round2
+  hasDeficitRisk,
+  round2,
+  startOfUtcWeek
 } from './financeRules'
 
-const REQUIRED_COMPARABLE_MONTHS = 3
-
 class FinanceService {
+  /** Rules shown/edited from /finance (excludes openingBalance). */
   async getRulesConfig (): Promise<FinanceRulesConfig> {
-    return cashflowService.getOrCreateConfig()
+    const full = await cashflowService.getOrCreateConfig()
+    return this.toRulesConfig(full)
   }
 
   async updateRulesConfig (patch: Partial<FinanceRulesConfig>): Promise<FinanceRulesConfig> {
-    if (patch.reserveMonthsMultiplier !== undefined) {
-      if (typeof patch.reserveMonthsMultiplier !== 'number' || patch.reserveMonthsMultiplier < 0) {
-        throw Object.assign(new Error('reserveMonthsMultiplier must be a number >= 0'), { status: 400 })
-      }
-    }
-    if (patch.idleCapitalRecommendMin !== undefined) {
-      if (typeof patch.idleCapitalRecommendMin !== 'number' || patch.idleCapitalRecommendMin < 0) {
-        throw Object.assign(new Error('idleCapitalRecommendMin must be a number >= 0'), { status: 400 })
-      }
-    }
-    if (patch.openingBalance !== undefined) {
-      if (typeof patch.openingBalance !== 'number' || isNaN(patch.openingBalance)) {
-        throw Object.assign(new Error('openingBalance must be a number'), { status: 400 })
-      }
-    }
-    return cashflowService.updateConfig(patch)
+    this.validateRulesPatch(patch)
+    const full = await cashflowService.updateConfig(patch)
+    return this.toRulesConfig(full)
   }
 
-  /**
-   * Full dashboard for filtered historical period + next-month projection.
-   */
   async getDashboard (startDate: Date, endDate: Date): Promise<FinanceDashboard> {
     if (startDate.getTime() > endDate.getTime()) {
       throw Object.assign(new Error('FINANCE_INVALID_PERIOD'), {
@@ -62,28 +47,130 @@ class FinanceService {
       })
     }
 
-    const config = await this.getRulesConfig()
+    const config = await cashflowService.getOrCreateConfig()
     const docs = await this.loadSourceDocs()
+    const periodMovements = buildMovements(docs, { startDate, endDate })
+    const emptyPeriod = periodMovements.length === 0
 
-    const historical = this.buildHistorical(docs, config, startDate, endDate)
-    const projection = this.buildProjection(docs, config, endDate, historical)
+    const totalInflows = round2(
+      periodMovements.filter(m => m.type === 'inflow').reduce((s, m) => s + m.amount, 0)
+    )
+    const totalOutflows = round2(
+      periodMovements.filter(m => m.type === 'outflow').reduce((s, m) => s + m.amount, 0)
+    )
+    const netCashFlow = round2(totalInflows - totalOutflows)
+    const currentBalance = this.balanceThrough(docs, config.openingBalance, endDate)
+
+    const effectiveReserve = computeEffectiveReserve(config.reserveMinimumAmount, config.riskProfile)
+    const idleCapital = computeIdleCapital(currentBalance, effectiveReserve)
+    const historySufficient = this.isHistorySufficient(docs, endDate, config.historyEvaluationDays)
+    const deficitRisk = hasDeficitRisk(
+      currentBalance,
+      effectiveReserve,
+      config.deficitAlertThresholdPercent
+    )
+
     const insights = buildInsights({
-      projectionStatus: projection.status,
-      idleCapital: projection.idleCapital,
-      liquidityClass: projection.liquidityClass,
-      reserveMinimum: projection.reserveMinimum,
-      deficitAlertEnabled: config.deficitAlertEnabled,
-      idleCapitalRecommendMin: config.idleCapitalRecommendMin
+      historySufficient,
+      availableBalance: currentBalance,
+      effectiveReserve,
+      idleCapital,
+      deficitAlertThresholdPercent: config.deficitAlertThresholdPercent,
+      minExpectedRoiPercent: config.minExpectedRoiPercent
     })
+
+    const opportunity = buildOpportunityCard({
+      historySufficient,
+      idleCapital,
+      deficitRisk,
+      minExpectedRoiPercent: config.minExpectedRoiPercent
+    })
+
+    const timeline = [...periodMovements].sort(
+      (a, b) => a.date.getTime() - b.date.getTime()
+    )
+    const recentMovements = [...periodMovements]
+      .sort((a, b) => b.date.getTime() - a.date.getTime())
+      .slice(0, 8)
 
     return {
       rulesVersion: FINANCE_RULES_VERSION,
       currency: 'ARS',
       generatedAt: new Date().toISOString(),
-      historical,
-      projection,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      emptyPeriod,
+      kpis: {
+        currentBalance,
+        totalInflows,
+        totalOutflows,
+        netCashFlow,
+        idleCapital,
+        effectiveReserve
+      },
+      timeline,
+      expenseDistribution: this.buildExpenseDistribution(docs.expenses, startDate, endDate),
+      weeklyProjection: this.buildWeeklyProjection(
+        docs,
+        startDate,
+        endDate,
+        config.historyEvaluationDays
+      ),
+      recentMovements,
       insights,
-      config
+      opportunity,
+      config,
+      historySufficient
+    }
+  }
+
+  private toRulesConfig (full: CashflowConfig): FinanceRulesConfig {
+    return {
+      reserveMinimumAmount: full.reserveMinimumAmount,
+      deficitAlertThresholdPercent: full.deficitAlertThresholdPercent,
+      minExpectedRoiPercent: full.minExpectedRoiPercent,
+      historyEvaluationDays: full.historyEvaluationDays,
+      riskProfile: full.riskProfile
+    }
+  }
+
+  private validateRulesPatch (patch: Partial<FinanceRulesConfig>): void {
+    if (patch.reserveMinimumAmount !== undefined) {
+      if (typeof patch.reserveMinimumAmount !== 'number' || patch.reserveMinimumAmount < 0 || isNaN(patch.reserveMinimumAmount)) {
+        throw Object.assign(new Error('reserveMinimumAmount must be a number >= 0'), { status: 400 })
+      }
+    }
+    if (patch.deficitAlertThresholdPercent !== undefined) {
+      if (
+        typeof patch.deficitAlertThresholdPercent !== 'number' ||
+        patch.deficitAlertThresholdPercent < 0 ||
+        isNaN(patch.deficitAlertThresholdPercent)
+      ) {
+        throw Object.assign(new Error('deficitAlertThresholdPercent must be a number >= 0'), { status: 400 })
+      }
+    }
+    if (patch.minExpectedRoiPercent !== undefined) {
+      if (
+        typeof patch.minExpectedRoiPercent !== 'number' ||
+        patch.minExpectedRoiPercent < 0 ||
+        isNaN(patch.minExpectedRoiPercent)
+      ) {
+        throw Object.assign(new Error('minExpectedRoiPercent must be a number >= 0'), { status: 400 })
+      }
+    }
+    if (patch.historyEvaluationDays !== undefined) {
+      if (
+        typeof patch.historyEvaluationDays !== 'number' ||
+        !Number.isInteger(patch.historyEvaluationDays) ||
+        patch.historyEvaluationDays < 1
+      ) {
+        throw Object.assign(new Error('historyEvaluationDays must be an integer >= 1'), { status: 400 })
+      }
+    }
+    if (patch.riskProfile !== undefined) {
+      if (!['conservador', 'moderado', 'agresivo'].includes(patch.riskProfile)) {
+        throw Object.assign(new Error('riskProfile must be conservador|moderado|agresivo'), { status: 400 })
+      }
     }
   }
 
@@ -96,166 +183,133 @@ class FinanceService {
     return { sales, buys, expenses }
   }
 
-  private buildHistorical (
-    docs: { sales: any[], buys: any[], expenses: any[] },
-    config: FinanceRulesConfig,
-    startDate: Date,
-    endDate: Date
-  ): FinanceHistoricalBlock {
-    const periodMovements = buildMovements(docs, { startDate, endDate })
-    const totalInflows = round2(
-      periodMovements.filter(m => m.type === 'inflow').reduce((s, m) => s + m.amount, 0)
-    )
-    const totalOutflows = round2(
-      periodMovements.filter(m => m.type === 'outflow').reduce((s, m) => s + m.amount, 0)
-    )
-    const netCashFlow = round2(totalInflows - totalOutflows)
-    const openingBalance = this.balanceBefore(docs, config.openingBalance, startDate)
-    const closingBalance = round2(openingBalance + netCashFlow)
-
-    return {
-      status: 'ok',
-      kind: 'historical',
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-      openingBalance,
-      totalInflows,
-      totalOutflows,
-      netCashFlow,
-      closingBalance
-    }
-  }
-
-  /** openingBalance + net of all movements with cash date < before. */
-  private balanceBefore (
+  /** openingBalance + net of all movements with cash date <= through. */
+  private balanceThrough (
     docs: { sales: any[], buys: any[], expenses: any[] },
     openingBalance: number,
-    before: Date
+    through: Date
   ): number {
     const epoch = new Date(0)
-    const justBefore = new Date(before.getTime() - 1)
-    if (justBefore.getTime() < epoch.getTime()) return round2(openingBalance)
-    const prior = buildMovements(docs, { startDate: epoch, endDate: justBefore })
-    const net = prior.reduce(
+    const movs = buildMovements(docs, { startDate: epoch, endDate: through })
+    const net = movs.reduce(
       (s, m) => s + (m.type === 'inflow' ? m.amount : -m.amount),
       0
     )
     return round2(openingBalance + net)
   }
 
-  private buildProjection (
+  private isHistorySufficient (
     docs: { sales: any[], buys: any[], expenses: any[] },
-    config: FinanceRulesConfig,
     asOf: Date,
-    historical: FinanceHistoricalBlock
-  ): FinanceProjectionBlock {
-    // Project the calendar month immediately after asOf's month
-    const projYear = asOf.getUTCFullYear()
-    const projMonthIndex = asOf.getUTCMonth() + 1 // next month (0-11 math)
-    let y = projYear
-    let m = projMonthIndex
-    if (m > 11) {
-      m = 0
-      y += 1
+    historyEvaluationDays: number
+  ): boolean {
+    const dates: number[] = []
+    for (const s of docs.sales) {
+      const d = resolveCashDate(s)
+      if (d <= asOf) dates.push(d.getTime())
     }
-    const projStart = new Date(Date.UTC(y, m, 1, 0, 0, 0, 0))
-    const projEnd = new Date(Date.UTC(y, m + 1, 0, 23, 59, 59, 999))
-    const periodLabel = `${y}-${String(m + 1).padStart(2, '0')}`
-
-    // Comparable months: 3 complete months before projected month
-    const windows = listComparableMonthWindows(projStart, REQUIRED_COMPARABLE_MONTHS)
-    const comparableMonths: ComparableMonthTotals[] = windows.map(w => {
-      const movs = buildMovements(docs, { startDate: w.start, endDate: w.end })
-      return {
-        year: w.year,
-        month: w.month,
-        label: w.label,
-        inflows: round2(movs.filter(x => x.type === 'inflow').reduce((s, x) => s + x.amount, 0)),
-        outflows: round2(movs.filter(x => x.type === 'outflow').reduce((s, x) => s + x.amount, 0))
-      }
-    })
-
-    // A month counts even with zero movements (ReqFunc-077) as long as it is a complete past month.
-    // We always have 3 windows by construction; treat as insufficient only if asOf is too early
-    // (not enough calendar history since epoch — practically always 3). Spec: need 3 complete months.
-    if (windows.length < REQUIRED_COMPARABLE_MONTHS) {
-      return this.emptyProjection(periodLabel, projStart, projEnd, 'insufficient_history')
+    for (const b of docs.buys) {
+      const d = resolveCashDate(b)
+      if (d <= asOf) dates.push(d.getTime())
     }
-
-    // Soft check: if the earliest window start is after the oldest source document, still OK with zeros.
-    // Insufficient only when we cannot form 3 windows — already handled.
-    // Additional: if ALL sources empty AND business never started — still return zeros average (calculable).
-    // Spec S-10: fewer than 3 complete comparable months — e.g. system just started mid-year:
-    // If asOf is in the first months of existence we still produce 3 calendar months (may be all zero).
-    // To honor "insufficient", require that at least one movement exists in the union of the 3 months
-    // OR any movement exists before projStart. If zero history at all → insufficient.
-    const anyHistoryBeforeProj = docs.sales.some(s => resolveCashDate(s) < projStart) ||
-      docs.buys.some(b => resolveCashDate(b) < projStart) ||
-      docs.expenses.some(e => resolveCashDate(e) < projStart)
-
-    const anyInWindow = comparableMonths.some(c => c.inflows > 0 || c.outflows > 0)
-    if (!anyHistoryBeforeProj && !anyInWindow) {
-      return this.emptyProjection(
-        periodLabel,
-        projStart,
-        projEnd,
-        'insufficient_history',
-        'No hay movimientos históricos previos suficientes para proyectar.'
-      )
+    for (const e of docs.expenses) {
+      const d = resolveCashDate(e)
+      if (d <= asOf) dates.push(d.getTime())
     }
-
-    // Also insufficient if we don't have 3 fully elapsed months before "today"/asOf
-    // (e.g. asOf is January 2nd → Dec, Nov, Oct exist as calendars — OK)
-    const projectedInflows = average(comparableMonths.map(c => c.inflows))
-    const projectedOutflows = average(comparableMonths.map(c => c.outflows))
-    const openingBalance = historical.closingBalance
-    const projectedClosingBalance = round2(openingBalance + projectedInflows - projectedOutflows)
-    const reserveMinimum = computeReserveMinimum(projectedOutflows, config.reserveMonthsMultiplier)
-    const idleCapital = computeIdleCapital(projectedClosingBalance, reserveMinimum)
-    const liquidityClass = classifyLiquidity(projectedClosingBalance, reserveMinimum)
-
-    return {
-      status: 'ok',
-      kind: 'projected',
-      rulesVersion: FINANCE_RULES_VERSION,
-      periodLabel,
-      startDate: projStart.toISOString(),
-      endDate: projEnd.toISOString(),
-      openingBalance,
-      projectedInflows,
-      projectedOutflows,
-      projectedClosingBalance,
-      reserveMinimum,
-      idleCapital,
-      liquidityClass,
-      comparableMonths
-    }
+    if (dates.length === 0) return false
+    dates.sort((a, b) => a - b)
+    const spanDays = (dates[dates.length - 1] - dates[0]) / (24 * 60 * 60 * 1000)
+    return spanDays >= historyEvaluationDays - 1e-9
   }
 
-  private emptyProjection (
-    periodLabel: string,
-    start: Date,
-    end: Date,
-    status: FinanceProjectionBlock['status'],
-    message?: string
-  ): FinanceProjectionBlock {
-    return {
-      status,
-      kind: 'projected',
-      rulesVersion: FINANCE_RULES_VERSION,
-      periodLabel,
-      startDate: start.toISOString(),
-      endDate: end.toISOString(),
-      openingBalance: 0,
-      projectedInflows: 0,
-      projectedOutflows: 0,
-      projectedClosingBalance: 0,
-      reserveMinimum: 0,
-      idleCapital: 0,
-      liquidityClass: null,
-      comparableMonths: [],
-      message
+  private buildExpenseDistribution (
+    expenses: any[],
+    startDate: Date,
+    endDate: Date
+  ): FinanceExpenseDistributionSlice[] {
+    const map = new Map<string, number>()
+    for (const e of expenses) {
+      const d = resolveCashDate(e)
+      if (d < startDate || d > endDate) continue
+      const cat = typeof e.category === 'string' && e.category.trim() !== '' ? e.category.trim() : 'Sin categoría'
+      const amount = Number(e.amountCents ?? 0) / 100
+      map.set(cat, round2((map.get(cat) ?? 0) + amount))
     }
+    return [...map.entries()]
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((a, b) => b.amount - a.amount)
+  }
+
+  /**
+   * Up to 4 weeks covering the filter range.
+   * Real = net of that week; Projected = average weekly net over historyEvaluationDays lookback.
+   */
+  private buildWeeklyProjection (
+    docs: { sales: any[], buys: any[], expenses: any[] },
+    startDate: Date,
+    endDate: Date,
+    historyEvaluationDays: number
+  ): FinanceWeeklyPoint[] {
+    const lookbackStart = addUtcDays(startDate, -historyEvaluationDays)
+    const histMovs = buildMovements(docs, {
+      startDate: lookbackStart,
+      endDate: addUtcDays(startDate, -1)
+    })
+    const histWeeklyNets = this.weeklyNets(histMovs, lookbackStart, addUtcDays(startDate, -1))
+    const projectedNet = average(histWeeklyNets)
+
+    const weekStarts: Date[] = []
+    let cursor = startOfUtcWeek(startDate)
+    const rangeEnd = endDate.getTime()
+    while (cursor.getTime() <= rangeEnd && weekStarts.length < 4) {
+      weekStarts.push(new Date(cursor.getTime()))
+      cursor = addUtcDays(cursor, 7)
+    }
+    if (weekStarts.length === 0) {
+      weekStarts.push(startOfUtcWeek(startDate))
+    }
+
+    const periodMovs = buildMovements(docs, { startDate, endDate })
+    return weekStarts.map((ws, index) => {
+      const we = addUtcDays(ws, 6)
+      we.setUTCHours(23, 59, 59, 999)
+      const sliceStart = ws.getTime() < startDate.getTime() ? startDate : ws
+      const sliceEnd = we.getTime() > endDate.getTime() ? endDate : we
+      const realNet = round2(
+        periodMovs
+          .filter(m => m.date >= sliceStart && m.date <= sliceEnd)
+          .reduce((s, m) => s + (m.type === 'inflow' ? m.amount : -m.amount), 0)
+      )
+      return {
+        label: `Sem ${index + 1}`,
+        weekIndex: index + 1,
+        startDate: sliceStart.toISOString(),
+        endDate: sliceEnd.toISOString(),
+        realNet,
+        projectedNet
+      }
+    })
+  }
+
+  private weeklyNets (movements: CashflowMovement[], from: Date, to: Date): number[] {
+    if (to.getTime() < from.getTime()) return []
+    const nets: number[] = []
+    let ws = startOfUtcWeek(from)
+    while (ws.getTime() <= to.getTime()) {
+      const we = addUtcDays(ws, 6)
+      we.setUTCHours(23, 59, 59, 999)
+      const sliceStart = ws.getTime() < from.getTime() ? from : ws
+      const sliceEnd = we.getTime() > to.getTime() ? to : we
+      // Only count complete weeks inside lookback (at least 7 days span or last partial if sole)
+      const net = round2(
+        movements
+          .filter(m => m.date >= sliceStart && m.date <= sliceEnd)
+          .reduce((s, m) => s + (m.type === 'inflow' ? m.amount : -m.amount), 0)
+      )
+      nets.push(net)
+      ws = addUtcDays(ws, 7)
+    }
+    return nets
   }
 }
 
