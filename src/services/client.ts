@@ -1,5 +1,7 @@
 import { Types } from 'mongoose'
+import { isDeepStrictEqual } from 'node:util'
 import ClientModel from '../models/client'
+import DeliveryZoneModel from '../models/deliveryZone'
 import { Client, GEOCODING_SOURCE, GEOCODING_STATUS } from '../interfaces/client.interface'
 import type { ClientLocationConfirmation, GeocodingCandidate } from '../schemas/clientGeocoding'
 import { expectedLocationSchema } from '../schemas/clientGeocoding'
@@ -26,6 +28,45 @@ class ClientLocationInputError extends Error {
   }
 }
 
+class ClientInputError extends Error {}
+class ClientEditConflictError extends Error {
+  constructor () {
+    super('Client data changed; reload and review it again')
+  }
+}
+
+const matchesContactField = (key: string, actual: unknown, expected: unknown): boolean => {
+  if (expected === null) return actual == null
+  if (key === 'deliveryZoneId') return actual != null && String(actual) === expected
+  return isDeepStrictEqual(actual, expected)
+}
+
+const validateCoordinates = (lat: unknown, lng: unknown): void => {
+  if (lat == null && lng == null) return
+  if (typeof lat !== 'number' || !Number.isFinite(lat) || lat < -90 || lat > 90 ||
+      typeof lng !== 'number' || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+    throw new ClientInputError('Coordinates must be a valid latitude and longitude pair, or both empty')
+  }
+}
+
+const validateClientFields = async (item: Record<string, unknown>, create: boolean): Promise<void> => {
+  const has = (key: string): boolean => Object.prototype.hasOwnProperty.call(item, key)
+  if ((create || has('nombreCompleto')) && (typeof item.nombreCompleto !== 'string' || item.nombreCompleto.trim() === '' || item.nombreCompleto.length > 200)) {
+    throw new ClientInputError('Client name must be a nonblank string of at most 200 characters')
+  }
+  if (has('telefonos') && (!Array.isArray(item.telefonos) || item.telefonos.some((phone: unknown) => {
+    if (typeof phone !== 'number' && (typeof phone !== 'string' || !/^\d{1,15}$/.test(phone))) return true
+    const number = Number(phone)
+    return !Number.isSafeInteger(number) || number < 0 || number > 999999999999999
+  }))) throw new ClientInputError('Phone numbers must be nonnegative integers of at most 15 digits')
+  if (has('isActive') && typeof item.isActive !== 'boolean') throw new ClientInputError('Client status must be a boolean')
+  if (Object.keys(item).some((key) => /^(nombreCompleto|telefonos|deliveryZoneId|isActive|lat|lng)\./.test(key))) throw new ClientInputError('Client fields must not use dotted paths')
+  if (has('deliveryZoneId') && item.deliveryZoneId !== null) {
+    if (typeof item.deliveryZoneId !== 'string' || !/^[a-fA-F0-9]{24}$/.test(item.deliveryZoneId)) throw new ClientInputError('Delivery zone is invalid')
+    if (await DeliveryZoneModel.exists({ _id: new Types.ObjectId(item.deliveryZoneId), active: true }) === null) throw new ClientInputError('Delivery zone must be active')
+  }
+}
+
 const containsGeocodingKey = (value: unknown): boolean => {
   if (typeof value !== 'object' || value === null) return false
   return Object.entries(value).some(([key, nested]) => key === 'geocoding' || key.startsWith('geocoding.') || key === 'locationRevision' || key.startsWith('locationRevision.') || containsGeocodingKey(nested))
@@ -33,7 +74,11 @@ const containsGeocodingKey = (value: unknown): boolean => {
 
 const insertClient = async (item: Client): Promise<Client> => {
   if (containsGeocodingKey(item)) throw new ClientLocationInputError()
-  const responseInsert = await ClientModel.create(item)
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) throw new ClientInputError('Client input is invalid')
+  await validateClientFields(item as unknown as Record<string, unknown>, true)
+  validateCoordinates(item.lat, item.lng)
+  const { address, ...rest } = item
+  const responseInsert = await ClientModel.create({ ...rest, ...(address == null ? {} : { address }), isActive: item.isActive ?? true })
   return responseInsert
 }
 
@@ -46,28 +91,30 @@ const getClients = async (skip: number, limit: number): Promise<Client[]> => {
         lat: 1,
         lng: 1,
         telefonos: 1,
+        isActive: 1,
+        deliveryZoneId: 1,
         locationRevision: { $ifNull: ['$locationRevision', 0] }
       }
     },
-    { $sort: { nombreCompleto: 1 } }
+    { $sort: { nombreCompleto: 1, _id: 1 } }
   ])
     .skip(skip)
     .limit(limit)
   return response
 }
 
-const getClientSearch = async (input: string): Promise<Client[]> => {
+const getClientSearch = async (input: string, skip?: number, limit?: number): Promise<Client[]> => {
   const query: any = {
   }
 
   if (input !== '') {
     query.nombreCompleto = {
-      $regex: input,
+      $regex: input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
       $options: 'i'
     }
   }
 
-  const response = await ClientModel.aggregate([
+  const aggregation = ClientModel.aggregate([
     { $match: query },
     {
       $project: {
@@ -76,12 +123,15 @@ const getClientSearch = async (input: string): Promise<Client[]> => {
         lat: 1,
         lng: 1,
         telefonos: 1,
+        isActive: 1,
+        deliveryZoneId: 1,
         locationRevision: { $ifNull: ['$locationRevision', 0] }
       }
     },
-    { $sort: { nombreCompleto: 1 } }
+    { $sort: { nombreCompleto: 1, _id: 1 } }
   ])
-  return response
+  if (skip !== undefined && limit !== undefined) void aggregation.skip(skip).limit(limit)
+  return await aggregation
 }
 
 const getSaleClientOptions = async (input: string): Promise<Array<{ id: string, name: string, address?: string }>> => {
@@ -137,6 +187,8 @@ const getClient = async (id: Types.ObjectId): Promise<any> => {
         lat: 1,
         lng: 1,
         telefonos: 1,
+        isActive: 1,
+        deliveryZoneId: 1,
         locationRevision: { $ifNull: ['$locationRevision', 0] }
       }
     }
@@ -144,24 +196,74 @@ const getClient = async (id: Types.ObjectId): Promise<any> => {
   return response?.[0]
 }
 
-const updateClient = async (id: Types.ObjectId, item: Client): Promise<any> => {
-  const fields = Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'expectedLocation' && key !== 'geocoding' && !key.startsWith('geocoding.') && key !== 'locationRevision' && !key.startsWith('locationRevision.') && !key.startsWith('$')))
+const updateClient = async (id: Types.ObjectId, item: Client, managed = false): Promise<any> => {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) throw new ClientInputError('Client input is invalid')
+  const record = item as unknown as Record<string, unknown>
+  const fields = Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'expectedLocation' && key !== 'expectedFields' && key !== 'geocoding' && !key.startsWith('geocoding.') && key !== 'locationRevision' && !key.startsWith('locationRevision.') && !key.startsWith('$')))
+  if (managed && Object.keys(fields).some((key) => !['nombreCompleto', 'telefonos', 'deliveryZoneId', 'isActive', 'address', 'lat', 'lng'].includes(key))) throw new ClientInputError('Client field is invalid')
+  await validateClientFields(fields, false)
+  const expectedFields = record.expectedFields
+  const contactKeys = ['nombreCompleto', 'telefonos', 'deliveryZoneId', 'isActive']
+  const contactFilter: Record<string, unknown> = {}
+  if (managed) {
+    if (typeof expectedFields !== 'object' || expectedFields === null || Array.isArray(expectedFields)) throw new ClientInputError('Expected client fields are required')
+    const expected = expectedFields as Record<string, unknown>
+    const changed = contactKeys.filter((key) => Object.prototype.hasOwnProperty.call(fields, key))
+    if (Object.keys(expected).some((key) => !changed.includes(key)) || changed.some((key) => !Object.prototype.hasOwnProperty.call(expected, key))) throw new ClientInputError('Expected client fields are invalid')
+    for (const key of changed) {
+      const value = expected[key]
+      if (key === 'telefonos' && value !== null && (!Array.isArray(value) || value.some((phone: unknown) => typeof phone !== 'number' || !Number.isFinite(phone)))) throw new ClientInputError('Expected phones are invalid')
+      if (key === 'nombreCompleto' && value !== null && typeof value !== 'string') throw new ClientInputError('Expected name is invalid')
+      if (key === 'deliveryZoneId' && value !== null && (typeof value !== 'string' || !/^[a-fA-F0-9]{24}$/.test(value))) throw new ClientInputError('Expected delivery zone is invalid')
+      if (key === 'isActive' && value !== null && typeof value !== 'boolean') throw new ClientInputError('Expected status is invalid')
+      contactFilter[key] = { $eq: value }
+    }
+  }
   const locationKeys = ['lat', 'lng', 'address'] as const
   const hasLocation = locationKeys.some((key) => Object.prototype.hasOwnProperty.call(fields, key))
-  if (!hasLocation) return await ClientModel.updateOne({ _id: id }, { $set: fields })
+  if (!hasLocation) {
+    const response = await ClientModel.updateOne({ _id: id, ...contactFilter }, { $set: fields })
+    if (response.matchedCount === 0) {
+      if (await ClientModel.findById(id).lean() === null) throw new ClientNotFoundError()
+      throw new ClientEditConflictError()
+    }
+    return response
+  }
   const current = await ClientModel.findById(id).lean()
   if (current === null) throw new ClientNotFoundError()
   const changesLocation = locationKeys.some((key) => Object.prototype.hasOwnProperty.call(fields, key) && (fields[key] ?? null) !== (current[key] ?? null))
   const expected = (item as Client & { expectedLocation?: unknown }).expectedLocation
+  // Legacy clients may omit the snapshot, so stale form values remain last-write-wins.
+  if (managed && expected === undefined) throw new ClientLocationConflictError()
   if (expected !== undefined) {
     const parsed = expectedLocationSchema.safeParse(expected)
     if (!parsed.success || parsed.data.locationRevision !== (current.locationRevision ?? 0) || locationKeys.some((key) => parsed.data[key] !== (current[key] ?? null))) throw new ClientLocationConflictError()
   }
+  const hasField = (key: string): boolean => Object.prototype.hasOwnProperty.call(fields, key)
+  validateCoordinates(hasField('lat') ? fields.lat : current.lat, hasField('lng') ? fields.lng : current.lng)
+  const clearAddress = hasField('address') && fields.address === null
+  if (clearAddress) delete fields.address
+  const unset = { ...(changesLocation ? { geocoding: 1 } : {}), ...(clearAddress ? { address: 1 } : {}) }
   const response = await ClientModel.updateOne(
-    { _id: id, address: current.address ?? null, lat: current.lat ?? null, lng: current.lng ?? null, geocoding: current.geocoding ?? null, ...revisionFilter(current.locationRevision ?? 0) },
-    { $set: fields, ...(changesLocation ? { $unset: { geocoding: 1 }, $inc: { locationRevision: 1 } } : {}) }
+    { _id: id, ...contactFilter, address: current.address ?? null, lat: current.lat ?? null, lng: current.lng ?? null, geocoding: current.geocoding ?? null, ...revisionFilter(current.locationRevision ?? 0) },
+    { $set: fields, ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}), ...(changesLocation ? { $inc: { locationRevision: 1 } } : {}) },
+    { runValidators: true }
   )
-  if (response.matchedCount === 0) throw new ClientLocationConflictError()
+  if (response.matchedCount === 0) {
+    const latest = await ClientModel.findById(id).lean()
+    if (latest === null) throw new ClientNotFoundError()
+    if (managed && Object.keys(contactFilter).length > 0) {
+      const locationChanged = locationKeys.some((key) => (latest[key] ?? null) !== (current[key] ?? null)) ||
+        (latest.locationRevision ?? 0) !== (current.locationRevision ?? 0) ||
+        !isDeepStrictEqual(latest.geocoding ?? null, current.geocoding ?? null)
+      const expected = expectedFields as Record<string, unknown>
+      const contactChanged = Object.keys(contactFilter).some((key) => !matchesContactField(key, (latest as unknown as Record<string, unknown>)[key], expected[key]))
+      // The diagnostic read is not atomic with the failed write; ambiguous outcomes stay generic.
+      if (locationChanged && !contactChanged) throw new ClientLocationConflictError()
+      throw new ClientEditConflictError()
+    }
+    throw new ClientLocationConflictError()
+  }
   return response
 }
 
@@ -170,7 +272,7 @@ const geocodeClient = async (id: Types.ObjectId, address?: string): Promise<Geoc
   if (client === null) throw new ClientNotFoundError()
 
   const addressToGeocode = address ?? client.address
-  if (addressToGeocode === undefined || addressToGeocode.trim() === '') {
+  if (typeof addressToGeocode !== 'string' || addressToGeocode.trim() === '') {
     throw new Error('Client address is required')
   }
 
@@ -247,6 +349,8 @@ export {
   ClientNotFoundError,
   ClientLocationConflictError,
   ClientLocationInputError,
+  ClientInputError,
+  ClientEditConflictError,
   confirmLocation,
   geocodeClient,
   getClient,

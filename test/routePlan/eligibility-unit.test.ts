@@ -57,6 +57,18 @@ describe('route eligibility without database access', () => {
   })
   afterEach(() => { sinon.restore() })
 
+  it('blocks an unassigned pending delivery while its client is inactive and restores eligibility on reactivation', async () => {
+    sales = [sale('Creado')]
+    clients[0].isActive = false
+    const blocked = await getGlobalCandidates()
+    expect(blocked.eligible).to.have.length(0)
+    expect(blocked.blocked[0].reasons).to.deep.equal(['CLIENT_INACTIVE'])
+    clients[0].isActive = true
+    const active = await getGlobalCandidates()
+    expect(active.blocked).to.have.length(0)
+    expect(active.eligible[0].saleId).to.equal(String(sales[0]._id))
+  })
+
   it('routes confirmed manual coordinates without an address and reports zone names for all candidates', async () => {
     const otherClient = new Types.ObjectId()
     sales = [sale('Creado'), sale('Creado', { idCliente: otherClient })]
@@ -69,6 +81,15 @@ describe('route eligibility without database access', () => {
     expect(result.eligible[0]).to.include({ zoneName: 'North', latitude: 0, longitude: 0 })
     expect(result.blocked[0]).to.include({ zoneName: 'North', locationIssue: 'COORDINATES_MISSING' })
     expect(zones.calledOnce).to.equal(true)
+  })
+
+  it('omits legacy null addresses from eligible and blocked candidate output', async () => {
+    const otherClient = new Types.ObjectId()
+    sales = [sale('Creado'), sale('Creado', { idCliente: otherClient })]
+    clients = [{ ...clients[0], address: null }, { ...clients[0], _id: otherClient, address: null, isActive: false }]
+    const result = await getGlobalCandidates()
+    expect(result.eligible[0]).not.to.have.property('addressSummary')
+    expect(result.blocked[0]).not.to.have.property('addressSummary')
   })
 
   it('distinguishes missing, invalid and unconfirmed coordinates even when zone mismatch blocks first', async () => {

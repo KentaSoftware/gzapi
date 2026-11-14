@@ -1,6 +1,7 @@
 import { fromZonedTime } from 'date-fns-tz'
 import { createHash, randomBytes } from 'crypto'
 import { Types } from 'mongoose'
+import { normalizeSaleReference } from '../utils/routeAddress'
 import { Client, GEOCODING_STATUS } from '../interfaces/client.interface'
 import type { Sale } from '../interfaces/sale.interface'
 import {
@@ -122,7 +123,7 @@ const candidateEntry = (saleId: unknown, client: Client, zoneName?: string): Can
   saleId: String(saleId),
   clientId: String(client._id),
   displayName: client.nombreCompleto,
-  addressSummary: client.address,
+  ...(typeof client.address === 'string' && client.address.trim() !== '' ? { addressSummary: client.address } : {}),
   ...(zoneName === undefined ? {} : { zoneName }),
   ...(locationIssue(client) === undefined ? {} : { locationIssue: locationIssue(client) }),
   ...(Number.isFinite(client.lat) ? { latitude: client.lat } : {}),
@@ -134,7 +135,7 @@ const blockedCandidate = (saleId: unknown, reason: BlockedCandidateEntry['reason
   if (client !== undefined) {
     result.clientId = String(client._id)
     result.displayName = client.nombreCompleto
-    result.addressSummary = client.address
+    if (typeof client.address === 'string' && client.address.trim() !== '') result.addressSummary = client.address
     if (zoneName !== undefined) result.zoneName = zoneName
     result.locationIssue = locationIssue(client)
     if (Number.isFinite(client.lat)) result.latitude = client.lat
@@ -453,7 +454,7 @@ const previewRoute = async (input: RoutePreviewRequest, context: RoutePlanReques
           versionAtSave: (sale as unknown as { updatedAt?: Date }).updatedAt?.getTime() ?? null,
           statusAtSave: sale.delivery?.status ?? null,
           ...(client?.nombreCompleto === undefined ? {} : { clientName: client.nombreCompleto }),
-          ...(client?.address === undefined ? {} : { address: client.address }),
+          ...(typeof client?.address !== 'string' || client.address.trim() === '' ? {} : { address: client.address }),
           zoneName: zone.name,
           ...itemFields
         }
@@ -607,7 +608,7 @@ const reserveSnapshot = async (snapshot: RoutePlan): Promise<RoutePlan> => {
   await assertAssignmentIndex(assignmentGuard)
   const selected = snapshot.selectedSaleIds.map((saleId) => ({ saleId }))
   if ((await unassignedCandidates(assignmentGuard, selected)).length !== selected.length) throw new AssignmentConflictError()
-  return { ...snapshot, reservedSaleIds: [...snapshot.selectedSaleIds] }
+  return { ...snapshot, ...(snapshot.saleReferences === undefined ? {} : { saleReferences: snapshot.saleReferences.map(normalizeSaleReference) }), reservedSaleIds: [...snapshot.selectedSaleIds] }
 }
 
 const saveSnapshot = async (input: { receipt: string }, createdBy: string, context: RoutePlanRequestContext = {}): Promise<RoutePlan> => {
@@ -746,6 +747,7 @@ const readStatesForSnapshots = async (snapshots: RoutePlan[]): Promise<Map<strin
 
 const withReadState = async (snapshot: RoutePlan): Promise<RoutePlan> => ({
   ...snapshot,
+  ...(snapshot.saleReferences === undefined ? {} : { saleReferences: snapshot.saleReferences.map(normalizeSaleReference) }),
   ...(await readState(snapshot))
 })
 
@@ -775,7 +777,7 @@ const listSnapshots = async (context: RoutePlanRequestContext = {}): Promise<Rou
     const truncated = snapshotRead.length > MAX_SNAPSHOT_LIST_READS
     const snapshots = truncated ? snapshotRead.slice(0, MAX_SNAPSHOT_LIST_READS) : snapshotRead
     const readStates = await readStatesForSnapshots(snapshots)
-    const snapshotsWithReadState = snapshots.map((snapshot) => ({ ...snapshot, ...(readStates.get(String(snapshot._id)) ?? { staleness: null, readWarnings: [] }) }))
+    const snapshotsWithReadState = snapshots.map((snapshot) => ({ ...snapshot, ...(snapshot.saleReferences === undefined ? {} : { saleReferences: snapshot.saleReferences.map(normalizeSaleReference) }), ...(readStates.get(String(snapshot._id)) ?? { staleness: null, readWarnings: [] }) }))
     if (truncated && snapshotsWithReadState.length > 0) {
       snapshotsWithReadState[0].readWarnings = [...(snapshotsWithReadState[0].readWarnings ?? []), 'SNAPSHOT_LIST_LIMIT_REACHED']
     }
