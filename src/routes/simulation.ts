@@ -92,17 +92,11 @@ const resolveDependencies = (
   }
 }
 
-const simulationEnabledGuard = (fallback: SimulationRouteDependencies): RequestHandler => (req, res, next) => {
-  let configuration: SimulationConfiguration
+const simulationConfigurationGuard = (fallback: SimulationRouteDependencies): RequestHandler => (req, res, next) => {
   try {
-    configuration = resolveDependencies(req, fallback).getConfig()
+    resolveDependencies(req, fallback).getConfig()
   } catch {
     sendErrorEnvelope(res, 503, SIMULATION_ERROR_CODES.CONFIGURATION_UNAVAILABLE, 'Simulation configuration is unavailable')
-    return
-  }
-
-  if (!configuration.enabled) {
-    sendErrorEnvelope(res, 503, SIMULATION_ERROR_CODES.DISABLED, 'Simulation is disabled')
     return
   }
 
@@ -117,7 +111,7 @@ const createSimulationRouter = (
   const guards = (action: string, currentRole = false): RequestHandler[] => [
     (req, res, next) => { resolveDependencies(req, dependencies).checkJwt(req, res, next) },
     (req, res, next) => { resolveDependencies(req, dependencies).checkPermission(action, currentRole ? { currentRole: true } : undefined)(req, res, next) },
-    simulationEnabledGuard(dependencies)
+    simulationConfigurationGuard(dependencies)
   ]
 
   const controllerDependencies = (req: Request): {
@@ -134,7 +128,7 @@ const createSimulationRouter = (
   }
 
   // The thesis/demo endpoints use fixture data and deliberately bypass the
-  // production simulation grant and feature-flag gates. JWT authentication is
+  // production simulation grant and configuration gates. JWT authentication is
   // retained to match the frontend's normal API client session behavior.
   const demoGuards: RequestHandler[] = [
     (req, res, next) => { resolveDependencies(req, dependencies).checkJwt(req, res, next) }

@@ -3,6 +3,7 @@ import type { Server } from 'http'
 import { createApp } from './app'
 import db from './config/mongo'
 import { seedDatabase } from './services/seed'
+import { initializeAssignmentIndex } from './services/assignmentIndex'
 
 const PORT = process.env.PORT ?? 3002
 
@@ -11,6 +12,7 @@ const startServer = async (): Promise<Server> => {
 
   await db()
   console.log('Conexion lista')
+  await initializeAssignmentIndex()
 
   try {
     await seedDatabase()

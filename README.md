@@ -33,6 +33,23 @@ Start the API:
 npm run dev
 ```
 
+Both the server (`npm run dev`, or `npm run build` then `npm start`) and the
+serverless handler initialize the named unique sparse `routeplans.reservedSaleIds`
+index after connecting and before seeding or serving requests. Initialization
+fails closed on conflicting indexes, duplicate indexed values, unsupported
+collection options, or an unverifiable catalog. It never drops indexes or
+rewrites documents. Startup requires permission to inspect and create indexes.
+
+**Production rollout:** Creating the index is not a historical-data audit.
+Sparse indexes exclude old snapshots without `reservedSaleIds`, and cannot
+prevent legacy or raw writers from omitting it. Before deploying, back up and
+audit existing route snapshots and duplicate assignments, reconcile problems
+under an approved procedure, and quiesce old/raw writers during and after the
+cutover. Inspect null, empty, malformed or mismatched reservation fields as well
+as index and collection options. Do not automatically backfill or delete data
+to resolve failures. Index builds can affect availability and need an approved
+maintenance plan; test against a representative copy first.
+
 At startup, the base seed creates or updates the `admin` role and the four
 business roles (`Propietario`, `Administración`, `Preventista`, and
 `Repartidor`). It also creates the `admin` user when that user does not exist.
@@ -115,6 +132,14 @@ npm start      # Start the compiled server
 npm run lint   # Run the TypeScript lint checks
 npm test       # Run the Mocha test suite
 ```
+
+## Simulation access
+
+Real simulation endpoints require a valid JWT and the existing `simulation:read`
+or `simulation:write` permission (active administrators are authorized by the
+existing admin policy). The retired `SIMULATION_ENABLED` setting is ignored.
+Contract allowlists and other scenario validation still apply. Demo endpoints
+retain their separate JWT-only policy.
 
 ## Demo-data seed at startup
 

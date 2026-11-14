@@ -25,7 +25,7 @@ describe('real route scenario HTTP', () => {
       res.locals.authorizationRole = req.headers['x-role'] === 'admin' ? 'admin' : 'Repartidor'
       next()
     },
-    getConfig: () => ({ enabled: true }),
+    getConfig: () => ({ routeContractAllowlist: [], stockContractAllowlist: [] }),
     service: {}
   }
   app.use('/simulation', createSimulationRouter())
@@ -68,7 +68,7 @@ describe('real route scenario HTTP', () => {
     expect(invalid.body).to.deep.equal(missing.body)
     expect((await request(app).get(url)).status).to.equal(401)
     const config = app.locals.simulationRouteDependencies.getConfig
-    app.locals.simulationRouteDependencies.getConfig = () => ({ enabled: false })
+    app.locals.simulationRouteDependencies.getConfig = () => { throw new Error('invalid config') }
     try {
       expect((await request(app).get(url).set('Authorization', 'Bearer valid')).status).to.equal(503)
     } finally { app.locals.simulationRouteDependencies.getConfig = config }
@@ -135,19 +135,19 @@ describe('real route scenario HTTP', () => {
     expect(JSON.stringify(failure.body)).not.to.contain('sensitive')
   })
 
-  it('rejects invalid numbers, oversized product lists and disabled simulation', async () => {
+  it('rejects invalid numbers, oversized product lists and invalid configuration', async () => {
     const invalid = await request(app).post('/simulation/route-scenarios').set('Authorization', 'Bearer valid').send({ ...input, parameters: { ...input.parameters, hourlyRate: -1 } })
     expect(invalid.status).to.equal(400)
     const oversized = await request(app).post('/simulation/route-scenarios').set('Authorization', 'Bearer valid').send({ ...input, products: Array.from({ length: 10001 }, () => ({ id: routeId, quantity: 1 })) })
     expect(oversized.status).to.equal(400)
     const config = app.locals.simulationRouteDependencies.getConfig
-    app.locals.simulationRouteDependencies.getConfig = () => ({ enabled: false })
+    app.locals.simulationRouteDependencies.getConfig = () => { throw new Error('invalid config') }
     try {
       expect((await request(app).post('/simulation/route-scenarios').set('Authorization', 'Bearer valid').send(input)).status).to.equal(503)
     } finally { app.locals.simulationRouteDependencies.getConfig = config }
   })
 
-  it('lists authorized paginated real-route history through the current-role feature-flag guards', async () => {
+  it('lists authorized paginated real-route history through the current-role guards', async () => {
     const pages: number[] = []
     const appDependencies = app.locals.simulationRouteDependencies as Record<string, unknown>
     const previousList = appDependencies.routeScenarioList
@@ -169,7 +169,7 @@ describe('real route scenario HTTP', () => {
       expect((await request(app).get('/simulation/route-scenarios?page=1').set('Authorization', 'Bearer valid').set('x-inactive', 'yes')).status).to.equal(403)
 
       const config = app.locals.simulationRouteDependencies.getConfig
-      app.locals.simulationRouteDependencies.getConfig = () => ({ enabled: false })
+      app.locals.simulationRouteDependencies.getConfig = () => { throw new Error('invalid config') }
       try {
         expect((await request(app).get('/simulation/route-scenarios?page=1').set('Authorization', 'Bearer valid')).status).to.equal(503)
       } finally { app.locals.simulationRouteDependencies.getConfig = config }

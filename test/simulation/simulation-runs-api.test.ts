@@ -3,7 +3,7 @@ import type { Express, RequestHandler } from 'express'
 import request from 'supertest'
 
 import { createApp } from '../../src/app'
-import type { SimulationConfiguration } from '../../src/config/simulation'
+import { readSimulationConfig } from '../../src/config/simulation'
 import {
   SIMULATION_ERROR_CODES,
   SIMULATION_RECORD_STATUSES
@@ -161,12 +161,6 @@ const service: SimulationServiceDependencies = {
   verifyBaseScenarioToken: async () => { throw new Error('Token verification is not part of this contract') }
 }
 
-const simulationConfig = (enabled = true): SimulationConfiguration => ({
-  enabled,
-  routeContractAllowlist: [validRouteSnapshot.contractVersion],
-  stockContractAllowlist: [validStockSnapshot.contractVersion]
-})
-
 const requestedPermissions: string[] = []
 
 const checkJwt: RequestHandler = (req, res, next) => {
@@ -209,13 +203,12 @@ describe('Simulation runs API', () => {
 
   const configure = (options: {
     repository?: FakeRunRepository
-    enabled?: boolean
   } = {}): FakeRunRepository => {
     const runRepository = options.repository ?? new FakeRunRepository()
     app.locals.simulationRouteDependencies = {
       checkJwt,
       checkPermission,
-      getConfig: () => simulationConfig(options.enabled ?? true),
+      getConfig: () => readSimulationConfig({ SIMULATION_ENABLED: 'false' }),
       service,
       runRepository
     }
@@ -247,19 +240,15 @@ describe('Simulation runs API', () => {
       expect(requestedPermissions).to.deep.equal(['simulation:read'])
     })
 
-    it('SIMULATION_DISABLED: returns 503 with the correlation id when the flag is off', async () => {
-      configure({ enabled: false })
+    it('returns a run when the retired flag is false', async () => {
+      configure({ repository: new FakeRunRepository([runRecord()]) })
 
       const response = await authenticatedGet(`/simulation/runs/${RUN_ID}`, {
         'x-correlation-id': 'corr-run-detail-flag'
       })
 
-      expect(response.status).to.equal(503)
-      expect(response.body).to.deep.equal({
-        code: SIMULATION_ERROR_CODES.DISABLED,
-        message: 'Simulation is disabled',
-        correlationId: 'corr-run-detail-flag'
-      })
+      expect(response.status).to.equal(200)
+      expect(response.body._id).to.equal(RUN_ID)
       expect(response.headers['x-correlation-id']).to.equal('corr-run-detail-flag')
     })
 
