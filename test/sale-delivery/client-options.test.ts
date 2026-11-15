@@ -5,6 +5,7 @@ import mongoose, { Types } from 'mongoose'
 import sinon from 'sinon'
 import request from 'supertest'
 import ClientModel from '../../src/models/client'
+import DeliveryZoneModel from '../../src/models/deliveryZone'
 import UserModel from '../../src/models/user'
 import RoleModel from '../../src/models/role'
 import * as jwt from '../../src/utils/jwt.handle'
@@ -16,6 +17,7 @@ describe('sale client options without a database', () => {
   let databaseRole: object | null
   let find: sinon.SinonStub
   let write: sinon.SinonStub
+  let findZones: sinon.SinonStub
   let chain: { sort: sinon.SinonStub, limit: sinon.SinonStub, maxTimeMS: sinon.SinonStub, lean: sinon.SinonStub }
   const id = new Types.ObjectId()
   let app: express.Express
@@ -34,6 +36,7 @@ describe('sale client options without a database', () => {
     chain.maxTimeMS.returns(chain)
     chain.lean.resolves([{ _id: id, nombreCompleto: 'Alice', address: 'private' }])
     find = sinon.stub(ClientModel, 'find').returns(chain as never)
+    findZones = sinon.stub(DeliveryZoneModel, 'find').returns({ maxTimeMS: () => ({ lean: async () => [] }) } as never)
     write = sinon.stub(ClientModel, 'create')
     app = express().use('/client', router)
   })
@@ -42,9 +45,9 @@ describe('sale client options without a database', () => {
   it('returns a bounded safe projection of active clients', async () => {
     const response = await request(app).get('/client/sale-options?q=Ali&limit=500').set('Authorization', 'Bearer token')
     expect(response.status).to.equal(200)
-    expect(response.body).to.deep.equal({ clients: [{ id: String(id), name: 'Alice', address: 'private' }] })
+    expect(response.body).to.deep.equal({ clients: [{ id: String(id), name: 'Alice', address: 'private', deliveryZoneName: null }] })
     expect(find.firstCall.args[0]).to.include({ isActive: true })
-    expect(find.firstCall.args[1]).to.deep.equal({ _id: 1, nombreCompleto: 1, address: 1 })
+    expect(find.firstCall.args[1]).to.deep.equal({ _id: 1, nombreCompleto: 1, address: 1, deliveryZoneId: 1 })
     expect(chain.sort.firstCall.args[0]).to.deep.equal({ nombreCompleto: 1, _id: 1 })
     expect(chain.limit.firstCall.args[0]).to.equal(20)
     expect(chain.maxTimeMS.firstCall.args[0]).to.equal(5000)
@@ -62,11 +65,38 @@ describe('sale client options without a database', () => {
     expect(response.status).to.equal(200)
     expect(response.body).to.deep.equal({
       clients: [
-        { id: String(id), name: 'Alice', address: 'First Street' },
-        { id: String(secondId), name: 'Alice', address: 'Second Street' },
-        { id: String(thirdId), name: 'Alice' }
+        { id: String(id), name: 'Alice', address: 'First Street', deliveryZoneName: null },
+        { id: String(secondId), name: 'Alice', address: 'Second Street', deliveryZoneName: null },
+        { id: String(thirdId), name: 'Alice', deliveryZoneName: null }
       ]
     })
+  })
+
+  it('resolves shared zones in one query and safely handles missing or dangling references for sale-only users', async () => {
+    permissions = ['create_sale']
+    const zoneId = new Types.ObjectId()
+    const danglingId = new Types.ObjectId()
+    const secondId = new Types.ObjectId()
+    const thirdId = new Types.ObjectId()
+    const fourthId = new Types.ObjectId()
+    chain.lean.resolves([
+      { _id: id, nombreCompleto: 'Alice', address: 'Main', deliveryZoneId: zoneId, telefonos: [123] },
+      { _id: secondId, nombreCompleto: 'Alice', deliveryZoneId: zoneId },
+      { _id: thirdId, nombreCompleto: 'Alice', deliveryZoneId: danglingId },
+      { _id: fourthId, nombreCompleto: 'Alice' }
+    ])
+    findZones.returns({ maxTimeMS: () => ({ lean: async () => [{ _id: zoneId, name: 'North', code: 'SECRET' }] }) } as never)
+    const response = await request(app).get('/client/sale-options?q=Alice').set('Authorization', 'Bearer token')
+    expect(response.status).to.equal(200)
+    expect(response.body.clients).to.deep.equal([
+      { id: String(id), name: 'Alice', address: 'Main', deliveryZoneName: 'North' },
+      { id: String(secondId), name: 'Alice', deliveryZoneName: 'North' },
+      { id: String(thirdId), name: 'Alice', deliveryZoneName: null },
+      { id: String(fourthId), name: 'Alice', deliveryZoneName: null }
+    ])
+    expect(findZones.callCount).to.equal(1)
+    expect(findZones.firstCall.args[0]).to.deep.equal({ _id: { $in: [zoneId, danglingId] } })
+    expect(findZones.firstCall.args[1]).to.deep.equal({ _id: 1, name: 1 })
   })
 
   it('does not query for missing, empty or short terms', async () => {
@@ -135,7 +165,7 @@ describe('sale client options without a database', () => {
     for (const q of ['', 'a']) {
       const response = await request(app).get('/client/sale-options').query({ paged: 'true', q, limit: '2' }).set('Authorization', 'Bearer token')
       expect(response.status).to.equal(200)
-      expect(response.body).to.deep.equal({ clients: [{ id: String(id), name: 'Alice', address: 'private' }], nextCursor: null })
+      expect(response.body).to.deep.equal({ clients: [{ id: String(id), name: 'Alice', address: 'private', deliveryZoneName: null }], nextCursor: null })
       expect(find.lastCall.args[0].isActive).to.equal(true)
       expect(chain.limit.lastCall.args[0]).to.equal(3)
       expect(chain.maxTimeMS.lastCall.args[0]).to.equal(5000)
@@ -144,13 +174,17 @@ describe('sale client options without a database', () => {
 
   it('continues after duplicate names with a stable id boundary', async () => {
     const second = new Types.ObjectId()
-    chain.lean.resolves([{ _id: id, nombreCompleto: 'Alice' }, { _id: second, nombreCompleto: 'Alice' }])
+    const zoneId = new Types.ObjectId()
+    permissions = ['create_sale']
+    findZones.returns({ maxTimeMS: () => ({ lean: async () => [{ _id: zoneId, name: 'North' }] }) } as never)
+    chain.lean.resolves([{ _id: id, nombreCompleto: 'Alice', deliveryZoneId: zoneId }, { _id: second, nombreCompleto: 'Alice' }])
     const first = await request(app).get('/client/sale-options?paged=true&limit=1&q=Al').set('Authorization', 'Bearer token')
     expect(first.body.clients).to.have.length(1)
+    expect(first.body.clients[0]).to.deep.equal({ id: String(id), name: 'Alice', deliveryZoneName: 'North' })
     expect(first.body.nextCursor).to.be.a('string')
     chain.lean.resolves([{ _id: second, nombreCompleto: 'Alice' }])
     const next = await request(app).get('/client/sale-options').query({ paged: 'true', limit: '1', q: 'Al', cursor: first.body.nextCursor }).set('Authorization', 'Bearer token')
-    expect(next.body).to.deep.equal({ clients: [{ id: String(second), name: 'Alice' }], nextCursor: null })
+    expect(next.body).to.deep.equal({ clients: [{ id: String(second), name: 'Alice', deliveryZoneName: null }], nextCursor: null })
     expect(find.lastCall.args[0]._id).to.deep.equal({ $gt: id })
     expect(chain.sort.lastCall.args[0]).to.deep.equal({ _id: 1 })
     const changedSearch = await request(app).get('/client/sale-options').query({ paged: 'true', q: 'Bo', cursor: first.body.nextCursor }).set('Authorization', 'Bearer token')
@@ -187,7 +221,7 @@ describe('sale client options without a database', () => {
       ...(index === 21 ? { address: 'First Street' } : {})
     })).reverse()
     find.callsFake((filter: Filter, projection: object) => {
-      expect(projection).to.deep.equal({ _id: 1, nombreCompleto: 1, address: 1 })
+      expect(projection).to.deep.equal({ _id: 1, nombreCompleto: 1, address: 1, deliveryZoneId: 1 })
       let size = 0
       const fake = {
         sort: (sort: object) => { expect(sort).to.deep.equal({ _id: 1 }); return fake },
@@ -214,7 +248,7 @@ describe('sale client options without a database', () => {
       } while (cursor !== null)
       const expected = fixtures.filter(item => item.isActive === true && (q === '' || (item.nombreCompleto?.toLowerCase().startsWith(q) ?? false)))
         .sort((a, b) => String(a._id).localeCompare(String(b._id)))
-        .map(item => ({ id: String(item._id), name: typeof item.nombreCompleto === 'string' && item.nombreCompleto.trim() !== '' ? item.nombreCompleto : 'Sin nombre', ...(item.address === undefined ? {} : { address: item.address }) }))
+        .map(item => ({ id: String(item._id), name: typeof item.nombreCompleto === 'string' && item.nombreCompleto.trim() !== '' ? item.nombreCompleto : 'Sin nombre', ...(item.address === undefined ? {} : { address: item.address }), deliveryZoneName: null }))
       expect(pages).to.be.greaterThan(1)
       expect(seen).to.deep.equal(expected)
       expect(new Set(seen.map(item => item.id)).size).to.equal(expected.length)

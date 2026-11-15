@@ -134,16 +134,35 @@ const getClientSearch = async (input: string, skip?: number, limit?: number): Pr
   return await aggregation
 }
 
-const getSaleClientOptions = async (input: string): Promise<Array<{ id: string, name: string, address?: string }>> => {
+interface SaleClientOption {
+  id: string
+  name: string
+  address?: string
+  deliveryZoneName: string | null
+}
+
+const getSaleClientZoneNames = async (clients: Array<{ deliveryZoneId?: Types.ObjectId | null }>): Promise<Map<string, string>> => {
+  const ids = new Map<string, Types.ObjectId>()
+  for (const client of clients) {
+    if (client.deliveryZoneId != null) ids.set(String(client.deliveryZoneId), client.deliveryZoneId)
+  }
+  if (ids.size === 0) return new Map()
+  const zones = await DeliveryZoneModel.find({ _id: { $in: [...ids.values()] } }, { _id: 1, name: 1 }).maxTimeMS(5000).lean()
+  return new Map(zones.filter(zone => typeof zone.name === 'string').map(zone => [String(zone._id), zone.name]))
+}
+
+const getSaleClientOptions = async (input: string): Promise<SaleClientOption[]> => {
   const literal = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const clients = await ClientModel.find(
     { isActive: true, nombreCompleto: new RegExp(`^${literal}`, 'i') },
-    { _id: 1, nombreCompleto: 1, address: 1 }
+    { _id: 1, nombreCompleto: 1, address: 1, deliveryZoneId: 1 }
   ).sort({ nombreCompleto: 1, _id: 1 }).limit(20).maxTimeMS(5000).lean()
+  const zoneNames = await getSaleClientZoneNames(clients)
   return clients.map((client) => ({
     id: String(client._id),
     name: client.nombreCompleto,
-    ...(typeof client.address === 'string' ? { address: client.address } : {})
+    ...(typeof client.address === 'string' ? { address: client.address } : {}),
+    deliveryZoneName: client.deliveryZoneId == null ? null : zoneNames.get(String(client.deliveryZoneId)) ?? null
   }))
 }
 
@@ -152,7 +171,7 @@ interface SaleClientCursor {
   query: string
 }
 
-const getSaleClientOptionsPage = async (input: string, limit: number, cursor?: SaleClientCursor): Promise<{ clients: Array<{ id: string, name: string, address?: string }>, nextCursor: string | null }> => {
+const getSaleClientOptionsPage = async (input: string, limit: number, cursor?: SaleClientCursor): Promise<{ clients: SaleClientOption[], nextCursor: string | null }> => {
   const literal = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const clients = await ClientModel.find(
     {
@@ -160,9 +179,10 @@ const getSaleClientOptionsPage = async (input: string, limit: number, cursor?: S
       ...(input === '' ? {} : { nombreCompleto: new RegExp(`^${literal}`, 'i') }),
       ...(cursor === undefined ? {} : { _id: { $gt: new Types.ObjectId(cursor.id) } })
     },
-    { _id: 1, nombreCompleto: 1, address: 1 }
+    { _id: 1, nombreCompleto: 1, address: 1, deliveryZoneId: 1 }
   ).sort({ _id: 1 }).limit(limit + 1).maxTimeMS(5000).lean()
   const page = clients.slice(0, limit)
+  const zoneNames = await getSaleClientZoneNames(page)
   const last = page[page.length - 1]
   const nextCursor = clients.length > limit
     ? Buffer.from(JSON.stringify({ id: String(last._id), query: input })).toString('base64url')
@@ -171,7 +191,8 @@ const getSaleClientOptionsPage = async (input: string, limit: number, cursor?: S
     clients: page.map((client) => ({
       id: String(client._id),
       name: typeof client.nombreCompleto === 'string' && client.nombreCompleto.trim() !== '' ? client.nombreCompleto : 'Sin nombre',
-      ...(typeof client.address === 'string' ? { address: client.address } : {})
+      ...(typeof client.address === 'string' ? { address: client.address } : {}),
+      deliveryZoneName: client.deliveryZoneId == null ? null : zoneNames.get(String(client.deliveryZoneId)) ?? null
     })),
     nextCursor
   }
