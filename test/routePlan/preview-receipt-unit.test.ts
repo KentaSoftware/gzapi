@@ -108,6 +108,26 @@ describe('route receipt service without database access', () => {
     } finally { client.address = originalAddress }
   })
 
+  it('omits a legacy null address from preview and saved sale references', async () => {
+    const originalAddress = client.address
+    try {
+      ;(client as unknown as { address: null }).address = null
+      const reviewed = await preview(input, { actor: 'actor' })
+      expect(reviewed.saleReferences[0]).not.to.have.property('address')
+      const savedSnapshot = await saveSnapshot({ receipt: reviewed.receipt as string }, 'actor')
+      expect(savedSnapshot.saleReferences?.[0]).not.to.have.property('address')
+    } finally { client.address = originalAddress }
+  })
+
+  it('normalizes legacy preview receipts before persisting their snapshots', async () => {
+    const reviewed = await preview(input, { actor: 'actor' })
+    const storedSnapshot = stored.snapshot as { saleReferences: Array<{ address: string | null }> }
+    storedSnapshot.saleReferences[0].address = null
+    const savedSnapshot = await saveSnapshot({ receipt: reviewed.receipt as string }, 'actor')
+    expect(savedSnapshot.saleReferences?.[0]).not.to.have.property('address')
+    expect(storedSnapshot.saleReferences[0].address).to.equal(null)
+  })
+
   it('accepts an undated pending sale and reserves it on both save paths', async () => {
     const previous = sale.delivery.serviceDate
     try {

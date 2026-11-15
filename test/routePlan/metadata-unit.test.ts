@@ -9,8 +9,20 @@ import ClientModel from '../../src/models/client'
 import * as routePlan from '../../src/services/routePlan'
 import DeliveryZoneModel from '../../src/models/deliveryZone'
 
+const stubValue = (value: unknown): never => value as never
+
 describe('dashboard assignment labels', () => {
   afterEach(() => { sinon.restore() })
+  it('omits null and malformed addresses from map locations', async () => {
+    const clients = [{ _id: '1', nombreCompleto: 'Null', lat: 1, lng: 2, address: null }, { _id: '2', nombreCompleto: 'Malformed', lat: 1, lng: 2, address: 4 }]
+    sinon.stub(routePlan, 'getGlobalCandidates').resolves({ eligible: [], blocked: [], ruleVersion: 'test' })
+    const cursor = { async * [Symbol.asyncIterator] () { for (const client of clients) yield client } }
+    sinon.stub(ClientModel, 'find').returns(stubValue({ sort: () => ({ lean: () => ({ cursor: () => cursor }) }) }))
+    sinon.stub(RoutePlanModel, 'find').returns(stubValue({ sort: () => ({ limit: () => ({ lean: async () => [] }) }) }))
+    const result = await getDashboard({})
+    expect(result.mapLocations).to.have.length(2)
+    expect(result.mapLocations.every((location) => !('addressSummary' in location))).to.equal(true)
+  })
   it('maps all clients beyond 1000 using unassigned candidates, not dated pending sale reads', async () => {
     const clients = Array.from({ length: 1002 }, (_, i) => ({ _id: String(i), nombreCompleto: `Client ${i}`, lat: 1, lng: 2, isActive: true }))
     const candidate = { saleId: 'aaaaaaaaaaaaaaaaaaaaaaaa', clientId: '1001' }
@@ -57,6 +69,29 @@ describe('dashboard assignment labels', () => {
     expect(users.firstCall.args[1]).to.deep.equal({ _id: 1, nickname: 1 })
     expect(vehicles.firstCall.args[1]).to.deep.equal({ _id: 1, code: 1 })
     expect(JSON.stringify(snapshot)).to.equal(before)
+  })
+
+  it('normalizes legacy null addresses in dashboard snapshot references without modifying the snapshot', async () => {
+    const driver = '507f1f77bcf86cd799439011'
+    const snapshot = { _id: '507f1f77bcf86cd799439013', assignments: { driverId: driver }, zoneSnapshot: { code: 'N' }, selectedSaleIds: [], stops: [], metrics: { distanceMeters: 1, durationSeconds: 2 }, warnings: [], saleReferences: [{ saleId: 's', address: null }] }
+    sinon.stub(RoutePlanModel, 'aggregate').resolves([{ ...snapshot, operational: [] }] as never)
+    sinon.stub(UserModel, 'find').returns(stubValue({ lean: async () => [] }))
+    const result = await getDashboard({}, { driverId: driver })
+    expect(result.routes[0].saleReferences?.[0]).not.to.have.property('address')
+    expect(snapshot.saleReferences[0].address).to.equal(null)
+  })
+
+  it('normalizes legacy snapshot addresses for detail and list responses without altering stored data', async () => {
+    const snapshot = { _id: 's1', saleReferences: [{ saleId: 'not-an-id', versionAtSave: null, statusAtSave: null, address: null }] }
+    sinon.stub(RoutePlanModel, 'findById').returns(stubValue({ lean: async () => snapshot }))
+    sinon.stub(RoutePlanModel, 'find').returns(stubValue({ sort: () => ({ limit: () => ({ lean: async () => [snapshot] }) }) }))
+    sinon.stub(RoutePlanOperationalModel, 'updateOne').resolves(stubValue({ matchedCount: 1 }))
+    sinon.stub(RoutePlanOperationalModel, 'bulkWrite').resolves(stubValue({}))
+    const detail = await routePlan.getSnapshot('507f1f77bcf86cd799439013')
+    const list = await routePlan.listSnapshots()
+    expect(detail?.saleReferences?.[0]).not.to.have.property('address')
+    expect(list[0].saleReferences?.[0]).not.to.have.property('address')
+    expect(snapshot.saleReferences[0].address).to.equal(null)
   })
 
   it('omits missing labels and never resurrects assignments from an unassigned projection', async () => {

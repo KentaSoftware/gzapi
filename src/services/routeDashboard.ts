@@ -22,6 +22,7 @@ import ClientModel from '../models/client'
 import UserModel from '../models/user'
 import VehicleModel from '../models/vehicle'
 import { getCandidates, getGlobalCandidates, getDriverSnapshots } from './routePlan'
+import { normalizeSaleReference } from '../utils/routeAddress'
 
 const SERVICE_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const MAX_DASHBOARD_SNAPSHOTS = 1000
@@ -146,7 +147,7 @@ const routeCard = (snapshot: DashboardSnapshotRead, projection: DashboardProject
   if (snapshot.fuelAssumptions !== undefined) card.fuelAssumptions = { ...snapshot.fuelAssumptions }
   if (snapshot.scheduleAssumptions !== undefined) card.scheduleAssumptions = { ...snapshot.scheduleAssumptions }
   if (snapshot.stopEstimates !== undefined) card.stopEstimates = snapshot.stopEstimates.slice(0, MAX_DASHBOARD_ROUTE_STOPS).map((estimate) => ({ ...estimate }))
-  if (snapshot.saleReferences !== undefined) card.saleReferences = snapshot.saleReferences.slice(0, MAX_DASHBOARD_ROUTE_SALE_REFERENCES).map((reference) => ({ ...reference }))
+  if (snapshot.saleReferences !== undefined) card.saleReferences = snapshot.saleReferences.slice(0, MAX_DASHBOARD_ROUTE_SALE_REFERENCES).map(normalizeSaleReference)
   if (projection?.staleCauses !== undefined) card.staleCauses = [...projection.staleCauses]
   return card
 }
@@ -203,7 +204,7 @@ const readMapLocations = async (filter: Record<string, unknown>, candidates: Can
       locations.push({
         clientId,
         displayName: client.nombreCompleto,
-        ...(client.address === undefined || client.address.trim() === '' ? {} : { addressSummary: client.address }),
+        ...(typeof client.address !== 'string' || client.address.trim() === '' ? {} : { addressSummary: client.address }),
         latitude: client.lat as number,
         longitude: client.lng as number,
         status

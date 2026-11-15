@@ -57,8 +57,8 @@ const ClientSchema = new Schema<Client>(
 
 ClientSchema.pre('validate', function (next) {
   const client = this as Client
-  const hasLat = client.lat !== undefined
-  const hasLng = client.lng !== undefined
+  const hasLat = client.lat != null
+  const hasLng = client.lng != null
 
   if (hasLat !== hasLng) {
     this.invalidate('lat', 'lat and lng must be present together')

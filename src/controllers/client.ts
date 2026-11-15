@@ -1,12 +1,14 @@
 import { Request, Response } from 'express'
 import { handleHttp, sendErrorEnvelope } from '../utils/error.handle'
-import { Types } from 'mongoose'
+import { Error as MongooseError, Types } from 'mongoose'
 import { JwtPayload } from 'jsonwebtoken'
 import { emitSocket } from '../socket'
 import {
   ClientNotFoundError,
   ClientLocationConflictError,
   ClientLocationInputError,
+  ClientInputError,
+  ClientEditConflictError,
   confirmLocation,
   geocodeClient,
   getClient,
@@ -38,7 +40,13 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
   try {
     const { input, skip, limit } = body
     if (input !== undefined) {
-      const response = await getClientSearch(input)
+      if (typeof input !== 'string' || input.length > 100 ||
+        ((skip !== undefined || limit !== undefined) &&
+          (!Number.isInteger(skip) || skip < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100))) {
+        sendErrorEnvelope(res, 400, 'INVALID_CLIENT_SEARCH', 'Client search parameters are invalid')
+        return
+      }
+      const response = await getClientSearch(input, skip, limit)
       res.send(response)
       return
     }
@@ -48,10 +56,11 @@ const getItems = async ({ body }: RequestExt, res: Response): Promise<void> => {
     handleHttp(res, 'ERROR_GET_CLIENTS_LIST', e)
   }
 }
-const uptdateItem = async ({ params, body }: Request, res: Response): Promise<void> => {
+const updateClientItem = async ({ params, body }: Request, res: Response, managed: boolean): Promise<void> => {
   try {
     const { id } = params
-    const response = await updateClient(new Types.ObjectId(id), body)
+    if (!Types.ObjectId.isValid(id)) throw new ClientInputError('Client identifier is invalid')
+    const response = await updateClient(new Types.ObjectId(id), body, managed)
     emitSocket('client', {
       action: 'update',
       data: body
@@ -62,6 +71,18 @@ const uptdateItem = async ({ params, body }: Request, res: Response): Promise<vo
       sendErrorEnvelope(res, 409, 'CLIENT_LOCATION_CONFLICT', e.message)
       return
     }
+    if (e instanceof ClientEditConflictError) {
+      sendErrorEnvelope(res, 409, 'CLIENT_EDIT_CONFLICT', e.message)
+      return
+    }
+    if (e instanceof ClientInputError) {
+      sendErrorEnvelope(res, 400, 'INVALID_CLIENT_INPUT', e.message)
+      return
+    }
+    if (e instanceof MongooseError.ValidationError || e instanceof MongooseError.CastError) {
+      sendErrorEnvelope(res, 400, 'INVALID_CLIENT_INPUT', 'Client input is invalid')
+      return
+    }
     if (e instanceof ClientNotFoundError) {
       sendErrorEnvelope(res, 404, 'CLIENT_NOT_FOUND', e.message)
       return
@@ -69,6 +90,8 @@ const uptdateItem = async ({ params, body }: Request, res: Response): Promise<vo
     handleHttp(res, 'ERROR_UPDATE_CLIENT', e)
   }
 }
+const updateItem = async (req: Request, res: Response): Promise<void> => await updateClientItem(req, res, false)
+const updateManagedItem = async (req: Request, res: Response): Promise<void> => await updateClientItem(req, res, true)
 const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   try {
     const response = await insertClient(body)
@@ -80,6 +103,14 @@ const postItem = async ({ body }: Request, res: Response): Promise<void> => {
   } catch (e) {
     if (e instanceof ClientLocationInputError) {
       sendErrorEnvelope(res, 400, 'INVALID_LOCATION_INPUT', e.message)
+      return
+    }
+    if (e instanceof ClientInputError) {
+      sendErrorEnvelope(res, 400, 'INVALID_CLIENT_INPUT', e.message)
+      return
+    }
+    if (e instanceof MongooseError.ValidationError || e instanceof MongooseError.CastError) {
+      sendErrorEnvelope(res, 400, 'INVALID_CLIENT_INPUT', 'Client input is invalid')
       return
     }
     handleHttp(res, 'ERROR_CREATE_CLIENT', e)
@@ -221,4 +252,4 @@ const confirmLocationItem = async ({ params, body }: RequestExt, res: Response):
   }
 }
 
-export { confirmLocationItem, deleteItem, geocodeItem, getItem, getItems, getLocationSnapshotItem, getSaleOptions, uptdateItem, postItem }
+export { confirmLocationItem, deleteItem, geocodeItem, getItem, getItems, getLocationSnapshotItem, getSaleOptions, updateItem, updateManagedItem, postItem }
