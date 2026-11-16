@@ -1,8 +1,7 @@
 const DEFAULT_STOCK_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 const DEFAULT_STOCK_EXPIRY_ALERT_DAYS = 14
-/** CUR-3: baja rotación evalúa salidas en los últimos 30 días. */
-const DEFAULT_STOCK_ROTATION_DAYS = 30
-const DEFAULT_STOCK_RULES_VERSION = 'stock-rules-v2'
+const DEFAULT_STOCK_ROTATION_DAYS = 90
+const DEFAULT_STOCK_RULES_VERSION = 'stock-rules-v1'
 
 const parseBoundedInteger = (name: string, fallback: number, minimum: number, maximum: number): number => {
   const rawValue = process.env[name]

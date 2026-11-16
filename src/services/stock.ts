@@ -25,7 +25,6 @@ import {
   type StockOverviewQuery,
   type StockOverviewResult,
   type StockOverviewGlobalSummary,
-  type StockExpiredProductRow,
   type StockGlobalAlert,
   type StockProductDetailQuery,
   type StockProductDetailResult,
@@ -54,7 +53,7 @@ import {
   type StockServiceAuth,
   type StockTransactionContext
 } from '../interfaces/stock.interface'
-import { STOCK_EXPIRY_ALERT_DAYS, STOCK_ROTATION_DAYS, STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
+import { STOCK_EXPIRY_ALERT_DAYS, STOCK_RULES_VERSION, STOCK_TIME_ZONE } from '../config/stock'
 import { allocateFefo, calculateAvailability, evaluateExpiry, evaluateLowRotation, evaluateLowStock, StockRuleError } from './stockRules'
 
 const SOURCE_TYPE = 'SALE'
@@ -72,6 +71,7 @@ const PURCHASE_SOURCE_EVENTS = {
 
 const EXPIRY_SOURCE_TYPE = 'EXPIRY_BUCKET'
 const STOCK_SOURCE_TYPE = 'STOCK'
+const STOCK_ROTATION_DAYS = 90
 
 const DELIVERY_SOURCE_EVENTS = {
   DELIVERED: 'SALE_DELIVERY'
@@ -441,7 +441,7 @@ export class StockService {
     const catalogTotal = hasFilters
       ? (await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.LIST_PRODUCTS, async () => await this.repository.listProducts(1, 1))).total
       : page.total
-    const { summary: globalSummary, alerts: globalAlerts, expiredProducts } = await this.getGlobalOverviewData(catalogTotal, query.businessDate, timeZone)
+    const { summary: globalSummary, alerts: globalAlerts } = await this.getGlobalOverviewData(catalogTotal, query.businessDate, timeZone)
     return {
       page: query.page,
       pageSize: query.pageSize,
@@ -456,16 +456,11 @@ export class StockService {
         alertCount: items.reduce((total, item) => total + item.alerts.length, 0)
       },
       globalSummary,
-      globalAlerts,
-      expiredProducts
+      globalAlerts
     }
   }
 
-  private async getGlobalOverviewData (totalProducts: number, businessDate: string, timeZone: string): Promise<{
-    summary: StockOverviewGlobalSummary
-    alerts: StockGlobalAlert[]
-    expiredProducts: StockExpiredProductRow[]
-  }> {
+  private async getGlobalOverviewData (totalProducts: number, businessDate: string, timeZone: string): Promise<{ summary: StockOverviewGlobalSummary, alerts: StockGlobalAlert[] }> {
     const summary: StockOverviewGlobalSummary = {
       belowMinimumProductCount: 0,
       expiringProductCount: 0,
@@ -476,7 +471,6 @@ export class StockService {
     const pageSize = 100
     const pageCount = Math.ceil(totalProducts / pageSize)
     const globalAlerts: StockGlobalAlert[] = []
-    const expiredProducts: StockExpiredProductRow[] = []
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
       const records = (await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.LIST_PRODUCTS, async () => await this.repository.listProducts(pageNumber, pageSize))).items
       const histories = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.SALES_HISTORY, async () => await this.repository.getSalesHistory(records.map(({ productId }) => productId), businessDate, STOCK_ROTATION_DAYS, timeZone))
@@ -484,16 +478,6 @@ export class StockService {
       const batchAlerts = await Promise.all(records.map(async (record) => {
         const availability = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.AVAILABILITY, async () => await this.readAvailability(this.repository, record.productId, businessDate, timeZone))
         const buckets = await withOverviewDiagnostic(STOCK_FAILURE_OPERATIONS.EXPIRY_BUCKETS, async () => await this.repository.getBuckets(record.productId))
-        for (const bucket of buckets) {
-          if (bucket.expiryDate < businessDate && bucket.availableQuantity > 0) {
-            expiredProducts.push({
-              productId: record.productId,
-              productName: record.productName,
-              expiryDate: bucket.expiryDate,
-              quantity: bucket.availableQuantity
-            })
-          }
-        }
         return this.alertsFor(record.productId, availability, record.minimum, buckets, businessDate, timeZone, historiesByProduct.get(record.productId), record.expiryAlertDays ?? STOCK_EXPIRY_ALERT_DAYS).map((alert) => ({ ...alert, productName: record.productName }))
       }))
       for (const alerts of batchAlerts) {
@@ -512,11 +496,7 @@ export class StockService {
       const typeComparison = left.type.localeCompare(right.type)
       return typeComparison !== 0 ? typeComparison : left.explanation.localeCompare(right.explanation)
     })
-    expiredProducts.sort((left, right) => {
-      const byDate = left.expiryDate.localeCompare(right.expiryDate)
-      return byDate !== 0 ? byDate : left.productName.localeCompare(right.productName)
-    })
-    return { summary, alerts: globalAlerts, expiredProducts }
+    return { summary, alerts: globalAlerts }
   }
 
   async getProductDetail (query: StockProductDetailQuery): Promise<StockProductDetailResult> {
@@ -1511,17 +1491,14 @@ export class StockService {
     const alerts: StockAlert[] = []
     const rotation = history === undefined
       ? undefined
-      : evaluateLowRotation({
-        ...history,
-        ...(minimum !== null ? { minimum } : {})
-      })
+      : evaluateLowRotation(history)
     if (rotation?.alert !== undefined) alerts.push(rotation.alert)
     if (rotation?.dataQuality === STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY) {
       alerts.push({
         type: STOCK_ALERT_TYPES.LOW_ROTATION,
         severity: STOCK_ALERT_SEVERITIES.INFO,
         productId,
-        explanation: `Historial insuficiente para evaluar salidas de los últimos ${STOCK_ROTATION_DAYS} días`,
+        explanation: `Producto con historial insuficiente para los últimos ${STOCK_ROTATION_DAYS} días calendario completos`,
         dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY
       })
     }

@@ -526,68 +526,6 @@ const confirmOpeningCountController = async (req: RequestExt, res: Response, wri
   }
 }
 
-/** RF-STK-09 — PDF mínimo: KPIs globales + alertas activas. */
-const exportStockReportPdf = async (req: RequestExt, res: Response): Promise<void> => {
-  const correlationId = correlationOf(req)
-  const actorId = requireActor(res, correlationId, req)
-  if (actorId === undefined) return
-  const parsed = stockOverviewQuerySchema.safeParse({
-    businessDate: typeof req.query.businessDate === 'string' ? req.query.businessDate : undefined,
-    timeZone: typeof req.query.timeZone === 'string' ? req.query.timeZone : undefined,
-    page: 1,
-    pageSize: 1
-  })
-  if (!parsed.success) {
-    invalidPayload(res, correlationId)
-    return
-  }
-  try {
-    const overview = await service.getOverview({ ...parsed.data, auth: authOf(actorId) })
-    const PDFDocument = (await import('pdfkit')).default
-    const doc = new PDFDocument({ margin: 50, size: 'A4' })
-    const stamp = overview.globalSummary
-    res.setHeader('Content-Type', 'application/pdf')
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="golozur360-stock-${parsed.data.businessDate}.pdf"`
-    )
-    doc.pipe(res)
-    doc.fontSize(18).text('Golozur360 — Reporte de Stock Inteligente')
-    doc.moveDown(0.4)
-    doc.fontSize(10).fillColor('#444')
-      .text(`Fecha de negocio: ${parsed.data.businessDate}`)
-      .text(`Generado: ${new Date().toLocaleString('es-AR')}`)
-    doc.moveDown()
-    doc.fillColor('#000').fontSize(14).text('1. Indicadores', { underline: true })
-    doc.moveDown(0.3)
-    doc.fontSize(11)
-    doc.text(`Stock bajo: ${stamp.belowMinimumProductCount}`)
-    doc.text(`Por vencer: ${stamp.expiringProductCount}`)
-    doc.text(`Vencidos: ${stamp.expiredProductCount}`)
-    doc.text(`Baja rotación: ${stamp.lowRotationProductCount}`)
-    doc.text(`Alertas activas: ${stamp.activeAlertCount}`)
-    doc.moveDown()
-    doc.fontSize(14).text('2. Alertas activas (muestra)', { underline: true })
-    doc.moveDown(0.3)
-    doc.fontSize(10)
-    const sample = overview.globalAlerts.slice(0, 40)
-    if (sample.length === 0) {
-      doc.text('Todos los indicadores operan dentro de los parámetros normales.')
-    } else {
-      for (const alert of sample) {
-        doc.text(`• [${alert.severity}] ${alert.productName} — ${alert.type}: ${alert.explanation}`)
-      }
-      if (overview.globalAlerts.length > sample.length) {
-        doc.moveDown(0.3)
-        doc.text(`… y ${overview.globalAlerts.length - sample.length} alertas más.`)
-      }
-    }
-    doc.end()
-  } catch (error) {
-    handleError(res, correlationId, error)
-  }
-}
-
 export {
   getAvailability,
   getOverview,
@@ -599,7 +537,6 @@ export {
   writeOffProduct,
   removeExpiredProduct,
   removeExpiredProducts,
-  exportStockReportPdf,
   previewOpeningCountController as previewOpeningCount,
   confirmOpeningCountController as confirmOpeningCount
 }

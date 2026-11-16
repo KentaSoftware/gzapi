@@ -141,99 +141,65 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
       buckets: [{ bucketId: 'expiry-boundary', expiryDate: '2026-10-15', availableQuantity: 2, committedQuantity: 0 }]
     }
 
-    // daysRemaining=0 ≤ floor(14/2)=7 → CRITICAL
     expect(evaluateExpiry(input)).to.deep.equal([{
       type: 'EXPIRING_SOON',
-      severity: 'CRITICAL',
+      severity: 'WARNING',
       productId: PRODUCT_ID,
-      explanation: 'Vencimiento próximo: 2 un. el 2026-10-15 (en 0 días; umbral 14)',
+      explanation: `Producto con 2 un. próximas a vencer el 2026-10-15`,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
     }])
-    expect(evaluateExpiry({ ...input, businessDate: '2026-10-16' })[0]).to.deep.include({
-      type: 'EXPIRED',
-      severity: 'CRITICAL'
-    })
+    expect(evaluateExpiry({ ...input, businessDate: '2026-10-16' })[0]).to.deep.include({ type: 'EXPIRED' })
   })
 
-  it('evaluates expiry boundaries with half-threshold severities', () => {
+  it('evaluates expiry boundaries in Buenos Aires without using machine timezone', () => {
     const input: StockExpiryEvaluationInput = {
       ...completeContext,
       alertDays: 14,
       buckets: [
         { bucketId: 'expired', expiryDate: '2026-10-14', availableQuantity: 2, committedQuantity: 0 },
-        { bucketId: 'critical', expiryDate: '2026-10-21', availableQuantity: 1, committedQuantity: 0 },
-        { bucketId: 'half', expiryDate: '2026-10-22', availableQuantity: 5, committedQuantity: 0 },
         { bucketId: 'boundary', expiryDate: '2026-10-29', availableQuantity: 3, committedQuantity: 0 },
         { bucketId: 'outside', expiryDate: '2026-10-30', availableQuantity: 4, committedQuantity: 0 },
         { bucketId: 'empty', expiryDate: '2026-10-15', availableQuantity: 0, committedQuantity: 0 }
       ]
     }
 
-    // half=7: 6 días → Crítica; 7 y 14 → Media; 15 fuera de horizonte
     expect(evaluateExpiry(input)).to.deep.equal([
       {
         type: 'EXPIRED',
-        severity: 'CRITICAL',
+        severity: 'WARNING',
         productId: PRODUCT_ID,
         explanation: 'Producto con 2 un. vencidas el 2026-10-14',
         dataQuality: STOCK_DATA_QUALITY.COMPLETE
       },
       {
         type: 'EXPIRING_SOON',
-        severity: 'CRITICAL',
-        productId: PRODUCT_ID,
-        explanation: 'Vencimiento próximo: 1 un. el 2026-10-21 (en 6 días; umbral 14)',
-        dataQuality: STOCK_DATA_QUALITY.COMPLETE
-      },
-      {
-        type: 'EXPIRING_SOON',
         severity: 'WARNING',
         productId: PRODUCT_ID,
-        explanation: 'Vencimiento próximo: 5 un. el 2026-10-22 (en 7 días; umbral 14)',
-        dataQuality: STOCK_DATA_QUALITY.COMPLETE
-      },
-      {
-        type: 'EXPIRING_SOON',
-        severity: 'WARNING',
-        productId: PRODUCT_ID,
-        explanation: 'Vencimiento próximo: 3 un. el 2026-10-29 (en 14 días; umbral 14)',
+        explanation: 'Producto con 3 un. próximas a vencer el 2026-10-29',
         dataQuality: STOCK_DATA_QUALITY.COMPLETE
       }
     ])
   })
 
-  it('creates low/critical stock alerts from physical vs half of minimum', () => {
-    // physical === minimum → no alert
+  it('creates low and critical stock alerts using only the configured minimum', () => {
     expect(evaluateLowStock({
       productId: PRODUCT_ID,
-      availableToSell: 20,
-      physicalQuantity: 20,
+      availableToSell: 3,
+      physicalQuantity: 3,
       committedQuantity: 0,
       expiredQuantity: 0,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE,
-      minimum: 20
-    })).to.equal(undefined)
-
-    // Media: floor(20/2)=10 ≤ physical=15 < 20
-    expect(evaluateLowStock({
-      productId: PRODUCT_ID,
-      availableToSell: 15,
-      physicalQuantity: 15,
-      committedQuantity: 0,
-      expiredQuantity: 0,
-      dataQuality: STOCK_DATA_QUALITY.COMPLETE,
-      minimum: 20
+      minimum: 3
     })).to.deep.include({ type: 'LOW_STOCK', severity: 'WARNING', dataQuality: STOCK_DATA_QUALITY.COMPLETE })
 
-    // Critical: physical=5 < 10
     expect(evaluateLowStock({
       productId: PRODUCT_ID,
       availableToSell: 0,
-      physicalQuantity: 5,
-      committedQuantity: 5,
+      physicalQuantity: 3,
+      committedQuantity: 3,
       expiredQuantity: 0,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE,
-      minimum: 20
+      minimum: 3
     })).to.deep.include({ type: 'CRITICAL_STOCK', severity: 'CRITICAL' })
 
     expect(evaluateLowStock({
@@ -243,7 +209,7 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
       committedQuantity: 0,
       expiredQuantity: 0,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
-    })?.dataQuality).to.equal(STOCK_DATA_QUALITY.INCOMPLETE)
+    }).dataQuality).to.equal(STOCK_DATA_QUALITY.INCOMPLETE)
 
     expect(evaluateLowStock({
       productId: PRODUCT_ID,
@@ -256,14 +222,13 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
     })).to.deep.include({ type: 'LOW_STOCK', severity: 'WARNING', dataQuality: STOCK_DATA_QUALITY.INCOMPLETE })
   })
 
-  it('distinguishes complete 30-day rotation history from insufficient history', () => {
+  it('distinguishes complete 90-day rotation history from insufficient history', () => {
     const input: StockRotationInput = {
       productId: OTHER_PRODUCT_ID,
-      productCreatedAt: '2026-08-01T12:00:00.000Z',
+      productCreatedAt: '2026-07-16T12:00:00.000Z',
       businessDate: '2026-10-15',
       timeZone: 'America/Argentina/Buenos_Aires',
-      rotationDays: 30,
-      minimum: 5,
+      rotationDays: 90,
       sales: []
     }
     expect(evaluateLowRotation(input)).to.deep.include({
@@ -275,43 +240,43 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
     expect(evaluateLowRotation({ ...input, sales: [{ occurredAt: 'not-a-date', quantity: 1 }] }).dataQuality).to.equal(STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY)
   })
 
-  it('flags low rotation when salidas units are below stock minimum', () => {
+  it('counts only active, non-cancelled historical sales for rotation', () => {
     const input: StockRotationInput = {
       productId: OTHER_PRODUCT_ID,
-      productCreatedAt: '2026-08-01T12:00:00.000Z',
+      productCreatedAt: '2026-07-16T12:00:00.000Z',
       businessDate: '2026-10-15',
       timeZone: 'America/Argentina/Buenos_Aires',
-      rotationDays: 30,
-      minimum: 5,
+      rotationDays: 90,
       sales: [
-        { occurredAt: '2026-10-01T12:00:00.000Z', quantity: 2, active: true, cancelled: false },
-        { occurredAt: '2026-10-02T12:00:00.000Z', quantity: 1, active: true, cancelled: true },
-        { occurredAt: '2026-10-03T12:00:00.000Z', quantity: 1, active: false, cancelled: false }
+        { occurredAt: '2026-09-01T12:00:00.000Z', quantity: 1, active: true, cancelled: false },
+        { occurredAt: '2026-09-02T12:00:00.000Z', quantity: 1, active: true, cancelled: true },
+        { occurredAt: '2026-09-03T12:00:00.000Z', quantity: 1, active: false, cancelled: false }
       ]
     }
 
     expect(evaluateLowRotation(input)).to.deep.include({
       productId: OTHER_PRODUCT_ID,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE,
-      validSaleCount: 1,
-      validSaleQuantity: 2
+      validSaleCount: 1
     })
-    expect(evaluateLowRotation(input).alert?.type).to.equal('LOW_ROTATION')
-    expect(evaluateLowRotation({ ...input, minimum: 2 }).alert).to.equal(undefined)
-    expect(evaluateLowRotation({ ...input, minimum: undefined }).alert).to.equal(undefined)
+    expect(evaluateLowRotation(input).alert).to.equal(undefined)
+    expect(evaluateLowRotation({ ...input, sales: input.sales.slice(1) })).to.deep.include({
+      dataQuality: STOCK_DATA_QUALITY.COMPLETE,
+      validSaleCount: 0
+    })
+    expect(evaluateLowRotation({ ...input, sales: input.sales.slice(1) }).alert?.type).to.equal('LOW_ROTATION')
   })
 
-  it('uses the exact 30 complete Buenos Aires civil-day window and aggregates units', () => {
+  it('uses the exact 90 complete Buenos Aires civil-day window and aggregates units', () => {
     const input: StockRotationInput = {
       productId: OTHER_PRODUCT_ID,
-      productCreatedAt: '2026-08-01T12:00:00.000Z',
+      productCreatedAt: '2026-07-17T03:00:00.000Z',
       businessDate: '2026-10-15',
       timeZone: 'America/Argentina/Buenos_Aires',
-      rotationDays: 30,
-      minimum: 10,
+      rotationDays: 90,
       sales: [
-        { occurredAt: '2026-09-15T03:00:00.000Z', quantity: 2 },
-        { occurredAt: '2026-09-14T02:59:59.000Z', quantity: 100 },
+        { occurredAt: '2026-07-17T03:00:00.000Z', quantity: 2 },
+        { occurredAt: '2026-07-17T02:59:59.000Z', quantity: 100 },
         { occurredAt: '2026-10-14T23:59:59.000Z', quantity: 3 },
         { occurredAt: '2026-10-15T03:00:00.000Z', quantity: 100 }
       ]
@@ -322,7 +287,6 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
       validSaleCount: 2,
       validSaleQuantity: 5
     })
-    expect(evaluateLowRotation(input).alert?.type).to.equal('LOW_ROTATION')
     expect(evaluateLowRotation({ ...input, sales: input.sales.slice(1, 2) })).to.deep.include({
       dataQuality: STOCK_DATA_QUALITY.COMPLETE,
       validSaleCount: 0,
@@ -334,11 +298,10 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
   it('returns insufficient history for invalid sale status types', () => {
     const input: StockRotationInput = {
       productId: OTHER_PRODUCT_ID,
-      productCreatedAt: '2026-08-01T12:00:00.000Z',
+      productCreatedAt: '2026-07-16T12:00:00.000Z',
       businessDate: '2026-10-15',
       timeZone: 'America/Argentina/Buenos_Aires',
-      rotationDays: 30,
-      minimum: 5,
+      rotationDays: 90,
       sales: [{ occurredAt: '2026-09-01T12:00:00.000Z', quantity: 1, active: 'yes' } as unknown as StockRotationInput['sales'][number]]
     }
 
