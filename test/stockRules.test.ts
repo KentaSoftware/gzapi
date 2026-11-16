@@ -145,7 +145,7 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
       type: 'EXPIRING_SOON',
       severity: 'WARNING',
       productId: PRODUCT_ID,
-      explanation: `Product ${PRODUCT_ID} has 2 units expiring on 2026-10-15`,
+      explanation: `Producto con 2 un. próximas a vencer el 2026-10-15`,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
     }])
     expect(evaluateExpiry({ ...input, businessDate: '2026-10-16' })[0]).to.deep.include({ type: 'EXPIRED' })
@@ -168,14 +168,14 @@ describe('Stock rules — expiry, thresholds, and rotation', () => {
         type: 'EXPIRED',
         severity: 'WARNING',
         productId: PRODUCT_ID,
-        explanation: 'Product 507f1f77bcf86cd799439011 has 2 units expired on 2026-10-14',
+        explanation: 'Producto con 2 un. vencidas el 2026-10-14',
         dataQuality: STOCK_DATA_QUALITY.COMPLETE
       },
       {
         type: 'EXPIRING_SOON',
         severity: 'WARNING',
         productId: PRODUCT_ID,
-        explanation: 'Product 507f1f77bcf86cd799439011 has 3 units expiring on 2026-10-29',
+        explanation: 'Producto con 3 un. próximas a vencer el 2026-10-29',
         dataQuality: STOCK_DATA_QUALITY.COMPLETE
       }
     ])

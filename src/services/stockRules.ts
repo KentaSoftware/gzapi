@@ -180,7 +180,7 @@ const incompleteAlert = (productId: string, type: typeof STOCK_ALERT_TYPES.EXPIR
 export const evaluateExpiry = (input: StockExpiryEvaluationInput): StockAlert[] => {
   if (!isValidContext(input.productId, input.businessDate, input.timeZone) ||
     !isValidQuantity(input.alertDays) || !Array.isArray(input.buckets) || !validateBuckets(input.buckets)) {
-    return [incompleteAlert(input.productId, STOCK_ALERT_TYPES.EXPIRING_SOON, `Product ${input.productId} has incomplete expiry data`)]
+    return [incompleteAlert(input.productId, STOCK_ALERT_TYPES.EXPIRING_SOON, `Producto con datos incompletos de vencimiento`)]
   }
 
   const horizon = addCivilDays(input.businessDate, input.alertDays)
@@ -197,7 +197,7 @@ export const evaluateExpiry = (input: StockExpiryEvaluationInput): StockAlert[] 
         type: STOCK_ALERT_TYPES.EXPIRED,
         severity: STOCK_ALERT_SEVERITIES.WARNING,
         productId: input.productId,
-        explanation: `Product ${input.productId} has ${bucket.availableQuantity} units expired on ${bucket.expiryDate}`,
+        explanation: `Producto con ${bucket.availableQuantity} un. vencidas el ${bucket.expiryDate}`,
         dataQuality: STOCK_DATA_QUALITY.COMPLETE
       })
     } else if (bucket.expiryDate <= horizon) {
@@ -205,7 +205,7 @@ export const evaluateExpiry = (input: StockExpiryEvaluationInput): StockAlert[] 
         type: STOCK_ALERT_TYPES.EXPIRING_SOON,
         severity: STOCK_ALERT_SEVERITIES.WARNING,
         productId: input.productId,
-        explanation: `Product ${input.productId} has ${bucket.availableQuantity} units expiring on ${bucket.expiryDate}`,
+        explanation: `Producto con ${bucket.availableQuantity} un. próximas a vencer el ${bucket.expiryDate}`,
         dataQuality: STOCK_DATA_QUALITY.COMPLETE
       })
     }
@@ -220,7 +220,7 @@ export const evaluateLowStock = (input: LowStockInput): StockAlert | undefined =
       type: STOCK_ALERT_TYPES.LOW_STOCK,
       severity: STOCK_ALERT_SEVERITIES.WARNING,
       productId: input.productId,
-      explanation: `Product ${input.productId} has incomplete stock threshold data`,
+      explanation: `Producto con datos incompletos de umbral de stock`,
       dataQuality: STOCK_DATA_QUALITY.INCOMPLETE
     }
   }
@@ -229,7 +229,7 @@ export const evaluateLowStock = (input: LowStockInput): StockAlert | undefined =
       type: STOCK_ALERT_TYPES.CRITICAL_STOCK,
       severity: STOCK_ALERT_SEVERITIES.CRITICAL,
       productId: input.productId,
-      explanation: `Product ${input.productId} has no units available to sell`,
+      explanation: `Producto sin unidades disponibles para la venta`,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
     }
   }
@@ -238,7 +238,7 @@ export const evaluateLowStock = (input: LowStockInput): StockAlert | undefined =
     type: STOCK_ALERT_TYPES.LOW_STOCK,
     severity: STOCK_ALERT_SEVERITIES.WARNING,
     productId: input.productId,
-    explanation: `Product ${input.productId} has ${input.availableToSell} units available against a minimum of ${input.minimum as number}`,
+    explanation: `Producto con ${input.availableToSell} un. disponibles frente a un mínimo de ${input.minimum as number}`,
     dataQuality: STOCK_DATA_QUALITY.COMPLETE
   }
 }
@@ -295,7 +295,7 @@ export const evaluateLowRotation = (input: StockRotationInput): StockRotationRes
       type: STOCK_ALERT_TYPES.LOW_ROTATION,
       severity: STOCK_ALERT_SEVERITIES.WARNING,
       productId: input.productId,
-      explanation: `Product ${input.productId} had zero valid sales in the last ${input.rotationDays} complete calendar days`,
+      explanation: `Producto sin ventas válidas en los últimos ${input.rotationDays} días calendario completos`,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
     }
   }

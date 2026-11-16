@@ -442,7 +442,7 @@ describe('Stock service', () => {
       productName: 'Product off-page',
       type: 'CRITICAL_STOCK',
       severity: 'CRITICAL',
-      explanation: 'Product off-page has no units available to sell',
+      explanation: 'Producto sin unidades disponibles para la venta',
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
     })
     expect(overview.globalAlerts.every(({ productId }) => !['bucket-first', 'bucket-later'].includes(productId))).to.equal(true)

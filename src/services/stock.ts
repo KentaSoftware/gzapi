@@ -1498,7 +1498,7 @@ export class StockService {
         type: STOCK_ALERT_TYPES.LOW_ROTATION,
         severity: STOCK_ALERT_SEVERITIES.INFO,
         productId,
-        explanation: `Product ${productId} has insufficient history for the last ${STOCK_ROTATION_DAYS} complete calendar days`,
+        explanation: `Producto con historial insuficiente para los últimos ${STOCK_ROTATION_DAYS} días calendario completos`,
         dataQuality: STOCK_DATA_QUALITY.INSUFFICIENT_HISTORY
       })
     }
