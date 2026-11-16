@@ -10,7 +10,13 @@
     "vercel-build": "npm run build",
     "start": "node ./dist/server.js",
     "test": "cross-env TS_NODE_TRANSPILE_ONLY=1 NODE_OPTIONS=--no-strip-types mocha -r ts-node/register \"test/**/*.test.ts\" --timeout 10000",
-    "test:phase0:performance": "cross-env TS_NODE_TRANSPILE_ONLY=1 NODE_OPTIONS=--no-strip-types mocha -r ts-node/register \"test/phase0/performance.test.ts\" --timeout 60000"
+    "test:phase0:performance": "cross-env TS_NODE_TRANSPILE_ONLY=1 NODE_OPTIONS=--no-strip-types mocha -r ts-node/register \"test/phase0/performance.test.ts\" --timeout 60000",
+    "seed:stock:wipe": "node -r ts-node/register migrations/stock-seed/wipe.ts",
+    "seed:stock:01-alertas": "node -r ts-node/register migrations/stock-seed/01-alertas-tablero.ts",
+    "seed:stock:02-saludable": "node -r ts-node/register migrations/stock-seed/02-saludable.ts",
+    "seed:stock:03-vencidos": "node -r ts-node/register migrations/stock-seed/03-vencidos-retiro.ts",
+    "seed:stock:04-rotacion": "node -r ts-node/register migrations/stock-seed/04-rotacion-historial.ts",
+    "seed:stock:05-panel": "node -r ts-node/register migrations/stock-seed/05-panel-rico.ts"
   },
   "author": "turo1111",
   "license": "UNLICENSED",
