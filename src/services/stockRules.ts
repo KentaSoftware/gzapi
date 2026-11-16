@@ -177,13 +177,16 @@ const incompleteAlert = (productId: string, type: typeof STOCK_ALERT_TYPES.EXPIR
   dataQuality: STOCK_DATA_QUALITY.INCOMPLETE
 })
 
+const civilDaysBetween = (fromCivil: string, toCivil: string): number =>
+  Math.round((civilDateToNumber(toCivil) - civilDateToNumber(fromCivil)) / (24 * 60 * 60 * 1000))
+
 export const evaluateExpiry = (input: StockExpiryEvaluationInput): StockAlert[] => {
   if (!isValidContext(input.productId, input.businessDate, input.timeZone) ||
     !isValidQuantity(input.alertDays) || !Array.isArray(input.buckets) || !validateBuckets(input.buckets)) {
     return [incompleteAlert(input.productId, STOCK_ALERT_TYPES.EXPIRING_SOON, `Product ${input.productId} has incomplete expiry data`)]
   }
 
-  const horizon = addCivilDays(input.businessDate, input.alertDays)
+  const criticalHorizonDays = Math.floor(input.alertDays / 2)
   const alerts: StockAlert[] = []
   const ordered = [...input.buckets].sort((left, right) => {
     const expiryComparison = left.expiryDate.localeCompare(right.expiryDate)
@@ -195,50 +198,64 @@ export const evaluateExpiry = (input: StockExpiryEvaluationInput): StockAlert[] 
     if (bucket.expiryDate < input.businessDate) {
       alerts.push({
         type: STOCK_ALERT_TYPES.EXPIRED,
-        severity: STOCK_ALERT_SEVERITIES.WARNING,
+        severity: STOCK_ALERT_SEVERITIES.CRITICAL,
         productId: input.productId,
-        explanation: `Product ${input.productId} has ${bucket.availableQuantity} units expired on ${bucket.expiryDate}`,
+        explanation: `Producto con ${bucket.availableQuantity} un. vencidas el ${bucket.expiryDate}`,
         dataQuality: STOCK_DATA_QUALITY.COMPLETE
       })
-    } else if (bucket.expiryDate <= horizon) {
-      alerts.push({
-        type: STOCK_ALERT_TYPES.EXPIRING_SOON,
-        severity: STOCK_ALERT_SEVERITIES.WARNING,
-        productId: input.productId,
-        explanation: `Product ${input.productId} has ${bucket.availableQuantity} units expiring on ${bucket.expiryDate}`,
-        dataQuality: STOCK_DATA_QUALITY.COMPLETE
-      })
+      continue
     }
+    const daysRemaining = civilDaysBetween(input.businessDate, bucket.expiryDate)
+    if (daysRemaining > input.alertDays) continue
+    // Same half-threshold as stock: Critical if value < half; Media if half ≤ value ≤ umbral.
+    const severity = daysRemaining < criticalHorizonDays
+      ? STOCK_ALERT_SEVERITIES.CRITICAL
+      : STOCK_ALERT_SEVERITIES.WARNING
+    alerts.push({
+      type: STOCK_ALERT_TYPES.EXPIRING_SOON,
+      severity,
+      productId: input.productId,
+      explanation: `Vencimiento próximo: ${bucket.availableQuantity} un. el ${bucket.expiryDate} (en ${daysRemaining} día${daysRemaining === 1 ? '' : 's'}; umbral ${input.alertDays})`,
+      dataQuality: STOCK_DATA_QUALITY.COMPLETE
+    })
   }
   return alerts
 }
 
+/**
+ * CUR-3 + avance-2: uses physical stock vs minimum with half-threshold severities.
+ * Critical: physical &lt; floor(minimum/2); Media: floor(minimum/2) ≤ physical &lt; minimum.
+ */
 export const evaluateLowStock = (input: LowStockInput): StockAlert | undefined => {
   const hasMinimum = input.minimum !== undefined && isValidQuantity(input.minimum)
-  if (input.dataQuality !== STOCK_DATA_QUALITY.COMPLETE || !hasMinimum || !isValidQuantity(input.availableToSell)) {
+  if (input.dataQuality !== STOCK_DATA_QUALITY.COMPLETE || !hasMinimum || !isValidQuantity(input.physicalQuantity)) {
     return {
       type: STOCK_ALERT_TYPES.LOW_STOCK,
       severity: STOCK_ALERT_SEVERITIES.WARNING,
       productId: input.productId,
-      explanation: `Product ${input.productId} has incomplete stock threshold data`,
+      explanation: `Producto con datos incompletos de umbral de stock`,
       dataQuality: STOCK_DATA_QUALITY.INCOMPLETE
     }
   }
-  if (input.availableToSell === 0) {
+  const minimum = input.minimum as number
+  const physical = input.physicalQuantity
+  if (physical >= minimum) return undefined
+
+  const half = Math.floor(minimum / 2)
+  if (physical < half) {
     return {
       type: STOCK_ALERT_TYPES.CRITICAL_STOCK,
       severity: STOCK_ALERT_SEVERITIES.CRITICAL,
       productId: input.productId,
-      explanation: `Product ${input.productId} has no units available to sell`,
+      explanation: `Stock físico ${physical} por debajo de la mitad del mínimo (${minimum})`,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
     }
   }
-  if (input.availableToSell > (input.minimum as number)) return undefined
   return {
     type: STOCK_ALERT_TYPES.LOW_STOCK,
     severity: STOCK_ALERT_SEVERITIES.WARNING,
     productId: input.productId,
-    explanation: `Product ${input.productId} has ${input.availableToSell} units available against a minimum of ${input.minimum as number}`,
+    explanation: `Stock físico ${physical} bajo el mínimo ${minimum}`,
     dataQuality: STOCK_DATA_QUALITY.COMPLETE
   }
 }
@@ -290,12 +307,14 @@ export const evaluateLowRotation = (input: StockRotationInput): StockRotationRes
     validSaleCount: validSales.length,
     validSaleQuantity
   }
-  if (validSales.length === 0) {
+  // CUR-3: salidas (units) in last N days < stock minimum (same threshold as low-stock).
+  const hasMinimum = input.minimum !== undefined && isValidQuantity(input.minimum)
+  if (hasMinimum && validSaleQuantity < (input.minimum as number)) {
     result.alert = {
       type: STOCK_ALERT_TYPES.LOW_ROTATION,
       severity: STOCK_ALERT_SEVERITIES.WARNING,
       productId: input.productId,
-      explanation: `Product ${input.productId} had zero valid sales in the last ${input.rotationDays} complete calendar days`,
+      explanation: `Solo ${validSaleQuantity} un. de salidas en ${input.rotationDays} días (mínimo ${input.minimum as number})`,
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
     }
   }

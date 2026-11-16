@@ -350,6 +350,11 @@ export interface StockRotationInput {
   timeZone: string
   rotationDays: number
   sales: StockSaleRecord[]
+  /**
+   * Stock minimum (units). CUR-3: low rotation when salidas in window &lt; this threshold.
+   * Same field as inventory.minimum — no separate rotation threshold in the data model.
+   */
+  minimum?: number
 }
 
 export interface StockRotationResult {
@@ -489,6 +494,14 @@ export interface StockOverviewSummary {
   alertCount: number
 }
 
+/** CUR-4 T2 row: expired lot/product line for config modal (no bucket IDs exposed). */
+export interface StockExpiredProductRow {
+  productId: string
+  productName: string
+  expiryDate: string
+  quantity: number
+}
+
 export interface StockOverviewResult {
   page: number
   pageSize: number
@@ -497,6 +510,8 @@ export interface StockOverviewResult {
   summary: StockOverviewSummary
   globalSummary: StockOverviewGlobalSummary
   globalAlerts: StockGlobalAlert[]
+  /** Catalog-wide expired lots for CUR-4 config modal. */
+  expiredProducts: StockExpiredProductRow[]
 }
 
 export interface StockGlobalAlert extends StockAlert {
