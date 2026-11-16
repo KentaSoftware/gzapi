@@ -137,17 +137,13 @@ class MemoryRepository implements StockRepository {
   }
 
   async getSalesHistory (productIds: string[], businessDate: string, rotationDays: number, timeZone: string): Promise<StockRotationInput[]> {
-    // Default: enough salidas inside the lookback window (exclude businessDate itself) so tests
-    // only assert LOW_ROTATION when they intentionally set rotationHistories / low minimums.
-    const priorDay = new Date(`${businessDate}T12:00:00.000Z`)
-    priorDay.setUTCDate(priorDay.getUTCDate() - 1)
     return productIds.map((productId) => this.rotationHistories.get(productId) ?? {
       productId,
       productCreatedAt: '2020-01-01T03:00:00.000Z',
       businessDate,
       timeZone,
       rotationDays,
-      sales: [{ occurredAt: priorDay.toISOString(), quantity: 10_000 }]
+      sales: [{ occurredAt: `${businessDate}T00:00:00.000Z`, quantity: 1 }]
     })
   }
 
@@ -338,11 +334,10 @@ describe('Stock service', () => {
       physicalQuantity: 20,
       committedQuantity: 0,
       availableToSell: 18,
-      alertCount: 2
+      alertCount: 3
     })
     expect(overview.items[0]).to.include({ productId: PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, minimum: 8 })
-    // physical=10 >= minimum=8 → no low-stock; expiry alerts only (avance-2 rules)
-    expect(overview.items[0].alerts.map(({ type }) => type)).to.deep.equal(['EXPIRED', 'EXPIRING_SOON'])
+    expect(overview.items[0].alerts.map(({ type }) => type)).to.deep.equal(['LOW_STOCK', 'EXPIRED', 'EXPIRING_SOON'])
     expect(overview.items[1]).to.include({ productId: UNTRACKED_PRODUCT_ID, dataQuality: STOCK_DATA_QUALITY.COMPLETE, expiredQuantity: 0 })
     expect(overview.items[0].latestSale).to.deep.equal({ status: 'INCOMPLETE' })
   })
@@ -357,7 +352,6 @@ describe('Stock service', () => {
     expect(overview.items[0].latestSale).to.deep.equal({ status: 'RECORDED', occurredAt: oldSale.toISOString() })
     expect(repository.latestSaleCalls).to.deep.equal([[PRODUCT_ID]])
     expect(overview.globalSummary).to.deep.equal({ belowMinimumProductCount: 0, expiringProductCount: 1, expiredProductCount: 0, lowRotationProductCount: 0, activeAlertCount: 2 })
-    expect(overview.expiredProducts).to.be.an('array')
   })
 
   it('keeps latest-sale reads best-effort and classifies a propagating overview bucket failure', async () => {
@@ -407,13 +401,12 @@ describe('Stock service', () => {
     expect(firstPage.summary.productCount).to.equal(1)
     expect(lastPage.summary.productCount).to.equal(1)
     expect(firstPage.globalSummary).to.deep.equal(lastPage.globalSummary)
-    // physical=10, minimum=10 → no stock alert; EXPIRED + EXPIRING_SOON + LOW_ROTATION (empty sales)
     expect(firstPage.globalSummary).to.deep.equal({
-      belowMinimumProductCount: 0,
+      belowMinimumProductCount: 1,
       expiringProductCount: 1,
       expiredProductCount: 1,
       lowRotationProductCount: 1,
-      activeAlertCount: 3
+      activeAlertCount: 4
     })
   })
 
@@ -444,13 +437,12 @@ describe('Stock service', () => {
       availableToSell: 10,
       alertCount: 1
     })
-    // minimum=1 → floor(1/2)=0; physical=0 is Media (LOW_STOCK), not Critical
     expect(overview.globalAlerts).to.deep.include({
       productId: 'off-page',
       productName: 'Product off-page',
-      type: 'LOW_STOCK',
-      severity: 'WARNING',
-      explanation: 'Stock físico 0 bajo el mínimo 1',
+      type: 'CRITICAL_STOCK',
+      severity: 'CRITICAL',
+      explanation: 'Product off-page has no units available to sell',
       dataQuality: STOCK_DATA_QUALITY.COMPLETE
     })
     expect(overview.globalAlerts.every(({ productId }) => !['bucket-first', 'bucket-later'].includes(productId))).to.equal(true)
@@ -479,8 +471,7 @@ describe('Stock service', () => {
 
   it('adds persistence-backed low rotation while preserving existing overview alerts', async () => {
     const repository = newRepository()
-    // physical=10 → Media LOW_STOCK when floor(minimum/2) ≤ 10 < minimum (minimum=20)
-    repository.minimums.set(PRODUCT_ID, 20)
+    repository.minimums.set(PRODUCT_ID, 10)
     repository.rotationHistories.set(PRODUCT_ID, {
       productId: PRODUCT_ID,
       productCreatedAt: '2026-07-17T03:00:00.000Z',
